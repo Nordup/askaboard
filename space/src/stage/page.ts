@@ -204,7 +204,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
     case 'failed':
       if (context.resetId === null) return
       context.ready = message.t === 'ready'
-      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null, range: null } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
+      send(message.t === 'ready' ? { t: 'reply', id: context.resetId, ok: true, json: null, frames: 0, ms: performance.now() - started, timing: null, keys: null, range: null, orderDependent: [] } : { t: 'reply', id: context.resetId, ok: false, error: `The scene library failed to load: ${message.error}`, line: null, file: null, ms: performance.now() - started })
       context.resetId = null
       if (!context.ready) stop()
       return
@@ -235,7 +235,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
       }
       context.streamed = true
       context.outstanding.set(message.seq, chunkBytes(message))
-      const chunk: FramesChunk = { t: 'frames', v: message.v, job: run.id, seq: message.seq, through: message.through, end: message.end, u32: message.u32, f64: message.f64, strings: message.strings }
+      const chunk: FramesChunk = { t: 'frames', v: message.v, job: run.id, seq: message.seq, through: message.through, end: message.end, lastChange: message.lastChange, u32: message.u32, f64: message.f64, strings: message.strings }
       frames.postMessage(chunk, [message.u32.buffer, message.f64.buffer])
       return
     }
@@ -322,11 +322,12 @@ function parseFromWorker(value: unknown): FromWorker | null {
         Number.isSafeInteger(m.seq) &&
         typeof m.through === 'number' &&
         typeof m.end === 'boolean' &&
+        Array.isArray(m.lastChange) &&
         m.u32 instanceof Uint32Array &&
         m.f64 instanceof Float64Array &&
         Array.isArray(m.strings) &&
         (m.strings as unknown[]).every((text) => typeof text === 'string' && text.length <= STAGE_LIMITS.description)
-      return ok ? { t: 'frames', v: FRAMES_VERSION, id: m.id as number, seq: m.seq as number, through: m.through as number, end: m.end as boolean, u32: m.u32 as Uint32Array, f64: m.f64 as Float64Array, strings: m.strings as string[] } : null
+      return ok ? { t: 'frames', v: FRAMES_VERSION, id: m.id as number, seq: m.seq as number, through: m.through as number, end: m.end as boolean, lastChange: m.lastChange as Array<[number, number]>, u32: m.u32 as Uint32Array, f64: m.f64 as Float64Array, strings: m.strings as string[] } : null
     }
     default:
       return null

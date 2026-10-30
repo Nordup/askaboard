@@ -20,7 +20,9 @@ export type StageMode = 'scene' | 'draft' | 'replay'
 export interface StageTiming {
   /** The program body and its virtual clock. */
   body: number
-  /** __result(): the sampling of changing objects and the description. */
+  /** end() and the seeds. */
+  seeds: number
+  /** The description and the sweep. */
   result: number
   /** __bake(): the end of the scene becomes the start of the next. */
   bake: number
@@ -49,10 +51,11 @@ export type ToStage =
  * frames: how many frame chunks the run sent to the board (shared/frames.ts), all acknowledged by the board before this reply.
  * keys: the stage id and the scene-local key of each object the program made (null for a reset); a rebuild gives them to the board.
  * range: the stage ids the program took, [first, end) (null for a reset).
+ * orderDependent: the objects whose recipe gave the sweep another result than its seed at the same moment.
  * An error's line is in the module file (a path in boards/scenes/), or in the inline code when file is null.
  */
 export type StageReply =
-  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null; range: [number, number] | null }
+  | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null; range: [number, number] | null; orderDependent: string[] }
   | { t: 'reply'; id: number; ok: false; error: string; line: number | null; file: string | null; ms: number }
 
 export type FromStage =
@@ -93,10 +96,10 @@ const keysAre = (value: Shape, keys: string[]): boolean => {
 
 function parseTiming(value: unknown): StageTiming | null | undefined {
   if (value === null) return null
-  if (!isShape(value) || !keysAre(value, ['body', 'result', 'bake', 'evaluations', 'fullEvaluations', 'encode', 'wait', 'bytes'])) return undefined
-  const { body, result, bake, evaluations, fullEvaluations, encode, wait, bytes } = value
-  if (![body, result, bake, evaluations, fullEvaluations, encode, wait, bytes].every(isMs)) return undefined
-  return { body, result, bake, evaluations, fullEvaluations, encode, wait, bytes } as StageTiming
+  if (!isShape(value) || !keysAre(value, ['body', 'seeds', 'result', 'bake', 'evaluations', 'fullEvaluations', 'encode', 'wait', 'bytes'])) return undefined
+  const { body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes } = value
+  if (![body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes].every(isMs)) return undefined
+  return { body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes } as StageTiming
 }
 
 function parseKeys(value: unknown): Array<[number, string]> | null | undefined {
@@ -185,13 +188,14 @@ export function refusedHostId(value: unknown): number | null {
 export function parseReply(value: unknown): StageReply | null {
   if (!isShape(value) || value.t !== 'reply' || !isId(value.id) || !isMs(value.ms)) return null
   if (value.ok === true) {
-    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing', 'keys', 'range']) || !isId(value.frames)) return null
+    if (!keysAre(value, ['t', 'id', 'ok', 'json', 'frames', 'ms', 'timing', 'keys', 'range', 'orderDependent']) || !isId(value.frames)) return null
     const json = value.json === null || isText(value.json, STAGE_LIMITS.description) ? (value.json as string | null) : undefined
     const timing = parseTiming(value.timing)
     const keys = parseKeys(value.keys)
     const range = value.range === null ? null : Array.isArray(value.range) && value.range.length === 2 && value.range.every(isId) ? (value.range as [number, number]) : undefined
-    if (json === undefined || timing === undefined || keys === undefined || range === undefined) return null
-    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys, range }
+    const { orderDependent } = value
+    if (json === undefined || timing === undefined || keys === undefined || range === undefined || !Array.isArray(orderDependent) || !orderDependent.every((name) => typeof name === 'string')) return null
+    return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys, range, orderDependent }
   }
   if (value.ok === false) {
     if (!keysAre(value, ['t', 'id', 'ok', 'error', 'line', 'file', 'ms'])) return null

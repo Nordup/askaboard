@@ -40,7 +40,7 @@ import { agentHomeDir } from './agent-home'
  *
  * spans: where the app spent a call's time, in ms (news_ms: the board news
  * before the body; write_scene: snapshot_ms, queue_ms, stage_ready_ms,
- * stage_run_ms, body_ms, sampling_ms, encode_ms, board_wait_ms, bake_ms,
+ * stage_run_ms, body_ms, seeds_ms, sampling_ms, encode_ms, board_wait_ms, bake_ms,
  * live_check_ms, compile_ms; preview_scene: rerun_ms, frames_ms, stills_ms,
  * picture_ms; play_scene start: queue_ms, stage_run_ms, commit_ms and
  * scene, the scene id; get_screenshot: capture_ms, window_ms). scene_event: the

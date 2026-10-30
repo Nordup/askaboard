@@ -1,4 +1,4 @@
-import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk } from '@shared/frames'
+import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk } from '@shared/frames'
 import type { SceneSample } from '@shared/live-scene'
 import type { Point } from '../board/types'
 import { prepareSample, sampleHtml, splitNumbers, type DynSample } from './compile'
@@ -23,11 +23,16 @@ import { prepareSample, sampleHtml, splitNumbers, type DynSample } from './compi
  * takeFrames fails.
  */
 
-/** The samples of one object, by its stage id. */
+/** The seeds and the samples of one object, by its stage id. */
 export interface ObjectFrames {
   kind: FrameKind
   math: boolean
+  /** What write_scene ran: the moments that a read past the sweep uses. */
+  seeds: DynSample[]
+  /** The sweep's samples. */
   samples: DynSample[]
+  /** The time of its last sample that differs from the one before; Infinity until the stream's end says. */
+  lastChange: number
   /** The object's path forms (one parts array per form, across chunks). */
   forms: Map<string, readonly string[]>
 }
@@ -96,7 +101,7 @@ function onPortMessage(data: unknown): void {
       if (m.v !== FRAMES_VERSION) throw new Error(`frames of version ${String(m.v)} (this board reads ${FRAMES_VERSION})`)
       if (m.seq !== frames.next) throw new Error(`chunk ${m.seq} came where chunk ${frames.next} was due`)
       if (typeof m.through !== 'number' || !(m.through >= frames.readyThrough) || typeof m.end !== 'boolean') throw new Error('a chunk with a wrong coverage')
-      if (!(m.u32 instanceof Uint32Array) || !(m.f64 instanceof Float64Array) || !Array.isArray(m.strings) || !m.strings.every((text) => typeof text === 'string')) throw new Error('a chunk of the wrong shape')
+      if (!Array.isArray(m.lastChange) || !(m.u32 instanceof Uint32Array) || !(m.f64 instanceof Float64Array) || !Array.isArray(m.strings) || !m.strings.every((text) => typeof text === 'string')) throw new Error('a chunk of the wrong shape')
       const chunk = m as unknown as FramesChunk
       const t0 = performance.now()
       decode(chunk, frames.objects)
@@ -163,9 +168,10 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
     const flags = U()
     const math = (flags & FLAG_MATH) !== 0
     let entry = objects.get(sid)
-    if (!entry) objects.set(sid, (entry = { kind, math, samples: [], forms: new Map() }))
+    if (!entry) objects.set(sid, (entry = { kind, math, seeds: [], samples: [], lastChange: Number.POSITIVE_INFINITY, forms: new Map() }))
     else if (entry.kind !== kind || entry.math !== math) throw new Error('a record that does not fit its object')
-    const { forms, samples } = entry
+    const { forms } = entry
+    const samples = flags & FLAG_SEED ? entry.seeds : entry.samples
     const mask = U()
     if (mask & ~F_ALL) throw new Error('an unknown field')
     if (mask & F_JSON) {
@@ -222,4 +228,9 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
     samples.push(next)
   }
   if (u !== u32.length || f !== f64.length) throw new Error('a chunk with more data than its records')
+  // An object of a kind that has no frames (html) has no entry.
+  for (const [sid, t] of chunk.lastChange) {
+    const entry = objects.get(sid)
+    if (entry) entry.lastChange = t
+  }
 }

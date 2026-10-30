@@ -91,7 +91,7 @@ export interface StageEntry {
 }
 
 export interface StageRun {
-  /** The description without the samples: an object with samples says how many (its frames are in the board renderer). */
+  /** The description without the samples (the frames of its dynamic objects are in the board renderer). */
   desc: SceneDescription
   entry: StageEntry
   /** Set when this program was the first one of a new stage: why the stage is new. */
@@ -101,6 +101,8 @@ export interface StageRun {
   frames: number
   /** Where the run's time went, in ms (the session trace's spans): stage_ready_ms (a new process or a rebuild first), stage_run_ms, and the stage's own parts. */
   timing: Record<string, number>
+  /** The objects whose recipe gave the sweep another result than its seed at the same moment. */
+  orderDependent: string[]
 }
 
 /** A tex() or text() node to measure: its source, math or not, and its font size. */
@@ -563,7 +565,7 @@ export class SceneStage {
       if (reply.ok && reply.timing) {
         const t = reply.timing
         console.log(
-          `stage: ${options.mode} timing: body ${Math.round(t.body)} ms, sampling ${Math.round(t.result)} ms (encode ${Math.round(t.encode)} ms, wait for the board ${Math.round(t.wait)} ms), bake ${Math.round(t.bake)} ms, evaluations ${t.evaluations} of ${t.fullEvaluations}, description ${reply.json?.length ?? 0} chars, frames ${reply.frames} chunks ${(t.bytes / 1024 / 1024).toFixed(2)} MB`
+          `stage: ${options.mode} timing: body ${Math.round(t.body)} ms, seeds ${Math.round(t.seeds)} ms, sampling ${Math.round(t.result)} ms (encode ${Math.round(t.encode)} ms, wait for the board ${Math.round(t.wait)} ms), bake ${Math.round(t.bake)} ms, evaluations ${t.evaluations} of ${t.fullEvaluations}, description ${reply.json?.length ?? 0} chars, frames ${reply.frames} chunks ${(t.bytes / 1024 / 1024).toFixed(2)} MB`
         )
       }
       if (signal?.aborted) throw new SceneCancelled()
@@ -602,9 +604,9 @@ export class SceneStage {
       const timing: Record<string, number> = { stage_ready_ms: tReady - tStart, stage_run_ms: tDone - tReady }
       if (reply.timing) {
         const t = reply.timing
-        Object.assign(timing, { body_ms: Math.round(t.body), sampling_ms: Math.round(t.result), encode_ms: Math.round(t.encode), board_wait_ms: Math.round(t.wait), bake_ms: Math.round(t.bake), frames_bytes: t.bytes })
+        Object.assign(timing, { body_ms: Math.round(t.body), seeds_ms: Math.round(t.seeds), sampling_ms: Math.round(t.result), encode_ms: Math.round(t.encode), board_wait_ms: Math.round(t.wait), bake_ms: Math.round(t.bake), frames_bytes: t.bytes })
       }
-      return { desc, entry, fresh, job, frames: reply.frames, timing }
+      return { desc, entry, fresh, job, frames: reply.frames, timing, orderDependent: reply.orderDependent }
     } finally {
       signal?.removeEventListener('abort', onAbort)
     }

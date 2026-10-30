@@ -136,6 +136,18 @@ function drawingNow(play: ScenePlay, object: PlayObject, t: number): boolean {
   return false
 }
 
+/**
+ * What an object's live form reads at moment t, or null when it shows as
+ * committed. Within what the sweep has reached, its samples; past it, its
+ * seeds. An object with no seeds does not change at any seeded moment.
+ */
+export function liveSamples(play: ScenePlay, object: PlayObject, t: number): DynSample[] | null {
+  const { dyn } = object
+  if (!dyn || t >= dyn.end) return null
+  const samples = t <= play.ready() ? dyn.samples : dyn.seeds
+  return samples.length ? samples : null
+}
+
 /** The sample at t and the next one to blend with (k = 0: none). */
 function locate(samples: DynSample[], t: number): { a: DynSample; b: DynSample; k: number } {
   let lo = 0
@@ -348,8 +360,9 @@ function objectLook(play: ScenePlay, object: PlayObject, t: number, inkIndex: In
   const colorChanging = timeline.hasTrack(object.id, 'color')
   const color = colorChanging ? timeline.color(object.id, t) : undefined
   const drawing = object.drawn && drawingNow(play, object, t)
-  const dyn = object.dyn && t < object.dyn.end && (t >= 0 || desc.carry) ? object.dyn : undefined
-  const now = dyn ? locate(dyn.samples, t) : null
+  const samples = t >= 0 || desc.carry ? liveSamples(play, object, t) : null
+  const dyn = samples ? object.dyn : undefined
+  const now = samples ? locate(samples, t) : null
   if (dyn && now && (dyn.kind === 'text' || dyn.kind === 'live')) world = multiply(world, boxMatrix(dyn.finalBounds, now.a.bounds, dyn.centered, dyn.kind === 'live'))
 
   // Changing ink: the strokes of now, painted on their own; the committed strokes wait hidden.
@@ -447,7 +460,7 @@ function objectLook(play: ScenePlay, object: PlayObject, t: number, inkIndex: In
         override.d = blendD(now.a, now.b, now.k)
         if (now.a.width !== undefined) override.strokeWidth = now.k > 0 && now.b.width !== undefined ? lerp(now.a.width, now.b.width, now.k) : now.a.width
       } else if (dyn.kind === 'text' && now.a.html !== undefined) override.html = now.a.html
-      else if (dyn.kind === 'live') override.params = paramsAtTime(paramSamplesOf(dyn.samples), t, BLEND_GAP) ?? undefined
+      else if (dyn.kind === 'live' && samples) override.params = paramsAtTime(paramSamplesOf(samples), t, BLEND_GAP) ?? undefined
     }
     if (override.matrix || override.opacity !== undefined || override.reveal !== undefined || override.fill !== undefined || override.color || override.d !== undefined || override.html !== undefined || override.params) {
       sink.override(target.nodeId, override)

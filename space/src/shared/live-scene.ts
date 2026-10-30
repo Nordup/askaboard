@@ -92,12 +92,16 @@ interface SceneObjectBase {
   /** A carried object's state at the start of this scene (the end of the scenes before), per property. */
   base?: Partial<Record<SceneProp, number | string>>
   /**
-   * Geometry that changes over time (values, attached labels, tweened options)
-   * is sampled in the sandbox: each sample holds from its t until the next one.
-   * The samples go to the board as frames (shared/frames.ts, by sid); this is
-   * their number. The object's own fields hold the geometry at the end of the scene.
+   * Geometry that can change over time (values, attached labels, tweened
+   * options): it is sampled in the sandbox, and each sample holds from its t
+   * until the next one. Seeds and samples go to the board as frames
+   * (shared/frames.ts, by sid). The object's own fields hold its end seed.
    */
-  samples?: number
+  dynamic?: boolean
+  /** The object's seeds differ from each other. */
+  changes?: boolean
+  /** A carried object whose seeds equal its baked state: its board items stay as they are, and it shows only if the sweep gives it samples. */
+  unchanged?: boolean
 }
 
 /** The geometry of a changing object at one time. Only the fields of its kind are set. */

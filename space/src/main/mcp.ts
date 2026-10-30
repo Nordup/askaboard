@@ -1454,6 +1454,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         let source: SceneSource
         const spans = trace.spans
         const tSnapshot = Date.now()
+        let orderDependent: string[] = []
         try {
           source = await readSceneSource(this.hooks.folder(), code !== undefined ? { code } : { file })
         } catch (error) {
@@ -1475,6 +1476,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const context = await this.contextAt(place)
             const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place })
             Object.assign(spans, run.timing)
+            orderDependent = run.orderDependent
             const tLive = Date.now()
             const liveError = await this.checkLivePrograms(livesOf(run.desc))
             spans.live_check_ms = Date.now() - tLive
@@ -1508,7 +1510,8 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             items: { ...info.items, named: namedOut(info.items.named, `after play_scene start, list_items({part: {scene: ${JSON.stringify(name)}}}) lists each with its id`) },
             say_lines: info.cues.length,
             ...(info.log.length ? { log: info.log } : {}),
-            ...(outcome.fresh ? { stage: `new (${outcome.fresh})` } : {})
+            ...(outcome.fresh ? { stage: `new (${outcome.fresh})` } : {}),
+            ...(orderDependent.length ? { order_dependent: orderDependent } : {})
           })
         )
       })

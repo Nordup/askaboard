@@ -13,8 +13,8 @@
  * {nodes, names, view, viewport, seed, stage, cutAt}), runs the program,
  * drives the clock (it lets every pending job run, then calls fns.advance()
  * until it returns false; a program that fails, or fns.failed(), ends it at
- * once), calls fns.end(), reads fns.result() (the sampling
- * pass and the description; not for a rebuild) and calls fns.bake() (not for
+ * once), calls fns.end(), and then, not for a rebuild, fns.seeds(), reads
+ * fns.result() (the description) and calls fns.sample() (the sweep), and calls fns.bake() (not for
  * a draft), which turns the end of this scene into the start of the next one.
  *
  * A program only builds data: objects and a timeline. Nothing here draws.
@@ -42,8 +42,8 @@
   delete G.__measure
   const giveHost = typeof G.__host === 'function' ? G.__host : null
   delete G.__host
-  // The sampling's output: each kept sample of a changing object (stage id, kind, math, sample), and each time up to which
-  // the samples are complete. The worker streams them to the board.
+  // The sampling's output: each seed and each kept sample of a changing object (stage id, kind, math, sample, seed), and each
+  // time up to which the samples are complete. The worker streams them to the board.
   const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
   delete G.__frames
   const giveThrough = typeof G.__framesThrough === 'function' ? G.__framesThrough : null
@@ -2652,7 +2652,7 @@
     return g
   }
 
-  /** Recipe evaluations of this scene's sampling, and how many sampling every object at every sample time would make. */
+  /** Recipe evaluations of this scene's sweep, and how many sampling every object at every sample time would make. */
   let evaluations = 0
   let fullEvaluations = 0
 
@@ -2676,6 +2676,10 @@
    * schedule has it. A sweep is plain data, moved by sampleMoment one moment
    * at a time, so a caller can stop between two moments and go on later.
    * Samples leave the stage as they are kept (keepSample).
+   *
+   * The seeds of a scene run first, from the same runs (seedOne). They are the
+   * moments that write_scene needs: the end state, what the board commits, and
+   * previews of "end" and "steps".
    */
   function startSweep(list) {
     const runs = []
@@ -2683,10 +2687,55 @@
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
       const times = sampleTimes(entry.born === sceneNo ? entry.created : 0)
       fullEvaluations += times.length
-      /** kept: how many samples the object kept. first: its first sample, until a second one is kept. runEnd: the last sample of the current run of equal samples, when it is not kept yet. */
-      runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: '', final: null, runEnd: null })
+      /**
+       * kept: how many samples the object kept. first: its first sample, until a second one is kept. runEnd: the last sample of the
+       * current run of equal samples, when it is not kept yet. lastChange: the time of its last sample that differs from the one before.
+       * seeds: its seeds by time, each { key, sample }. final: its end seed.
+       */
+      runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: '', lastChange: 0, runEnd: null, seeds: new Map(), changes: false, final: null, orderDependent: false })
     }
     return { runs, moments: [...new Set(runs.flatMap((run) => run.times))].sort((p, q) => p - q), next: 0 }
+  }
+
+  /** The sweep of this scene: seeds() makes it, sample() runs it, bake() reads its end seeds. */
+  let sweep = null
+
+  /** Evenly spaced seeds on an object's schedule, so that an object that moves and returns between its other seeds shows as changing. */
+  const SPREAD_SEEDS = 16
+
+  /** An object's seed times, all from its schedule: its first and its last time, SPREAD_SEEDS between them, and the two times around each step end. */
+  function seedTimes(times, stepEnds) {
+    const out = new Set([times[0], times[times.length - 1]])
+    for (let k = 1; k <= SPREAD_SEEDS; k++) out.add(times[Math.floor((k * (times.length - 1)) / (SPREAD_SEEDS + 1))])
+    let i = 0
+    for (const at of stepEnds) {
+      while (i < times.length && times[i] <= at) i++
+      if (i > 0) out.add(times[i - 1])
+      if (i < times.length) out.add(times[i])
+    }
+    return out
+  }
+
+  /** One seed: an evaluation with no sample memo and no trace cache, so that the sweep can compare its own result with it. */
+  function seedOne(run, t) {
+    const { entry } = run
+    const spec = specAt(entry, t)
+    // A function that changes what kind of object it is: the object keeps its first kind.
+    if (spec.kind !== entry.kind) return
+    const g = geometryOf(spec)
+    run.seeds.set(t, { key: JSON.stringify(g), sample: { t, ...g } })
+    run.final = spec
+  }
+
+  /** The end of an object's seeds: its fields hold the end seed, and the seeds of an object that changes go to the board. */
+  function keepSeeds(run) {
+    const { entry, final, seeds: done } = run
+    if (!final) return
+    for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
+    entry.bounds = final.bounds
+    const records = [...done.values()]
+    run.changes = records.some(({ key }) => key !== records[0].key)
+    if (run.changes && giveFrames) for (const { sample } of records) giveFrames(entry.id, entry.kind, entry.math === true, sample, true)
   }
 
   /** A sample that stays. An object with one kept sample does not change and sends none, so the first sample waits for a second. */
@@ -2697,15 +2746,16 @@
       return
     }
     if (giveFrames) {
-      if (run.first) giveFrames(entry.id, entry.kind, entry.math === true, run.first)
-      giveFrames(entry.id, entry.kind, entry.math === true, sample)
+      if (run.first) giveFrames(entry.id, entry.kind, entry.math === true, run.first, false)
+      giveFrames(entry.id, entry.kind, entry.math === true, sample, false)
     }
     run.first = null
   }
 
   /**
-   * One object at one time: its geometry where it changes, and its end state.
-   * A run of equal samples keeps its first and its last sample, so the player
+   * One object at one time: its geometry where it changes. At a seeded time,
+   * a result that differs from the seed's shows that the recipe depends on the
+   * order of its calls. A run of equal samples keeps its first and its last sample, so the player
    * blends from the last one to the next change over one sample step, as for
    * every other step. Without the last one, the gap between kept samples is
    * longer than BLEND_GAP and the player holds the shape for a step while other
@@ -2721,54 +2771,44 @@
     if (spec.kind !== entry.kind) return
     const g = geometryOf(spec)
     const key = JSON.stringify(g)
-    run.final = spec
+    const seed = run.seeds.get(t)
+    if (seed && seed.key !== key) run.orderDependent = true
     if (key === run.lastKey) {
       run.runEnd = { t: f3(t), ...g }
       return
     }
     run.lastKey = key
+    run.lastChange = f3(t)
     if (run.runEnd) keepSample(run, run.runEnd)
     run.runEnd = null
     keepSample(run, { t: f3(t), ...g })
   }
 
-  /** The next moment of a sweep. */
-  function sampleMoment(sweep) {
+  /** The next moment of the sweep. */
+  function sampleMoment() {
     const t = sweep.moments[sweep.next++]
     for (const run of sweep.runs) if (run.times[run.next] === t) sampleOne(run, t)
     if (giveThrough) giveThrough(t)
   }
 
-  /** The end of a sweep: what needs an object's whole sweep. Returns the objects of earlier scenes whose geometry changes in it. */
-  function finishSweep(sweep) {
-    const changedEarlier = new Set()
-    for (const { entry, kept, lastKey, final } of sweep.runs) {
-      if (!final) continue
-      // The object's own fields hold the end state.
-      for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
-      entry.bounds = final.bounds
-      if (kept > 1) entry.samples = kept
-      if (entry.born < sceneNo && (kept > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
-    }
-    return changedEarlier
-  }
-
-  /** Sample changing objects over this scene. Returns the objects of earlier scenes whose geometry changes in it. */
-  function sampleObjects(list) {
+  /** Run the sweep to its end. Returns each changing object's last-change time ([stage id, t]) and the objects that depend on call order. */
+  const sample = () => {
     finalSampling = true
     sampleMemo.clear()
-    const sweep = startSweep(list)
-    while (sweep.next < sweep.moments.length) sampleMoment(sweep)
-    const changedEarlier = finishSweep(sweep)
+    while (sweep.next < sweep.moments.length) sampleMoment()
     finalSampling = false
     sampleMemo.clear()
     if (giveThrough) giveThrough(f3(endTime))
-    return changedEarlier
+    return {
+      lastChange: sweep.runs.filter((run) => run.kept > 1).map((run) => [run.entry.id, run.lastChange]),
+      orderDependent: sweep.runs.filter((run) => run.orderDependent).map((run) => shortName(run.entry))
+    }
   }
 
+  const shortName = (e) => `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}`
   const who = (e) => {
     const words = isTextLike(e) ? specAt(e, endTime).text : undefined
-    return `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}${typeof words === 'string' ? ` ${JSON.stringify(words.length > 30 ? `${words.slice(0, 29)}…` : words)}` : ''}`
+    return `${shortName(e)}${typeof words === 'string' ? ` ${JSON.stringify(words.length > 30 ? `${words.slice(0, 29)}…` : words)}` : ''}`
   }
 
   /** Cut the scene at c (scene_control cut): what starts at c or later is dropped, what runs then holds its value. */
@@ -2848,7 +2888,7 @@
     if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
   }
 
-  /** The objects this scene sends: its own, and earlier ones it acts on, those whose recipe changes in it (changed), and gone ones it brings back. */
+  /** The objects this scene sends: its own, and earlier ones it acts on, those in `changed`, and gone ones it brings back. */
   const sentObjects = (fresh, changed) => {
     const emit = new Set(fresh)
     for (const e of objects) {
@@ -2882,16 +2922,38 @@
     return emit
   }
 
-  /** The scene's description (JSON): its objects, with the changing ones sampled, and its timeline. */
-  const result = () => {
+  /**
+   * The seeds of this scene, in a fixed order: ascending time, object order
+   * inside one time. With an action or a value change in the scene, every
+   * earlier dynamic object takes part. An object's fields hold its end seed
+   * after this: that is the final state, and the description is built from it.
+   */
+  const seeds = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
     const earlier = objects.filter((e) => e.born < sceneNo && !e.dropped && !e.gone && e.kind !== 'node' && e.kind !== 'group')
-    for (const e of earlier) delete e.samples
     const anyChange = actions.length > 0 || values.some((v) => v.tracks.length > 0)
-    // With no action and no value, time changes no earlier object: the sweep takes only the dynamic ones the scene sends anyway.
+    // With no action and no value, time changes no earlier object: only the dynamic ones the scene sends anyway take part.
     const sendsAnyway = sentObjects(fresh, new Set())
     const sampled = anyChange ? earlier : objects.filter((e) => e.born < sceneNo && e.dynamic && sendsAnyway.has(e))
-    const emit = sentObjects(fresh, sampleObjects(fresh.concat(sampled)))
+    sweep = startSweep(fresh.concat(sampled))
+    const stepEnds = steps.map((entry) => entry.at - 0.001).sort((p, q) => p - q)
+    const due = sweep.runs.map((run) => seedTimes(run.times, stepEnds))
+    const moments = [...new Set(due.flatMap((times) => [...times]))].sort((p, q) => p - q)
+    for (const t of moments) sweep.runs.forEach((run, i) => due[i].has(t) && seedOne(run, t))
+    sweep.runs.forEach(keepSeeds)
+  }
+
+  /** The scene's description (JSON): its objects at their end seeds, and its timeline. Nothing changes it after this. */
+  const result = () => {
+    const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
+    const earlierRuns = sweep.runs.filter((run) => run.entry.born < sceneNo)
+    // An earlier object whose seeds differ from its baked state changes on the board.
+    const changed = new Set(earlierRuns.filter(({ entry, seeds: done }) => [...done.values()].some(({ key }) => key !== entry.bakedKey)).map((run) => run.entry))
+    const sent = sentObjects(fresh, changed)
+    // Any other earlier dynamic object goes too, marked: its board items stay as they are, and it shows only if the sweep gives it samples.
+    const unchanged = new Set(earlierRuns.map((run) => run.entry).filter((e) => !sent.has(e)))
+    const emit = sentObjects(fresh, new Set([...changed, ...unchanged]))
+    const changes = new Set(sweep.runs.filter((run) => run.changes).map((run) => run.entry))
     const list = objects.filter((e) => emit.has(e))
     const local = new Map(list.map((e, i) => [e.id, i]))
     const out = list.map((e) => {
@@ -2902,8 +2964,10 @@
       if (e.name !== undefined) o.name = e.name
       if (e.born === sceneNo && e.key !== undefined) o.key = e.key
       if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
-      // The samples themselves go to the board as frames (giveFrames, by sid); the description says how many.
-      if (e.samples) o.samples = e.samples
+      // The seeds and samples themselves go to the board as frames (giveFrames, by sid).
+      if (e.dynamic) o.dynamic = true
+      if (changes.has(e)) o.changes = true
+      if (unchanged.has(e)) o.unchanged = true
       // Ink goes as its points (a pen shape's d stays in the stage).
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
@@ -2923,14 +2987,23 @@
     return JSON.stringify({ objects: out, actions: acts, edits: editList, reparents: moveList, steps, duration: f3(endTime), logs, camera: cameraActions, pointer: pointerActions, cues })
   }
 
-  /** The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value. */
+  /**
+   * The end of this scene becomes the start of the next: each object's state at the end is its base, values keep their end value.
+   * Every end state comes first (the end seed, else an evaluation in a rebuild), while all tracks stand: a recipe can read the past of
+   * any object (a trace walks it). The rest then bakes from these saved results.
+   */
   const bake = () => {
+    const ends = new Map(sweep ? sweep.runs.map((run) => [run.entry, run.final]) : [])
+    for (const e of objects) {
+      if (!e.dynamic || e.dropped || e.kind === 'group' || e.kind === 'node' || (e.gone && !e.revealed)) continue
+      if (!ends.get(e)) ends.set(e, specAt(e, endTime))
+    }
+    sweep = null
     for (const e of objects) e.edited = false
     const hidden = { opacity: 1, draw: 0, fill: 0 }
     for (const e of objects) {
       if (e.dropped) {
         Object.assign(e, { dropped: false, gone: true, vis: 'hidden', base: { ...hidden }, tracks: {}, created: 0, removed: false, revealed: false })
-        delete e.samples
         continue
       }
       if (e.kind === 'node') {
@@ -2950,7 +3023,7 @@
       }
       if (e.kind !== 'group') {
         if (e.dynamic) {
-          const spec = specAt(e, endTime)
+          const spec = ends.get(e)
           if (spec !== e && spec.kind === e.kind) {
             for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (spec[field] !== undefined) e[field] = spec[field]
             e.bounds = spec.bounds
@@ -2981,7 +3054,6 @@
       e.created = 0
       e.removed = false
       e.revealed = false
-      delete e.samples
     }
     for (const v of values) {
       v.base = sortedTrackValue(v.tracks, v.base, endTime)
@@ -3014,6 +3086,7 @@
     activeSpans.length = 0
     evaluations = 0
     fullEvaluations = 0
+    sweep = null
     tracking = null
     markTimes.clear()
     ownMade = 0
@@ -3133,7 +3206,7 @@
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, result, bake, stats, keys, range }))
+  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, bake, stats, keys, range }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

@@ -8,18 +8,22 @@
  * The worker encodes (FrameEncoder); the renderer decodes (renderer/live/frames.ts)
  * into the samples that playback uses. The sampling makes samples in time
  * order, moment by moment, so the records of different objects interleave. A
- * record adds one sample to one object, by its stage id (sid), in any chunk. The
- * skeleton of the description (the worker's reply) gives each object with
- * samples their number; the renderer checks it.
+ * record adds one sample to one object, by its stage id (sid), in any chunk.
+ *
+ * Seeds come first: the moments of a changing object that write_scene runs
+ * (live-prelude.js seeds). A seed is a record with FLAG_SEED, and the board
+ * keeps seeds apart from the sweep's samples.
  *
  * Coverage: through is the time up to which every object's samples are sent. It
  * moves only after a whole moment is sampled. A reader past an object's last
  * sample holds that sample. The last chunk of a job has end true and through at
- * the scene's duration; a job with no samples still sends it.
+ * the scene's duration; a job with no samples still sends it. That chunk also
+ * gives lastChange: [sid, t] of each object with samples, the time of its last
+ * sample that differs from the one before.
  *
- * Format version 2. A chunk is { t: 'frames', v, job, seq, through, end, u32, f64, strings }:
+ * Format version 3. A chunk is { t: 'frames', v, job, seq, through, end, lastChange, u32, f64, strings }:
  *
- *   u32: record count, then per record: sid, kind (KIND_*), flags (1: math text),
+ *   u32: record count, then per record: sid, kind (KIND_*), flags (FLAG_*),
  *        a field mask (F_*) and, for each field in it, its u32 parts.
  *   f64: per record: t, bounds x, y, width, height, then the f64 parts of its fields, in mask order.
  *   strings: the chunk's string table (path forms, raw paths, texts, parameter names, JSON fallbacks).
@@ -37,7 +41,7 @@
  * Every f64 value is finite, and -0 is sent as 0 (JSON does the same).
  */
 
-export const FRAMES_VERSION = 2
+export const FRAMES_VERSION = 3
 
 export const KIND_SHAPE = 0
 export const KIND_INK = 1
@@ -56,6 +60,7 @@ export const F_JSON = 64
 export const F_ALL = 127
 
 export const FLAG_MATH = 1
+export const FLAG_SEED = 2
 
 /** A chunk is sent when it holds at least this many bytes: a chunk is at most this and one sample. */
 export const CHUNK_BYTES = 1024 * 1024
@@ -72,6 +77,8 @@ export interface FramesChunk {
   through: number
   /** The last chunk of the job. */
   end: boolean
+  /** [sid, t] of each object with samples: set on the last chunk, else empty. */
+  lastChange: Array<[number, number]>
   u32: Uint32Array
   f64: Float64Array
   strings: string[]
@@ -227,14 +234,14 @@ export class FrameEncoder {
     return index
   }
 
-  /** One sample of one object (kind: shape, ink, text or live; other kinds have none that play). */
-  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void {
+  /** One sample or seed of one object (kind: shape, ink, text or live; other kinds have none that play). */
+  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>, seed: boolean): void {
     const code = FRAME_KINDS.indexOf(kind as FrameKind)
     if (code < 0) return
     this.records++
     this.u32.push(sid)
     this.u32.push(code)
-    this.u32.push(math ? FLAG_MATH : 0)
+    this.u32.push((math ? FLAG_MATH : 0) | (seed ? FLAG_SEED : 0))
     this.sample(code, sample)
   }
 

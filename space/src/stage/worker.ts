@@ -39,11 +39,11 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * the question and waits on the bridge (Atomics.wait) until the page writes
  * the answer (worker-protocol.ts).
  *
- * A program's end (finish): the sampling pass streams the samples of the
- * changing objects, moment by moment, as frame chunks (shared/frames.ts) to the
- * page, which passes them to the board. The worker waits while CREDIT_BYTES of frames are
- * on the way. The reply (the description without the samples) comes last. A
- * rebuild (replay) does not sample: it ends and bakes.
+ * A program's end (finish): the seeds, then the description, then the sweep.
+ * Seeds and samples of the changing objects go as frame chunks (shared/frames.ts)
+ * to the page, which passes them to the board. The worker waits while CREDIT_BYTES
+ * of frames are on the way. The reply (the description without the samples)
+ * comes last. A rebuild (replay) does not sample: it ends and bakes.
  */
 
 interface WorkerScope {
@@ -58,7 +58,12 @@ interface Host {
   end(): void
   /** An error of the program's own parallel work (all(), say() marks) as soon as it happens, or null. */
   failed(): { error: unknown } | null
+  /** The seeds of the scene: the end state, and the first frames on the board. */
+  seeds(): void
+  /** The description, built from the end seeds. */
   result(): string
+  /** The sweep, to its end: what the stream's end says. */
+  sample(): { lastChange: Array<[number, number]>; orderDependent: string[] }
   bake(): void
   stats(): { evaluations: number; fullEvaluations: number }
   /** The stage id and key of each object the program made (live-prelude.js keyFor). */
@@ -93,7 +98,7 @@ const KEEP = new Set([
 
 let bridge: { state: Int32Array; bytes: Uint8Array } | null = null
 let host: Host | null = null
-/** While a program's sampling pass streams frames: where the samples go. */
+/** While a program's seeds and sweep stream frames: where they go. */
 let frameSink: FrameStream | null = null
 /** The longest wait for the board to take frames (it acknowledges each chunk at once). */
 const CREDIT_WAIT_MS = 60_000
@@ -148,7 +153,7 @@ function init(message: Extract<ToWorker, { t: 'init' }>): void {
     ;(Error as unknown as { stackTraceLimit: number }).stackTraceLimit = 50
     G.__fontText = message.fontText
     G.__measure = ask
-    G.__frames = (sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void => frameSink?.add(sid, kind, math, sample)
+    G.__frames = (sid: number, kind: string, math: boolean, sample: Record<string, unknown>, seed: boolean): void => frameSink?.add(sid, kind, math, sample, seed)
     G.__framesThrough = (t: number): void => frameSink?.through(t)
     G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, SCENE_EASES, trackNumber, mulberry32, programSite, siteLabel })
     G.__host = (fns: Host) => {
@@ -343,21 +348,26 @@ function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promis
 
 /**
  * The end of a program that ran: one path for every mode (the cut and the
- * end state). A scene and a draft are sampled (their frames go to the board)
- * and described; a scene and a replay bake.
+ * end state). A scene and a draft are seeded, described and swept (their
+ * frames go to the board); a scene and a replay bake.
  */
 function finish(fns: Host, id: number, mode: StageMode, started: number): StageReply {
   const tBody = clock()
   const frames = mode === 'replay' ? null : new FrameStream(id)
   try {
     fns.end()
+    frameSink = frames
+    if (frames) fns.seeds()
+    const tSeeds = clock()
     let json: string | null = null
+    let orderDependent: string[] = []
     if (frames) {
-      frameSink = frames
       json = fns.result()
-      frameSink = null
-      frames.send(true)
       if (typeof json !== 'string' || json.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
+      const swept = fns.sample()
+      orderDependent = swept.orderDependent
+      frameSink = null
+      frames.send(true, swept.lastChange)
     }
     const tResult = clock()
     // Before bake: bake turns the objects a cut dropped into gone ones, and keys() leaves the dropped ones out.
@@ -366,8 +376,8 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
     if (mode !== 'draft') fns.bake()
     const tBake = clock()
     const { evaluations, fullEvaluations } = fns.stats()
-    const timing: StageTiming = { body: tBody - started, result: tResult - tBody, bake: tBake - tResult, evaluations, fullEvaluations, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
-    return { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range }
+    const timing: StageTiming = { body: tBody - started, seeds: tSeeds - tBody, result: tResult - tSeeds, bake: tBake - tResult, evaluations, fullEvaluations, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
+    return { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range, orderDependent }
   } catch (error) {
     return failure(id, error, started)
   } finally {
@@ -390,9 +400,9 @@ class FrameStream {
 
   constructor(private readonly id: number) {}
 
-  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void {
+  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>, seed: boolean): void {
     const t0 = clock()
-    this.encoder.add(sid, kind, math, sample)
+    this.encoder.add(sid, kind, math, sample, seed)
     this.encodeMs += clock() - t0
     if (this.encoder.full()) this.send(false)
   }
@@ -401,7 +411,7 @@ class FrameStream {
     this.reached = t
   }
 
-  send(end: boolean): void {
+  send(end: boolean, lastChange: Array<[number, number]> = []): void {
     const chunk = this.encoder.take()
     const bytes = chunkBytes(chunk)
     this.total += bytes
@@ -416,7 +426,7 @@ class FrameStream {
     }
     this.waitMs += clock() - t0
     atomics.add(state, 3, bytes)
-    post({ t: 'frames', v: FRAMES_VERSION, id: this.id, seq: this.sent++, through: this.reached, end, u32: chunk.u32, f64: chunk.f64, strings: chunk.strings }, [chunk.u32.buffer, chunk.f64.buffer])
+    post({ t: 'frames', v: FRAMES_VERSION, id: this.id, seq: this.sent++, through: this.reached, end, lastChange, u32: chunk.u32, f64: chunk.f64, strings: chunk.strings }, [chunk.u32.buffer, chunk.f64.buffer])
   }
 }
 

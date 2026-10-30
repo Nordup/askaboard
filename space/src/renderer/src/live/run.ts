@@ -10,7 +10,7 @@ import { itemNames } from '../agent/item-names'
 import { buildIndex, isFlowed } from '../board/scene'
 import { compileScene, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
 import { connectFrames, takeFrames, type RunFrames } from './frames'
-import { inkIndexOf, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
+import { inkIndexOf, liveSamples, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
 import { apply, multiply, scaleOf } from './timeline'
 import type { Camera, Point } from '../board/types'
 import { clampZoom, glideCamera, inkBounds } from '../board/geometry'
@@ -345,19 +345,15 @@ function keepDraft(key: string, draft: CompiledDraft): void {
   }
 }
 
-/**
- * The samples of each object from the frames of its run, checked against the
- * description (same kind, same number of samples).
- */
+/** The frames of each object from its run, checked against the description (same kind). */
 function dynLookup(frames: RunFrames): DynLookup {
   return (object) => {
     if (object.kind !== 'shape' && object.kind !== 'ink' && object.kind !== 'text' && object.kind !== 'live') return undefined
     const found = object.sid !== undefined ? frames.objects.get(object.sid) : undefined
+    if (!found) return undefined
     const math = object.kind === 'text' && !!object.math
-    if (!found || found.kind !== object.kind || found.math !== math || found.samples.length !== object.samples) {
-      throw new Error(`The frames of ${object.api} ${object.sid ?? object.id} do not match the scene. Write the scene again.`)
-    }
-    return found.samples
+    if (found.kind !== object.kind || found.math !== math) throw new Error(`The frames of ${object.api} ${object.sid ?? object.id} do not match the scene. Write the scene again.`)
+    return found
   }
 }
 
@@ -453,7 +449,7 @@ function keepInkLook(object: PlayObject, s: Scene): void {
   }
   if (!lines.length) return
   const none = { x: 0, y: 0, width: 0, height: 0 }
-  object.dyn = { kind: 'ink', samples: [{ t: 0, bounds: none, lines, width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
+  object.dyn = { kind: 'ink', seeds: [], samples: [{ t: 0, bounds: none, lines, width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
 }
 
 /** Commit a compiled scene's final state (a new undo step, or part of the keyed step `step`) and list its items. starts_in_s is filled in by the caller. */
@@ -1176,11 +1172,11 @@ function frameBoxes(play: CompiledScene['play'], ends: ReadonlyMap<string, Box>,
   }
   for (const object of play.objects) {
     // A changing shape: the bounds of its sample of now, where its object is now.
-    const dyn = object.dyn?.kind === 'shape' && t < object.dyn.end ? object.dyn : null
-    let sample = dyn?.samples[0]
-    if (dyn) for (const entry of dyn.samples) if (entry.t <= t) sample = entry
+    const samples = object.dyn?.kind === 'shape' ? liveSamples(play, object, t) : null
+    let sample = samples?.[0]
+    if (samples) for (const entry of samples) if (entry.t <= t) sample = entry
     for (const target of object.targets) {
-      if (dyn && sample) {
+      if (sample) {
         if (frame.overrides.get(target.nodeId)?.opacity !== 0) out.set(target.nodeId, transformBox(play.timeline.matrix(object.id, t), sample.bounds))
       } else place(target.nodeId, ends.get(target.nodeId))
     }

@@ -43,7 +43,10 @@ export interface DynSample {
 /** How a changing object shows over time. Before `end`, the samples hold; after it, the committed node shows. */
 export interface PlayDyn {
   kind: 'shape' | 'ink' | 'text' | 'live'
+  /** Read past what the sweep has reached (player.ts liveSamples). */
+  seeds: DynSample[]
   samples: DynSample[]
+  /** The time of its last change. */
   end: number
   /** The bounds of the end state (the committed node). */
   finalBounds: SceneBounds
@@ -288,22 +291,30 @@ export function prepareSample(kind: FrameKind, math: boolean, sample: SceneSampl
   return next
 }
 
-/** The samples of a changing object (from its frames), as the player shows them. */
-function playDyn(object: SceneObjectDesc, samples: DynSample[]): PlayDyn | undefined {
+/** What the frames of a run hold for one object. */
+export interface DynFrames {
+  seeds: DynSample[]
+  samples: DynSample[]
+  lastChange: number
+}
+
+/** The live form of a changing object (from its frames), as the player shows it. An object with no samples to play has none. */
+function playDyn(object: SceneObjectDesc, { seeds, samples, lastChange }: DynFrames): PlayDyn | undefined {
   if (!samples.length) return undefined
   const kind = object.kind === 'shape' || object.kind === 'ink' || object.kind === 'text' || object.kind === 'live' ? object.kind : null
   if (!kind) return undefined
   return {
     kind,
+    seeds,
     samples,
-    end: samples[samples.length - 1].t,
+    end: lastChange,
     finalBounds: object.bounds,
     centered: object.kind === 'text' && !!(object as SceneTextObject).center
   }
 }
 
-/** The prepared samples of an object of the description (by its frames), or undefined when it has none. */
-export type DynLookup = (object: SceneObjectDesc) => DynSample[] | undefined
+/** The frames of an object of the description, or undefined when it has none. */
+export type DynLookup = (object: SceneObjectDesc) => DynFrames | undefined
 
 /** Where the stage's objects are on the board: stage object id → its node ids and ink group (run.ts keeps this record). */
 export type StageLookup = (sid: number) => { nodeIds: string[]; group?: string } | undefined
@@ -426,8 +437,13 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     return made && !made.parent ? [made.x, made.y] : [0, 0]
   }
 
+  /** The board items of `unchanged` objects: the scene plays over them, and they stay as they are. */
+  const untouched = new Set<string>()
+
   for (const object of desc.objects) {
     if (object.kind === 'group') continue
+    const frames = object.dynamic ? dynOf?.(object) : undefined
+    if (object.unchanged && !frames?.samples.length) continue
     const end = timeline.matrix(object.id, END)
     let prior: string[] | null = null
     let priorGroup: string | undefined
@@ -440,6 +456,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       }
       prior = present
       priorGroup = record?.group
+      if (object.unchanged) for (const id of present) untouched.add(id)
     }
     const isRemoved = object.removed || timeline.number(object.id, 'opacity', END) < 0.02
     const play: PlayObject = {
@@ -451,9 +468,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       tipColor: '#ececef',
       drawn: timeline.hasTrack(object.id, 'draw')
     }
-    const samples = object.samples ? dynOf?.(object) : undefined
-    if (samples?.length) {
-      play.dyn = playDyn(object, samples)
+    if (frames) {
+      play.dyn = playDyn(object, frames)
       if (play.dyn) play.settled = Math.max(play.settled, play.dyn.end)
     }
     objects.push(play)
@@ -472,11 +488,12 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       for (const [lineIndex, line] of local.entries()) {
         if (line.length < 2) continue
         // A changing ink object shows its samples without wobble while it changes, so its end state has none either.
+        // One whose seeds are all equal keeps its hand look.
         // The wobble is seeded from the object (its stage id, else its place in the scene), the stroke and its points.
         const flat = line.map(([x, y]) => [x, y] as Point)
         const points: InkPoint[] = ink.pressure
           ? line.map(([x, y, p]) => [x, y, p === undefined ? 0.5 : Math.max(0, Math.min(1, p))])
-          : play.dyn
+          : object.changes
             ? line.map(([x, y]) => [x, y, 0.5])
             : humanize(flat, jitter, mulberry32(strokeSeed(`${object.sid ?? `o${object.id}`}:${lineIndex}`, flat)))
         const world = points.map(([x, y, p]) => {
@@ -507,20 +524,20 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const inkRanges = ranges(lengths)
       strokes.forEach((stroke, i) => {
         if (prior?.includes(stroke.id)) replaceNode(stroke, isRemoved)
-        else out.push(stroke)
+        else if (!object.unchanged) out.push(stroke)
         if (!isRemoved) madeBy(object.id, stroke.id)
         play.targets.push({ nodeId: stroke.id, ink: true, inverseBaked: invert(end), range: inkRanges[i], offset: [stroke.x, stroke.y], tipWidth: width })
       })
       if (play.dyn) play.dyn.ink = { color: withOpacity(finalColor(object.id), ink.style.opacity), width: r2(Math.max(0.5, ink.style.width * (tool === 'highlighter' ? 4 : 1))), tool }
       if (prior) for (const id of prior) if (!strokes.some((stroke) => stroke.id === id)) removed.add(id)
-      if (!isRemoved && strokes.length) inkGroups.push({ object: object.id, strokes: strokes.map((stroke) => stroke.id), ...(priorGroup ? { group: priorGroup } : {}) })
+      if (!isRemoved && !object.unchanged && strokes.length) inkGroups.push({ object: object.id, strokes: strokes.map((stroke) => stroke.id), ...(priorGroup ? { group: priorGroup } : {}) })
       continue
     }
 
     if (object.kind === 'shape') {
       const shape = object as SceneShapeObject
       // A pen shape (with a fill) is drawn by hand; while it changes it shows its samples without wobble, as ink does, so its end state has none either.
-      const d = shape.style.pen && !play.dyn ? handPath(shape.d, shape.style.jitter ?? 0.3, `${object.sid ?? `o${object.id}`}`) : shape.d
+      const d = shape.style.pen && !object.changes ? handPath(shape.d, shape.style.jitter ?? 0.3, `${object.sid ?? `o${object.id}`}`) : shape.d
       const lines = shapeOutline(d)
       const world = lines.map((line) => line.map((p) => apply(end, p)))
       const scale = scaleOf(end)
@@ -1050,6 +1067,11 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         play.settled = Math.max(play.settled, change.start + change.dur)
       }
     }
+  }
+
+  for (const id of untouched) {
+    changed.delete(id)
+    removed.delete(id)
   }
 
   // The board after the scene: existing nodes changed or removed, then the new ones on top.
