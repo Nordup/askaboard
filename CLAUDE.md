@@ -5,6 +5,7 @@
 ## How we work (from 2026-10-23)
 
 - **Build step by step.** Each step must run in the real app before the next step starts.
+- **Short steps, minimum checks** (founder, 2026-10-31). Keep a build step to about 10 minutes. Run only the checks that can fail in that step, on 3 to 6 scenes. Run the full scene set and one outside review once, at the end of the work.
 - **No tests.** See the hard rule in `AGENTS.md`. Verify end to end, not with test files. Checks also write no check-script files (founder, 2026-10-29): use the app's own MCP tools and `space/scripts/drive.mjs`.
 - **Implementation goes to Opus subagents:** `model: "opus"`, `effort: "medium"`, `subagent_type: "general-purpose"`. Run one or two at a time, never two on the same files. The main session plans, writes the brief, reviews the diff, and checks the result.
 - **Reading, search, research and click-through checks go to Haiku subagents** (`model: "haiku"`; `Explore` for read-only work).

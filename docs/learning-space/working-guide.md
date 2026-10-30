@@ -201,6 +201,11 @@ combine; `meta.json` records `no_html` and `brief`.
   --virtual-time-budget=9000 --screenshot=<file>` and a new
   `--user-data-dir`. Tested on the founder's Mac on 2026-10-31.
 
+- **`codex exec` in a background shell hangs on stdin.** It reads stdin as well as its prompt. Add `</dev/null`, or it waits forever on "Reading additional input from stdin..." and never calls the model (2026-10-30: 70 minutes lost).
+- **A failure list is not "expected" until someone looks at it.** Of 20 scenes that failed in the full set, only 6 were built to fail. 7 were the founder's multi-file scenes that the check ran wrongly (their code joined inline, not from files), so they had no coverage. Name why each one fails, and run multi-file scenes from files.
+- **Check the load before you read a timing.** `uptime` first. A lab that shares the machine with a scene set shows `commit_ms` of 2.4 s where a quiet run shows 0.3-0.4 s.
+- **A comparison needs a before state.** `git archive <commit> space` into scratch, link `node_modules`, build, and `git init` there: `replay.mjs` needs a git folder. Replays against the old build gave the only exact preview numbers.
+
 ## Ports and paths used so far
 
 - `47821`: the founder's app (MCP). Checks used 47822–47999 and debug ports

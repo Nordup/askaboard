@@ -44,8 +44,8 @@ limits scripts and images.
 1. A client calls a tool on `http://127.0.0.1:47821/mcp` (or through the
    relay). The server (`src/main/mcp.ts`) checks Host and Origin, finds the
    session, validates arguments with zod against the shared limits.
-2. The tool sends an IPC request (`canvasInfo`, `changes`, `screenshotPlan`,
-   `openBoard`, `agentTool` or `learnerNews`) to the renderer and waits for
+2. The tool sends an IPC request (such as `agentTool`, `sceneControl`,
+   `sceneDraft` or `sceneFrames`) to the renderer and waits for
    the reply.
 3. The renderer (`src/renderer/src/agent/handler.ts`, `edits.ts`) reads or
    changes the live board as **one undo step**, stamps `seq`, records
@@ -269,8 +269,24 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   rebuilt play data stays in the player's history like the play data of
   a scene committed in this session.
 - **Errors.** A scene input works, draws nothing, or is an error with its
-  line, at once, also from parallel async functions and functions of
-  moving objects; results carry no warnings (decision B18).
+  line, also from parallel async functions and functions of moving objects;
+  results carry no warnings (decision B18). An error at a moment that
+  write_scene did not evaluate comes in the next tool result (T31).
+- **Streaming** ([`streaming-scenes-plan.md`](streaming-scenes-plan.md),
+  T27-T32). A draft's order: the program body, `end()`, seeds, the description,
+  the reply, then the sweep. Seeds are a few moments of each dynamic object, and
+  the end seed is the final state. The sweep is one forward pass, moment by
+  moment, in 8 ms batches between the worker's messages. Frame chunks
+  (`shared/frames.ts`) add samples to objects in any order, and carry `through`
+  and `end`. One `Producer` record in `SceneStage` lives from the reply to the
+  sweep's terminal event, and the idle rebuild (T26) starts from that event.
+  Work that needs the realm goes through `onRealm`, so no sweep wait stays in
+  the stage lock. On the board, a job keeps `readyThrough`, and the scene clock
+  (`timeOf`) never passes it (T28). A preview past it asks for its moments on
+  the frames port, and the worker answers between two batches (T32). What the
+  sweep finds later waits in `lateNotes` for the next tool result (T31). A
+  scene with a stepping canvas or program item, and every run that is not a
+  draft, drains before its reply, on the same code.
 
 - **Main process.** `write_scene` and `play_scene` (`src/main/mcp.ts`) send
   the program to the board's stage (`live-scene.ts`, decision T18): one

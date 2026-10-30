@@ -1,6 +1,6 @@
 # Learning Space — playback and drawing pitfalls: where glitches come from
 
-> Status (2026-10-27): a list of the failure classes we know in how scenes
+> Status (2026-10-31, streaming: T27-T32): a list of the failure classes we know in how scenes
 > are sampled, sent and drawn, with the place in the code, how to see the
 > fault, and how to measure it. Read it before you change sampling, ink
 > points, frames, the player or the board's painting, and when the founder
@@ -30,13 +30,13 @@
 | # | Class | What you see | Where | Status |
 | --- | --- | --- | --- | --- |
 | 1 | **Point count changes between samples.** The stage puts ink points on a grid along the length (`count = max(2, ceil(total/1.5))`, `space/src/shared/ink-points.ts`). A length on a grid step, even by rounding, flips the count between samples. | A pen line lags a shape that moves with it (string and bob), up to one sample step. | Blending in `space/src/renderer/src/live/player.ts` (dyn interpolation). | Fixed 2026-10-27 (42b16e8): strokes with different counts blend by share of length. Ink still holds when the number of strokes changes. |
-| 2 | **Gaps between kept samples.** The stage drops a sample equal to the one before (`space/src/stage/live-prelude.js`, the sampling pass). If the gap grows past `BLEND_GAP`, the player holds instead of blending. | An object stops for one step at a turning point, while another moves. | `live-prelude.js` sampling; `player.ts` `BLEND_GAP`. | Fixed 2026-10-27 (42b16e8): the last sample of each run of equal samples is kept. |
+| 2 | **Gaps between kept samples.** The stage drops a sample equal to the one before (`space/src/stage/live-prelude.js`, the sweep). If the gap grows past `BLEND_GAP`, the player holds instead of blending. | An object stops for one step at a turning point, while another moves. | `live-prelude.js` sampling; `player.ts` `BLEND_GAP`. | Fixed 2026-10-27 (42b16e8): the last sample of each run of equal samples is kept. |
 | 3 | **Ink and shapes painted in different frames.** Shapes are DOM/SVG updates; ink is painted on a canvas. | A pen line about one display frame behind a shape (about 6 px at speed). | `space/src/renderer/src/board/Board.tsx` (`requestPaint`), the cached ink layers of B11 (`board/paint.ts`). | Fixed 2026-10-27 (4db961e): a playback frame paints its ink at once. Watch it if the ink layers change again. |
 | 4 | **A shape's path changes structure between samples** (different commands or count). | The shape holds for one step instead of blending. | `player.ts` shape blending. | Open (rare). Same idea as class 1 would fix it. |
 | 5 | **Live item params one frame late.** Params of shader, canvas and program items go through React state. | A live item lags the scene by one frame. | `space/src/renderer/src/live-pixels/` (`registry.ts`), `live/params.ts`. | Open. |
 | 6 | **Preview and playback time grids differ.** Previews snap to a 60 Hz tick grid (B10); a pause can stop 2–4 ms before the reported time. | A preview and a paused frame of a stateful live item differ slightly. | `live-pixels/clock.ts`, `runtime.ts`. | Known limit (B10). |
-| 7 | **The script panel covers the board's top-right corner (and the tool palette its bottom).** Agents do not know it is there and place material under it. | Labels and parts of drawings hidden in all four check runs of 2026-10-27. | The view in `list_items` (then `get_canvas_info`) and the view checks; `components/ScriptPanel.tsx`. | Fixed 2026-10-27: `list_items` (then `get_canvas_info`) and `board.view` list as `covered` the panel's full-height area (also before the first scene; the bar only while minimised; `ScriptPanel.tsx` `scriptPanelArea()`) and the bottom tool palette (`ToolPalette.tsx` `toolPaletteArea()`), via `agent/covered.ts`. `space()` and the auto side of `label()` keep clear of it, and `preview_scene` images hatch it. Material at explicit coordinates is the agent's choice. |
-| 8 | **Recipes with side effects.** The scene library evaluates an object's recipe at every sample, moment by moment (T27). A recipe that changes state sees that order; a rebuild skips sampling. | A scene that depends on counting its own calls can differ after a rebuild. | `live-prelude.js` sampling and rebuild. | Accepted: agents are not limited; the order is fixed. |
+| 7 | **The script panel covers the board's top-right corner (and the tool palette its bottom).** Agents do not know it is there and place material under it. | Labels and parts of drawings hidden in all four check runs of 2026-10-27. | The view in `list_items` and the view checks; `components/ScriptPanel.tsx`. | Fixed 2026-10-27: `list_items` and `board.view` list as `covered` the panel's full-height area (also before the first scene; the bar only while minimised; `ScriptPanel.tsx` `scriptPanelArea()`) and the bottom tool palette (`ToolPalette.tsx` `toolPaletteArea()`), via `agent/covered.ts`. `space()` and the auto side of `label()` keep clear of it, and `preview_scene` images hatch it. Material at explicit coordinates is the agent's choice. |
+| 8 | **Recipes with side effects.** The sweep evaluates an object's recipe at every sample, moment by moment (T27), and seeds and previews add calls. A recipe that changes state sees that order; a rebuild skips sampling. | A scene that depends on counting its own calls can differ after a rebuild. | `live-prelude.js` sampling and rebuild. | Accepted: agents are not limited; the order is fixed. |
 
 ## The root of classes 1–6: the stage samples, the player blends
 
@@ -85,10 +85,10 @@ you add a new fix here, check if a change can remove the seam instead.
    change from one sample in one paint step. The fix of class 3 does this
    for ink; keep it as a rule for every new kind.
 
-Rejected on 2026-10-27, then replaced on 2026-10-31: frames computed on demand at display time
-([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)). That design cannot
-keep any agent JavaScript valid. Scenes now stream a different way: one forward sweep in a fixed
-order, independent of the playhead ([`streaming-scenes-plan.md`](streaming-scenes-plan.md), T27-T31).
+Rejected on 2026-10-27, and still rejected: frames computed at display time
+([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)). Scenes stream
+another way: one forward sweep in a fixed order, independent of the playhead. Only a preview
+computes moments on demand (T32, [`streaming-scenes-plan.md`](streaming-scenes-plan.md)).
 
 ## Where the drawing pipeline lives
 
