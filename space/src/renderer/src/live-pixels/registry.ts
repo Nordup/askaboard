@@ -262,7 +262,7 @@ export class LiveItem implements SlotOwner {
   /** Wanted with no host: start one (canvas and program items need a slot first). */
   private ensureHost(): void {
     if (this.host || !this.wantsHost() || this.status.state === 'error' || this.stopped) return
-    if (this.node.mode === 'shader' || boardSlots.request(this)) this.startHost()
+    if (this.node.mode === 'shader' || this.node.mode === 'world' || boardSlots.request(this)) this.startHost()
     else this.setStatus('waiting')
   }
 
@@ -329,6 +329,7 @@ export class LiveItem implements SlotOwner {
     host = createHost(
       this.node.mode,
       {
+        id: this.id,
         code: this.node.code,
         seed: this.seed,
         size: this.size,
@@ -579,7 +580,7 @@ export class LiveItem implements SlotOwner {
   /** Housekeeping (every HOUSEKEEPING_MS): the on-screen size, stalls and releases. */
   housekeep(now: number): void {
     if (this.visible) this.measure()
-    if (!this.host || this.node.mode === 'shader') return
+    if (!this.host || this.node.mode === 'shader' || this.node.mode === 'world') return
     const shown = this.visible && document.visibilityState !== 'hidden'
     if (shown && this.status.state !== 'error' && now - this.aliveAt > STALL_MS) this.stall()
     // Off screen: a host ends RELEASE_MS after its scene settled (never while it plays or waits).
@@ -716,7 +717,7 @@ export function liveResources(): { items: number; hosts: number; workers: number
   return {
     items: list.length,
     hosts: list.filter((item) => item.host).length,
-    workers: list.filter((item) => item.host && item.mode !== 'shader').length,
+    workers: list.filter((item) => item.host && item.mode !== 'shader' && item.mode !== 'world').length,
     contexts: list.reduce((sum, item) => sum + item.contexts, 0),
     slots: boardSlots.counts()
   }
@@ -727,8 +728,8 @@ export function liveReport(id: string): unknown {
   return items.get(id)?.report
 }
 
-/** Check live code: the shader compile log, the canvas syntax error, or a program's first error; null when it is fine. */
-export async function validateLiveCode(mode: 'shader' | 'canvas' | 'program', code: string, params: Record<string, number> = {}, size?: [number, number]): Promise<string | null> {
-  if (mode === 'program') return programError(code, params, size)
+/** Check live code: the shader compile log, the canvas syntax error, or the first error of a program or a world; null when it is fine. */
+export async function validateLiveCode(mode: 'shader' | 'canvas' | 'program' | 'world', code: string, params: Record<string, number> = {}, size?: [number, number]): Promise<string | null> {
+  if (mode === 'program' || mode === 'world') return programError(mode, code, params, size)
   return mode === 'shader' ? shaderError(code, params) : canvasSyntaxError(code)
 }

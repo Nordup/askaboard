@@ -444,7 +444,7 @@ export interface AgentMethods {
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
   /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
-  validateLive: { params: { mode: 'shader' | 'canvas' | 'program'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
+  validateLive: { params: { mode: 'shader' | 'canvas' | 'program' | 'world'; code: string; params?: Record<string, number>; size?: [number, number] }; result: { error: string | null } }
   /**
    * Stills of live items for preview frames, at `scale` px per board point: for each request, a picture per
    * moment (t: scene time; null: the item as it is on the board now). url null when there is no picture.

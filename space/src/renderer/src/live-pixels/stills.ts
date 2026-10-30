@@ -4,6 +4,7 @@ import type { CanvasSize, HostEvents, HostStart, LiveFrame, LiveHost } from './h
 import { CanvasHost } from './sandbox'
 import { ProgramHost } from './program'
 import { ShaderHost } from './shader'
+import { WorldHost } from './world/host'
 import { withStepSlot } from './slots'
 
 /**
@@ -28,6 +29,7 @@ const MAX_PIXELS = 2_000_000
 export function createHost(mode: LiveNode['mode'], start: HostStart, events: HostEvents, container: HTMLElement | null): LiveHost {
   if (mode === 'shader') return new ShaderHost(start, events, container)
   if (mode === 'program') return new ProgramHost(start, events, container)
+  if (mode === 'world') return new WorldHost(start, events, container)
   return new CanvasHost(start, events, container)
 }
 
@@ -71,7 +73,7 @@ async function withStepHost<T>(
     }
     const host = createHost(
       node.mode,
-      { code: node.code, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
+      { id: 'step', code: node.code, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
       {
         onAlive: (_frames, tick) => progress(tick),
         onProgress: progress,
@@ -150,15 +152,15 @@ export async function stillAt(node: LiveNode, params: Record<string, number>, t:
 }
 
 /**
- * Check a program before a scene plays it: run its setup and its first
+ * Check a program or a world before a scene plays it: run its setup and its first
  * ticks in a step host, and return its first error (syntax, a failed
  * import, a runtime error), or null. A program still busy after CHECK_MS
  * (a slow import, a setup that waits) passes.
  */
-export async function programError(code: string, params: Record<string, number>, size: [number, number] = [320, 200]): Promise<string | null> {
+export async function programError(mode: 'program' | 'world', code: string, params: Record<string, number>, size: [number, number] = [320, 200]): Promise<string | null> {
   let error: string | null = null
   await withStepHost(
-    { mode: 'program', code, params },
+    { mode, code, params },
     stillSize({ w: size[0], h: size[1] }, 1),
     0,
     null,

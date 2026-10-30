@@ -186,7 +186,7 @@ export interface ImageNode extends NodeBase {
  */
 export interface LiveNode extends NodeBase {
   kind: 'live'
-  mode: 'shader' | 'canvas' | 'program'
+  mode: 'shader' | 'canvas' | 'program' | 'world'
   code: string
   params: Record<string, number>
   w: number
@@ -275,7 +275,7 @@ function validKnown(node: BoardNode): boolean {
       return typeof raw.src === 'string' && validStyle(raw.style)
     case 'live':
       return (
-        (raw.mode === 'shader' || raw.mode === 'canvas' || raw.mode === 'program') &&
+        (raw.mode === 'shader' || raw.mode === 'canvas' || raw.mode === 'program' || raw.mode === 'world') &&
         typeof raw.code === 'string' &&
         isRecord(raw.params) &&
         Object.values(raw.params).every(finite) &&

@@ -45,6 +45,13 @@
   z-index: 1;
 }
 
+/* The world surface (live-pixels/world/surface.ts): under the ink, which is later in the DOM. It sets its own place and size. */
+.board__world {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .board__active {
   z-index: 2;
 }

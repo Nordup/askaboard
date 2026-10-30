@@ -796,7 +796,7 @@ export function App() {
         },
         items: () => liveItems(),
         resources: () => liveResources(),
-        validate: (mode: 'shader' | 'canvas' | 'program', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
+        validate: (mode: 'shader' | 'canvas' | 'program' | 'world', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
       },
       /** The sidebar's own board actions (dev checks, scripts/drive.mjs board-action): the same callbacks as its Rename and Move to Trash menu items; trash answers the confirm with OK. */
       sidebar: {

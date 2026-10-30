@@ -55,7 +55,7 @@ function LiveRunner({ node, style, common }: Props) {
 
   const note =
     status.state === 'error'
-      ? { title: node.mode === 'shader' ? 'Shader error' : node.mode === 'program' ? 'Program error' : 'Canvas error', detail: firstLine(status.error) }
+      ? { title: node.mode === 'shader' ? 'Shader error' : node.mode === 'program' ? 'Program error' : node.mode === 'world' ? 'World error' : 'Canvas error', detail: firstLine(status.error) }
       : status.state === 'waiting'
         ? { title: 'Waiting', detail: 'Too many live items run at once.' }
         : null
@@ -103,7 +103,7 @@ function LiveStill({ node, style, common }: Props) {
     return (
       <div {...common} className="node node-live node-live--note" style={style}>
         <div className="node-live__note">
-          <span className="node-live__note-title">{node.mode === 'shader' ? 'Shader' : node.mode === 'program' ? 'Program' : 'Live canvas'}</span>
+          <span className="node-live__note-title">{node.mode === 'shader' ? 'Shader' : node.mode === 'program' ? 'Program' : node.mode === 'world' ? 'World' : 'Live canvas'}</span>
         </div>
       </div>
     )

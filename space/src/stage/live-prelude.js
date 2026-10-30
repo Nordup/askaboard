@@ -1384,11 +1384,11 @@
     return site ? (site.file === null ? `line ${site.line}` : `${site.file} line ${site.line}`) : 'line ?'
   }
 
-  function liveObject(api, mode, code, opts) {
+  function liveObject(api, mode, code, opts, size = [320, 200]) {
     if (typeof code !== 'string' || !code.trim()) fail(`${api}(code, options) needs its program as a string`)
     const site = callSite()
     opts = options(opts, `${api} options`)
-    const [w, h] = opts.size === undefined ? [320, 200] : pair(opts.size, `${api} size`)
+    const [w, h] = opts.size === undefined ? size : pair(opts.size, `${api} size`)
     if (w <= 0 || h <= 0) fail(`${api} size must be positive`)
     let x
     let y
@@ -1420,6 +1420,7 @@
   const shader = (code, opts) => liveObject('shader', 'shader', code, opts)
   const canvas = (code, opts) => liveObject('canvas', 'canvas', code, opts)
   const program = (code, opts) => liveObject('program', 'program', code, opts)
+  const world = (code, opts) => liveObject('world', 'world', code, opts, [480, 360])
 
   // ---------- Board material: html(), image(), space(), copy(), edit() ----------
 
@@ -3227,6 +3228,7 @@
     shader: creator('shader', shader, { optIndex: 1 }),
     canvas: creator('canvas', canvas, { optIndex: 1 }),
     program: creator('program', program, { optIndex: 1 }),
+    world: creator('world', world, { optIndex: 1 }),
     html,
     image,
     copy,
@@ -3251,7 +3253,7 @@
     mark,
     stage
   }
-  if (NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program']) delete api[key]
+  if (NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program', 'world']) delete api[key]
   if (NO_HTML) delete api.html
   for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
 

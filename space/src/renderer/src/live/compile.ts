@@ -1105,7 +1105,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const programSteps = ownSteps(desc.steps)
   const endStep: string | undefined = programSteps[stepAt(programSteps, desc.duration)]?.name
   const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
-  next = next.map((node) => (node.kind === 'live' && (node as LiveNode).mode === 'program' && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
+  next = next.map((node) => (node.kind === 'live' && ((node as LiveNode).mode === 'program' || (node as LiveNode).mode === 'world') && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,

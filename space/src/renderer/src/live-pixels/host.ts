@@ -42,6 +42,8 @@ export interface LiveFrame {
 }
 
 export interface HostStart {
+  /** The item's node id. */
+  id: string
   code: string
   seed: number
   size: CanvasSize

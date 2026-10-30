@@ -1,0 +1,356 @@
+import type { LiveNode } from '@shared/board-format'
+import { LIVE_ORIGIN } from '@shared/live-libs'
+import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldToPage } from '@shared/world-protocol'
+import type { NodeOverride } from '../../board/playback'
+import type { Camera, Point } from '../../board/types'
+import { WORLD_MARGIN, worldWorkerUrl } from './stub'
+
+/**
+ * The world surface: one GPU canvas that draws every world of a board, between
+ * the page content and the ink. See docs/learning-space/one-world-architecture.md.
+ *
+ * The worker runs in a hidden sandboxed frame (the frame of program.ts), with
+ * the protocol of shared/world-protocol.ts over one port. It renders to no
+ * visible canvas: it sends each finished picture with the camera it was made
+ * for, and the page shows the picture in its own paint (`sync`), with the CSS
+ * transform from that camera to the camera of the paint. So a world moves with
+ * the ink in the same paint, and a slow page gets fewer pictures, not late ones.
+ * The canvas is larger than the board by WORLD_MARGIN on each side, so a pan
+ * shows no empty edge before the next picture.
+ *
+ * The frame and the worker start with the first world. A board with no world
+ * pays one map lookup per paint.
+ *
+ * A step host (previews, stills) has a private surface with no canvas: its
+ * pictures end at once, and only its captures reach the page.
+ */
+
+/** How a world stands on the board now, from the board's state. */
+export interface WorldPlace {
+  node: LiveNode
+  /** The nominal rect's top-left in board points, from the layout cache: no playback transform is in it. */
+  x: number
+  y: number
+  override: NodeOverride | undefined
+}
+
+/** What the board gives its surface. */
+export interface WorldBoard {
+  /** Ask for a paint: the board calls `syncWorlds` in it. */
+  paint(): void
+  /** The place of a node, or null when it is not on the board. */
+  place(id: string): WorldPlace | null
+}
+
+/** One generation of a world on a surface (host.ts). */
+export interface WorldMember {
+  readonly key: WorldKey
+  readonly shown: boolean
+  receive(message: Extract<WorldToPage, { key: WorldKey }>): void
+  failed(message: string): void
+  lost(): void
+}
+
+type Picture = Extract<WorldToPage, { type: 'picture' }>
+
+const IDENTITY: WorldPlacement['matrix'] = [1, 0, 0, 1, 0, 0]
+
+const keyOf = (key: WorldKey): string => `${key.node}\u0000${key.generation}`
+
+/** The placement of a world: its node and the playback overrides, so rotation, scale, fades and draw() reach the surface. */
+function placement(member: WorldMember, place: WorldPlace): WorldPlacement {
+  const { node, x, y, override } = place
+  const m = override?.matrix
+  // The override is a world matrix on the final geometry; the contract applies it around the rect's centre.
+  const cx = x + node.w / 2
+  const cy = y + node.h / 2
+  const matrix: WorldPlacement['matrix'] = m ? [m[0], m[1], m[2], m[3], m[0] * cx + m[2] * cy + m[4] - cx, m[1] * cx + m[3] * cy + m[5] - cy] : IDENTITY
+  const own = Number(node.style?.opacity ?? '1')
+  return {
+    ...member.key,
+    x,
+    y,
+    w: node.w,
+    h: node.h,
+    matrix,
+    opacity: (Number.isFinite(own) ? own : 1) * (override?.opacity ?? 1),
+    reveal: override?.reveal ?? 1,
+    z: node.z,
+    shown: member.shown
+  }
+}
+
+// ---------- Frame messages: one listener for every surface frame ----------
+
+const byWindow = new Map<Window, WorldSurface>()
+let listening = false
+
+function listen(): void {
+  if (listening) return
+  listening = true
+  window.addEventListener('message', (event) => {
+    const source = event.source as Window | null
+    const surface = source ? byWindow.get(source) : undefined
+    if (surface && event.origin === 'null') surface.fromFrame(event.data)
+  })
+}
+
+export class WorldSurface {
+  private readonly context: ImageBitmapRenderingContext | null
+  private members = new Map<string, WorldMember>()
+  private frame: HTMLIFrameElement | null = null
+  private box: HTMLElement | null = null
+  private channel: MessageChannel | null = null
+  private disposed = false
+  /** Messages wait here until the first size is known: `init` is the worker's first message. */
+  private outbox: PageToWorld[] | null = []
+  /** Generations that left: they go in the paint that shows what replaces them. */
+  private removals: WorldKey[] = []
+  private waiting: Picture | null = null
+  /** The camera of the picture on the canvas. */
+  private shownCamera: WorldCamera | null = null
+  private size = ''
+  private transform = ''
+  private lastView = ''
+  private seq = 0
+
+  /** canvas null: a private surface of the given size, with no board to follow. */
+  constructor(
+    private readonly canvas: HTMLCanvasElement | null,
+    private board: WorldBoard | null,
+    fixed?: { width: number; height: number; dpr: number }
+  ) {
+    this.context = canvas?.getContext('bitmaprenderer') ?? null
+    if (fixed) this.begin({ type: 'init', ...fixed, margin: 0 })
+  }
+
+  setBoard(board: WorldBoard): void {
+    this.board = board
+    if (this.members.size) board.paint()
+  }
+
+  // ----- The worker -----
+
+  private boot(): void {
+    if (this.frame) return
+    listen()
+    const frame = document.createElement('iframe')
+    frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock')
+    frame.setAttribute('tabindex', '-1')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.cssText = 'width:100%;height:100%;border:0'
+    frame.src = `${LIVE_ORIGIN}/frame.html`
+    const box = document.createElement('div')
+    box.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;z-index:-1;overflow:hidden'
+    box.appendChild(frame)
+    document.body.appendChild(box)
+    this.frame = frame
+    this.box = box
+    if (frame.contentWindow) byWindow.set(frame.contentWindow, this)
+    this.channel = new MessageChannel()
+    this.channel.port1.onmessage = (event) => this.receive(event.data as WorldToPage)
+  }
+
+  /** A message from the frame: it is ready, or the worker failed to load. */
+  fromFrame(data: unknown): void {
+    if (!data || typeof data !== 'object' || this.disposed) return
+    const m = data as { type?: unknown; message?: unknown }
+    if (m.type === 'ready' && this.channel) {
+      const port = this.channel.port2
+      this.frame?.contentWindow?.postMessage({ type: 'start', url: worldWorkerUrl(), port, init: {} }, '*', [port])
+    } else if (m.type === 'load-error') {
+      const message = typeof m.message === 'string' && m.message ? m.message.replace(/^Uncaught /, '') : 'The world surface failed to load.'
+      for (const member of [...this.members.values()]) member.failed(message)
+    }
+  }
+
+  private post(message: PageToWorld): void {
+    if (this.outbox) this.outbox.push(message)
+    else this.channel?.port1.postMessage(message)
+  }
+
+  /** The first size: the waiting messages go after it. */
+  private begin(init: Extract<PageToWorld, { type: 'init' }>): void {
+    const waiting = this.outbox ?? []
+    this.outbox = [init, ...waiting]
+    this.flush()
+  }
+
+  private flush(): void {
+    if (!this.outbox || !this.channel || !this.size) return
+    for (const message of this.outbox) this.channel.port1.postMessage(message)
+    this.outbox = null
+  }
+
+  private receive(m: WorldToPage): void {
+    if (this.disposed) return
+    if (m.type === 'picture') this.picture(m)
+    else if (m.type === 'lost') for (const member of [...this.members.values()]) member.lost()
+    else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
+  }
+
+  private picture(m: Picture): void {
+    if (!this.context) {
+      m.bitmap.close()
+      this.post({ type: 'presented', n: m.n })
+      return
+    }
+    this.waiting?.bitmap.close()
+    this.waiting = m
+    this.board?.paint()
+  }
+
+  // ----- Generations -----
+
+  /** A new generation. `run`: it runs ticks. */
+  add(member: WorldMember, world: WorldStart, run: boolean): void {
+    this.members.set(keyOf(member.key), member)
+    this.boot()
+    this.post({ type: 'add', world })
+    this.post({ type: 'run', key: member.key, on: run })
+    if (!this.canvas) {
+      const placement: WorldPlacement = { ...member.key, x: 0, y: 0, w: world.w, h: world.h, matrix: IDENTITY, opacity: 1, reveal: 1, z: 0, shown: true }
+      this.post({ type: 'view', seq: ++this.seq, camera: { x: 0, y: 0, zoom: 1 }, placements: [placement] })
+    }
+    this.flush()
+    this.board?.paint()
+  }
+
+  send(message: PageToWorld): void {
+    this.post(message)
+  }
+
+  /** A member's placement changed: the next paint sends it. */
+  changed(): void {
+    this.board?.paint()
+  }
+
+  /** A generation left. The worker hears it in the paint that sends the view without it. */
+  remove(key: WorldKey): void {
+    if (!this.members.delete(keyOf(key))) return
+    if (this.canvas) {
+      this.removals.push(key)
+      this.board?.paint()
+    } else this.post({ type: 'remove', key })
+  }
+
+  // ----- One paint -----
+
+  /** In the board's paint: show the waiting picture, move the canvas to the camera of this paint, and tell the worker what changed. */
+  sync(camera: Camera, viewport: Point): void {
+    const [vw, vh] = viewport
+    if (!this.canvas || !this.context || vw < 2 || vh < 2) return
+    const view: WorldCamera = { x: camera.center[0] - vw / 2 / camera.zoom, y: camera.center[1] - vh / 2 / camera.zoom, zoom: camera.zoom }
+    this.resize(this.canvas, vw, vh)
+    this.adopt(this.context)
+    this.follow(this.canvas, view)
+    this.sendView(view)
+  }
+
+  private resize(canvas: HTMLCanvasElement, vw: number, vh: number): void {
+    const dpr = window.devicePixelRatio || 1
+    const size = `${vw}x${vh}@${dpr}`
+    if (size === this.size) return
+    const first = !this.size
+    this.size = size
+    if (first) this.begin({ type: 'init', width: vw, height: vh, dpr, margin: WORLD_MARGIN })
+    else this.post({ type: 'resize', width: vw, height: vh, dpr })
+    canvas.style.left = `${-WORLD_MARGIN}px`
+    canvas.style.top = `${-WORLD_MARGIN}px`
+    canvas.style.width = `${vw + WORLD_MARGIN * 2}px`
+    canvas.style.height = `${vh + WORLD_MARGIN * 2}px`
+    canvas.style.transformOrigin = `${WORLD_MARGIN}px ${WORLD_MARGIN}px`
+  }
+
+  private adopt(context: ImageBitmapRenderingContext): void {
+    if (this.members.size === 0) {
+      // No world is left: no picture is due.
+      if (this.waiting) this.settle(this.waiting)
+      if (this.shownCamera) context.transferFromImageBitmap(null)
+      this.shownCamera = null
+      return
+    }
+    const picture = this.waiting
+    if (!picture) return
+    context.transferFromImageBitmap(picture.bitmap)
+    this.shownCamera = picture.camera
+    this.settle(picture)
+  }
+
+  private settle(picture: Picture): void {
+    picture.bitmap.close()
+    this.waiting = null
+    this.post({ type: 'presented', n: picture.n })
+  }
+
+  /** The transform from the picture's camera to the camera of this paint, around the board's top-left corner. */
+  private follow(canvas: HTMLCanvasElement, view: WorldCamera): void {
+    const shown = this.shownCamera
+    if (!shown) return
+    const transform = `translate(${(shown.x - view.x) * view.zoom}px, ${(shown.y - view.y) * view.zoom}px) scale(${view.zoom / shown.zoom})`
+    if (transform === this.transform) return
+    this.transform = transform
+    canvas.style.transform = transform
+  }
+
+  private sendView(view: WorldCamera): void {
+    const placements: WorldPlacement[] = []
+    for (const member of this.members.values()) {
+      const place = this.board?.place(member.key.node)
+      if (place) placements.push(placement(member, place))
+    }
+    const text = JSON.stringify([view, placements])
+    if (text !== this.lastView) {
+      this.lastView = text
+      this.post({ type: 'view', seq: ++this.seq, camera: view, placements })
+    }
+    for (const key of this.removals) this.post({ type: 'remove', key })
+    this.removals = []
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    this.waiting?.bitmap.close()
+    this.waiting = null
+    this.frame?.contentWindow?.postMessage({ type: 'stop' }, '*')
+    this.channel?.port1.close()
+    for (const [win, surface] of byWindow) if (surface === this) byWindow.delete(win)
+    this.box?.remove()
+    this.context?.transferFromImageBitmap(null)
+  }
+}
+
+// ---------- One surface per board ----------
+
+const surfaces = new WeakMap<HTMLElement, WorldSurface>()
+const sides = new WeakMap<HTMLElement, WorldBoard>()
+
+/** The surface of the board around `inside`. Its canvas is in the board's markup. */
+export function boardSurface(inside: HTMLElement): WorldSurface {
+  const board = inside.closest<HTMLElement>('.board')
+  const canvas = board?.querySelector<HTMLCanvasElement>(':scope > .board__world')
+  if (!board || !canvas) throw new Error('A world needs a board.')
+  let surface = surfaces.get(board)
+  if (!surface) {
+    surface = new WorldSurface(canvas, sides.get(board) ?? null)
+    surfaces.set(board, surface)
+  }
+  return surface
+}
+
+/** The board joins its surface, now or when the first world starts. The cleanup ends the surface. */
+export function bindWorldBoard(element: HTMLElement, side: WorldBoard): () => void {
+  sides.set(element, side)
+  surfaces.get(element)?.setBoard(side)
+  return () => {
+    sides.delete(element)
+    surfaces.get(element)?.dispose()
+    surfaces.delete(element)
+  }
+}
+
+/** In the board's paint. */
+export function syncWorlds(element: HTMLElement | null, camera: Camera, viewport: Point): void {
+  if (element) surfaces.get(element)?.sync(camera, viewport)
+}

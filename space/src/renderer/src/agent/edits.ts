@@ -94,7 +94,7 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
         code_length: node.code.length,
         state: status ? status.state : 'not shown',
         ...(status?.error ? { error: status.error } : {}),
-        ...(node.mode === 'program' ? { input: status?.input ?? 'none' } : {}),
+        ...(node.mode === 'program' || node.mode === 'world' ? { input: status?.input ?? 'none' } : {}),
         ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {})
       })
     }

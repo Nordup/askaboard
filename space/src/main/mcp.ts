@@ -1082,7 +1082,7 @@ export class AgentServer {
     await Promise.all(Array.from({ length: Math.min(LIVE_CHECKS, queue.length) }, worker))
     if (!failed.length) return null
     failed.sort((a, b) => (a.live.file ?? '').localeCompare(b.live.file ?? '') || (a.live.line ?? 0) - (b.live.line ?? 0))
-    const what = (entry: { live: Live; error: string }): string => `the ${entry.live.api}() code ${entry.live.mode === 'program' ? 'fails' : 'does not compile'}: ${entry.error}`
+    const what = (entry: { live: Live; error: string }): string => `the ${entry.live.api}() code ${entry.live.mode === 'program' || entry.live.mode === 'world' ? 'fails' : 'does not compile'}: ${entry.error}`
     if (failed.length === 1) return new SceneProgramError(what(failed[0]), failed[0].live.line ?? null, failed[0].live.file ?? null)
     return new SceneProgramError(failed.map((entry) => (entry.live.line ? `${siteLabel({ file: entry.live.file ?? null, line: entry.live.line })}: ${what(entry)}` : what(entry))).join('\n'), null)
   }

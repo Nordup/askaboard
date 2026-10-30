@@ -22,6 +22,7 @@ import {
 import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
 import { enterLive, enteredLive, liveInput, setLivePlayback } from '../live-pixels/registry'
+import { bindWorldBoard, syncWorlds } from '../live-pixels/world/surface'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -518,6 +519,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             camera: cameraRef.current
           })
         }
+        // The worlds move with the ink, in this same paint.
+        syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
       }
       if (now) paint()
       else paintFrameRef.current = requestAnimationFrame(paint)
@@ -534,6 +537,22 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     },
     []
   )
+
+  // The world surface of this board: it asks for paints and reads where each world stands now.
+  useLayoutEffect(() => {
+    const board = hostRef.current
+    if (!board) return
+    return bindWorldBoard(board, {
+      paint: () => requestPaint({}),
+      place: (id) => {
+        const own = indexRef.current.byId.get(id)
+        const node = own ?? ghostByIdRef.current.get(id)
+        if (!node || !isLive(node)) return null
+        const box = own ? layoutRef.current.get(id) : undefined
+        return { node, x: box?.x ?? node.x, y: box?.y ?? node.y, override: playbackRef.current?.overrides.get(id) }
+      }
+    })
+  }, [requestPaint])
 
   // ---------- Layout cache ----------
 
@@ -1667,6 +1686,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     >
       <ContentLayer index={index} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
       {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
+      <canvas className="board__world" aria-hidden="true" />
       <canvas className="board__ink" ref={inkRef} />
       <canvas className="board__ink board__ink--live" ref={liveInkRef} aria-hidden="true" />
       <canvas className="board__active" ref={activeInkRef} aria-hidden="true" />
