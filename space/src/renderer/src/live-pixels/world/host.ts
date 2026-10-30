@@ -26,7 +26,7 @@ async function stillUrl(still: WorldStill, w: number, h: number): Promise<string
   const bitmap = await createImageBitmap(still.blob)
   const scale = bitmap.width / Math.max(1e-3, still.w)
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)))
-  canvas.getContext('2d')?.drawImage(bitmap, -still.x * scale, -still.y * scale)
+  canvas.getContext('2d')?.drawImage(bitmap, still.x * scale, still.y * scale)
   bitmap.close()
   return blobUrl(await canvas.convertToBlob({ type: 'image/png' }))
 }
