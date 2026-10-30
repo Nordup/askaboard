@@ -16,10 +16,12 @@
 export const LOOK = String.raw`
   const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
-  const FILM = { name: 'film', exposure: 1, bloom: 0.26, threshold: 1.1, glowRadius: 0.32, dof: 0.5, shadows: true, environment: 0.9, tone: true };
-  const PLAIN = { name: 'plain', exposure: 1, bloom: 0, threshold: 1.1, glowRadius: 0.32, dof: 0, shadows: false, environment: 0, tone: false };
+  const FILM = { name: 'film', exposure: 1, bloom: 0.26, threshold: 1.1, glowRadius: 0.32, dof: 0.5, shadows: true, shadow: 0.55, softness: 0.22, environment: 0.9, tone: true };
+  const PLAIN = { name: 'plain', exposure: 1, bloom: 0, threshold: 1.1, glowRadius: 0.32, dof: 0, shadows: false, shadow: 0.55, softness: 0.22, environment: 0, tone: false };
   /** The scale the numbers of film.js were tuned at: 2 pixels per board point. */
   const FILM_SCALE = 2;
+  /** The floor's shadow map: size, its widest blur as a mip level, the layer of what casts a shadow. */
+  const SHADOW_SIZE = 1024, SHADOW_TOP_LOD = 7, SHADOW_LAYER = 5;
 
   function envScene() {
     // A dark film studio: big soft panels, a cold key, a warm rim, a low fill.
@@ -39,7 +41,7 @@ export const LOOK = String.raw`
 
   // The parts that all worlds share. Made once, when the renderer exists.
   let environment = null, UnrealBloomPass = null;
-  let quadScene = null, quadCam = null, quad = null, dofMat = null, copyMat = null, finalMat = null, floorMask = null;
+  let quadScene = null, quadCam = null, quad = null, dofMat = null, copyMat = null, finalMat = null, floorMask = null, heightMat = null;
   const noTone = () => ({ toneMapped: false, depthTest: false, depthWrite: false, transparent: false, blending: THREE.NoBlending });
 
   const makeLook = () => {
@@ -60,6 +62,9 @@ export const LOOK = String.raw`
         'float coc(vec2 u){ float z = -perspectiveDepthToViewZ(texture2D(tD, u).x, near, far); return clamp(abs(z - focus) / focus * ap * 26.0, 0.0, 11.0) * scale; }',
         'void main(){ float c0 = coc(vUv); vec4 sum = texture2D(tC, vUv); float w = 1.0;',
         'if (c0 < 0.4 || ap <= 0.0) { gl_FragColor = sum; return; }',
+        // Most of a crop is empty: a pixel with nothing near it needs no blur.
+        'float e = 0.0; for (int i = 0; i < 6; i++) { float a = float(i) * 1.0472; e = max(e, 1.0 - texture2D(tD, vUv + vec2(cos(a), sin(a)) * 11.0 * scale * px).x); }',
+        'if (sum.a == 0.0 && e == 0.0) { gl_FragColor = sum; return; }',
         'for (int i = 1; i < 26; i++) { float a = float(i) * 2.399963; float r = sqrt(float(i) / 26.0) * c0; vec2 u = vUv + vec2(cos(a), sin(a)) * r * px;',
         '  float k = smoothstep(r - 1.0, r + 0.5, coc(u) + 0.5); sum += texture2D(tC, u) * k; w += k; }',
         'gl_FragColor = sum / w; }'
@@ -83,6 +88,13 @@ export const LOOK = String.raw`
         'vec3 c = sc + gl + (n(gl_FragCoord.xy) - 0.5) / 255.0 * step(0.002, al + gl.r + gl.g + gl.b);',
         'float g = max(gl.r, max(gl.g, gl.b)); gl_FragColor = vec4(max(c, vec3(0.0)), clamp(al + g * (1.0 - al), 0.0, 1.0)); }'
       ].join('\n')
+    });
+    // What casts a shadow on the floor, seen from under the floor along the light.
+    // Red is coverage and green is coverage times height. Mips average both, so any mip gives a blurred shadow and the mean height over a point.
+    heightMat = new THREE.ShaderMaterial({ toneMapped: false, side: THREE.DoubleSide, blending: THREE.NoBlending,
+      uniforms: { floorY: { value: 0 } },
+      vertexShader: 'uniform float floorY; varying float vH; void main(){ vec4 p = vec4(position, 1.0);\n#ifdef USE_INSTANCING\n p = instanceMatrix * p;\n#endif\n p = modelMatrix * p; vH = max(p.y - floorY, 0.0); gl_Position = projectionMatrix * viewMatrix * p; }',
+      fragmentShader: 'varying float vH; void main(){ gl_FragColor = vec4(1.0, vH, 0.0, 1.0); }'
     });
     // The floor's fade with distance from the world: long, with no end you can see.
     const c = new OffscreenCanvas(512, 512), g = c.getContext('2d');
@@ -143,22 +155,34 @@ export const LOOK = String.raw`
     const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 96), reflection);
     floorMesh.rotation.x = -Math.PI / 2;
     floorMesh.position.y = 0.001;
-    const catcher = new THREE.ShadowMaterial({ opacity: 0.55, transparent: true });
-    catcher.onBeforeCompile = (shader) => {
-      shader.vertexShader = shader.vertexShader.replace('void main() {', 'varying float vFloorR; void main() { vFloorR = length(position.xy);');
-      shader.fragmentShader = shader.fragmentShader.replace('void main() {', 'varying float vFloorR; void main() {')
-        .replace('#include <tonemapping_fragment>', 'gl_FragColor.a *= 1.0 - smoothstep(0.45, 1.0, vFloorR);');
-    };
+    const catcher = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, toneMapped: false,
+      uniforms: { tS: { value: null }, toLight: { value: new THREE.Matrix4() }, texel: { value: 1 }, soft: { value: 0.2 }, opacity: { value: 0.55 } },
+      vertexShader: 'varying vec3 vW; varying float vR; void main(){ vR = length(position.xy); vec4 p = modelMatrix * vec4(position, 1.0); vW = p.xyz; gl_Position = projectionMatrix * viewMatrix * p; }',
+      fragmentShader: [
+        'uniform sampler2D tS; uniform mat4 toLight; uniform float texel, soft, opacity; varying vec3 vW; varying float vR;',
+        'float lodOf(vec4 m){ return clamp(log2(max(m.g / m.r * soft, 1e-5) / texel), 1.0, ' + SHADOW_TOP_LOD.toFixed(1) + '); }',
+        'void main(){ vec2 uv = (toLight * vec4(vW, 1.0)).xy * 0.5 + 0.5;',
+        // The mean height of what stands over this point, then the blur that this height gives: the shadow is sharp at contact and wide far from it.
+        'vec4 m = textureLod(tS, uv, ' + SHADOW_TOP_LOD.toFixed(1) + '); if (m.r < 1e-4) discard;',
+        'float lod = lodOf(m); m = textureLod(tS, uv, lod); if (m.r > 1e-3) lod = min(lod, lodOf(m));',
+        'float r = texel * pow(2.0, lod) * 0.7, c = 0.0;',
+        'for (int i = 0; i < 8; i++) { float a = float(i) * 2.399963; c += textureLod(tS, uv + vec2(cos(a), sin(a)) * r * sqrt((float(i) + 0.5) / 8.0), lod).r; }',
+        'gl_FragColor = vec4(0.0, 0.0, 0.0, opacity * c / 8.0 * (1.0 - smoothstep(0.45, 1.0, vR))); }'
+      ].join('\n')
+    });
     const shadowMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 96), catcher);
     shadowMesh.rotation.x = -Math.PI / 2;
-    shadowMesh.receiveShadow = true;
+    shadowMesh.renderOrder = -1;
+    const lightView = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+    lightView.layers.set(SHADOW_LAYER);
     const stage = new THREE.Group();
     const floorGroup = new THREE.Group();
     floorGroup.add(shadowMesh, floorMesh);
     stage.add(key, key.target, rim, floorGroup);
     scene.add(stage);
 
-    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, floorGroup, floorMesh, reflection, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2() });
+    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, floorGroup, floorMesh, reflection, catcher, lightView, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2() });
     w.look = Object.assign({ key, rim }, FILM, materials);
     w.floor = true;
   };
@@ -208,22 +232,17 @@ export const LOOK = String.raw`
     w.keyLight.position.copy(c).add(dir.clone().multiplyScalar(r * 1.7));
     const k = w.keyLight.shadow.camera, e = r * 1.3;
     k.left = -e; k.right = e; k.top = e; k.bottom = -e; k.near = 0.1; k.far = r * 5; k.updateProjectionMatrix();
+    const v = w.lightView, onFloor = new THREE.Vector3(c.x, y, c.z);
+    v.left = -e; v.right = e; v.top = e; v.bottom = -e; v.near = 0.1; v.far = r * 5; v.updateProjectionMatrix();
+    v.position.copy(onFloor).addScaledVector(dir.clone().normalize(), -r * 1.5);
+    v.lookAt(onFloor);
+    v.updateMatrixWorld();
+    v.matrixWorldInverse.copy(v.matrixWorld).invert();
+    w.floorSpan = 2 * e;
     w.floorY = y;
-    w.floorR = r;
-    w.lightSlope.set(dir.x / dir.y, dir.z / dir.y);
+    w.floorHeight = r * 0.45;
+        w.lightSlope.set(dir.x / dir.y, dir.z / dir.y);
     w.floorBuilt = true;
-  };
-
-  /** What the floor adds to reach: the mirror image of the world, and its shadow. The rest of the floor shows nothing. */
-  const floorBoxes = (w, box) => {
-    const y = w.floorY;
-    const mirror = new THREE.Box3(new THREE.Vector3(box.min.x, 2 * y - box.max.y, box.min.z), new THREE.Vector3(box.max.x, 2 * y - box.min.y, box.max.z));
-    const h = Math.max(0, box.max.y - y), soft = w.floorR * 0.25;
-    const shadow = new THREE.Box3(
-      new THREE.Vector3(box.min.x - h * w.lightSlope.x - soft, y, box.min.z - h * w.lightSlope.y - soft),
-      new THREE.Vector3(box.max.x + soft, y, box.max.z + soft)
-    );
-    return [mirror, shadow];
   };
 
   const targetOptions = (samples, depth) => ({ type: THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
@@ -238,7 +257,30 @@ export const LOOK = String.raw`
     rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
     return rt;
   });
+  const shadowTarget = () => sharedOf('floor-shadow', SHADOW_SIZE, SHADOW_SIZE, () => new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { type: THREE.HalfFloatType, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true }));
   const bloomOf = (W, H) => sharedOf('bloom', W, H, () => new UnrealBloomPass(new THREE.Vector2(W, H), 0.26, 0.32, 1.1));
+
+  /** The floor's shadow: only casters, from under the floor. A world with no casters clears it. */
+  const renderFloorShadow = (w, look) => {
+    const target = shadowTarget();
+    const view = w.lightView, u = w.catcher.uniforms;
+    w.root.traverse((o) => { if (o.castShadow) o.layers.enable(SHADOW_LAYER); else o.layers.disable(SHADOW_LAYER); });
+    w.scene.overrideMaterial = heightMat;
+    heightMat.uniforms.floorY.value = w.floorY;
+    renderer.shadowMap.autoUpdate = false;
+    try {
+      renderer.setRenderTarget(target);
+      renderer.clear();
+      renderer.render(w.scene, view);
+    } finally {
+      w.scene.overrideMaterial = null;
+    }
+    u.tS.value = target.texture;
+    u.toLight.value.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse);
+    u.texel.value = 1 / SHADOW_SIZE;
+    u.soft.value = look.softness / w.floorSpan;
+    u.opacity.value = look.shadow;
+  };
 
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
   const renderWorld = (w, s, crop, output) => {
@@ -262,10 +304,15 @@ export const LOOK = String.raw`
       w.keyLight.castShadow = !!look.shadows;
 
       const on = floorOn(w);
-      if (on && !w.floorBuilt) { const box = measure(w); if (box) buildFloor(w, box); }
       const floor = on && w.floorBuilt;
       w.floorGroup.visible = floor;
       aimCamera(w, s, crop);
+
+      if (floor) {
+        w.catcher.visible = !!look.shadows;
+        if (look.shadows) renderFloorShadow(w, look);
+        renderer.shadowMap.autoUpdate = saved.autoUpdate;
+      }
 
       // Reflection: the world mirrored in the floor, into a half-size target.
       if (floor) {
@@ -290,7 +337,7 @@ export const LOOK = String.raw`
         r.tD.value = mirror.depthTexture;
         r.toWorld.value.copy(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
         r.floorY.value = w.floorY;
-        r.fadeH.value = w.floorR * 0.45;
+        r.fadeH.value = w.floorHeight;
         r.spread.value.set((12 * s) / FILM_SCALE / W, (12 * s) / FILM_SCALE / H);
       }
 
@@ -302,9 +349,8 @@ export const LOOK = String.raw`
       const a = flatTarget('a', W, H), b = flatTarget('b', W, H);
       if (look.dof > 0 && camera.isPerspectiveCamera) {
         const u = dofMat.uniforms;
-        const box = w.floorBuilt || w.bounds.isEmpty() ? w.bounds : measure(w);
         u.tC.value = scene.texture; u.tD.value = scene.depthTexture;
-        u.focus.value = box && !box.isEmpty() ? camera.position.distanceTo(box.getCenter(reachVector())) : 10;
+        u.focus.value = w.bounds.isEmpty() ? 10 : camera.position.distanceTo(w.bounds.getCenter(reachVector()));
         u.ap.value = look.dof; u.near.value = camera.near; u.far.value = camera.far;
         u.px.value.set(1 / W, 1 / H); u.scale.value = s / FILM_SCALE;
         pass(dofMat, a);

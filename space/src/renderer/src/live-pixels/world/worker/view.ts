@@ -25,40 +25,40 @@ export const VIEW = String.raw`
   /** The share of the distance that reach shrinks per measure. It grows at once. */
   const SHRINK = 0.04;
 
+  /** Points per object in a measure. */
+  const PROBES = 256;
   const reachVector = () => reachVector.v || (reachVector.v = new THREE.Vector3());
-  const reachBox = () => reachBox.b || (reachBox.b = new THREE.Box3());
 
-  /** Geometry to the position version of its last bounding box. */
-  const measured = new WeakMap();
-  const versionOf = (attribute) => (attribute.isInterleavedBufferAttribute ? attribute.data.version : attribute.version);
-
-  /** The world's bounds in world space: what its objects really draw now. Null when empty. */
-  const measure = (w) => {
-    const box = w.bounds.makeEmpty();
-    const part = reachBox();
+  /** Points of what the world really draws now, in world space. A box of a long object is far larger on screen than the object, so reach uses points. */
+  const probeWorld = (w) => {
+    const list = [];
+    const m = new THREE.Matrix4(), v = new THREE.Vector3();
+    const put = () => { list.push(v.x, v.y, v.z); };
     w.scene.updateMatrixWorld();
     const visit = (o) => {
       if (!o.visible || o === w.stage) return;
-      const g = o.geometry;
-      const position = g && g.attributes && g.attributes.position;
-      if (position) {
-        const instanced = o.isInstancedMesh;
-        const version = versionOf(position) + (instanced ? o.instanceMatrix.version * 65536 : 0);
-        if (!g.boundingBox || measured.get(o.isInstancedMesh ? o : g) !== version) {
-          if (instanced) o.computeBoundingBox(); else g.computeBoundingBox();
-          measured.set(instanced ? o : g, version);
+      const g = o.geometry, position = g && g.attributes && g.attributes.position;
+      if (position && o.isInstancedMesh) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        const b = g.boundingBox, step = Math.max(1, Math.floor(o.count / (PROBES / 8)));
+        for (let i = 0; i < o.count; i += step) {
+          o.getMatrixAt(i, m);
+          m.premultiply(o.matrixWorld);
+          for (let c = 0; c < 8; c++) { v.set(c & 1 ? b.max.x : b.min.x, c & 2 ? b.max.y : b.min.y, c & 4 ? b.max.z : b.min.z).applyMatrix4(m); put(); }
         }
-        const local = instanced ? o.boundingBox : g.boundingBox;
-        if (local && !local.isEmpty()) box.union(part.copy(local).applyMatrix4(o.matrixWorld));
+      } else if (position) {
+        const step = Math.max(1, Math.floor(position.count / PROBES));
+        for (let i = 0; i < position.count; i += step) { v.fromBufferAttribute(position, i).applyMatrix4(o.matrixWorld); put(); }
       } else if (o.isSprite) {
-        const p = reachVector().setFromMatrixPosition(o.matrixWorld);
         const r = Math.max(o.scale.x, o.scale.y);
-        box.union(part.setFromCenterAndSize(p, reachVector().clone().set(r, r, r)));
+        v.setFromMatrixPosition(o.matrixWorld);
+        const x = v.x, y = v.y, z = v.z;
+        for (let c = 0; c < 8; c++) { v.set(x + (c & 1 ? r : -r), y + (c & 2 ? r : -r), z + (c & 4 ? r : -r)); put(); }
       }
       for (const child of o.children) visit(child);
     };
     for (const child of w.scene.children) visit(child);
-    return box.isEmpty() ? null : box;
+    return list;
   };
 
   /** The camera with its nominal frustum, no crop. */
@@ -69,25 +69,7 @@ export const VIEW = String.raw`
     c.updateMatrixWorld();
   };
 
-  /** Expand r (board points from the anchor) by the projection of box. False when a corner is behind the camera. */
-  const projectBox = (w, box, r) => {
-    const c = w.camera, v = reachVector();
-    for (let i = 0; i < 8; i++) {
-      v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
-      v.applyMatrix4(c.matrixWorldInverse);
-      if (c.isPerspectiveCamera && v.z > -c.near) return false;
-      v.applyMatrix4(c.projectionMatrix);
-      if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) return false;
-      const x = (v.x * w.w) / 2, y = (-v.y * w.h) / 2;
-      if (x < r.l) r.l = x;
-      if (x > r.r) r.r = x;
-      if (y < r.t) r.t = y;
-      if (y > r.b) r.b = y;
-    }
-    return true;
-  };
-
-  /** Measure the bounds and update reach: grows at once, shrinks slowly. */
+  /** Measure the world and update reach: grows at once, shrinks slowly. */
   const sampleReach = (w) => {
     if (typeof w.reachSet === 'number') {
       const n = w.reachSet;
@@ -95,14 +77,38 @@ export const VIEW = String.raw`
       return;
     }
     if (w.reachSet === 'full') { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
-    const box = measure(w);
-    if (!box) { w.reach = null; return; }
+    const probes = probeWorld(w);
+    const box = w.bounds.makeEmpty(), v = reachVector();
+    for (let i = 0; i < probes.length; i += 3) box.expandByPoint(v.set(probes[i], probes[i + 1], probes[i + 2]));
+    if (box.isEmpty()) { w.reach = null; return; }
+    const floor = floorOn(w);
+    if (floor && !w.floorBuilt) buildFloor(w, box);
     nominalCamera(w);
-    const r = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity, full: false };
-    let seen = projectBox(w, box, r);
-    if (floorOn(w)) {
-      if (!w.floorBuilt) buildFloor(w, box);
-      for (const extra of floorBoxes(w, box)) seen = projectBox(w, extra, r) && seen;
+    const c = w.camera, r = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity, full: false };
+    let seen = true;
+    const project = (x, y, z) => {
+      v.set(x, y, z).applyMatrix4(c.matrixWorldInverse);
+      if (c.isPerspectiveCamera && v.z > -c.near) { seen = false; return; }
+      v.applyMatrix4(c.projectionMatrix);
+      if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) { seen = false; return; }
+      const px = (v.x * w.w) / 2, py = (-v.y * w.h) / 2;
+      if (px < r.l) r.l = px;
+      if (px > r.r) r.r = px;
+      if (py < r.t) r.t = py;
+      if (py > r.b) r.b = py;
+    };
+    for (let i = 0; i < probes.length; i += 3) {
+      const x = probes[i], y = probes[i + 1], z = probes[i + 2];
+      project(x, y, z);
+      if (floor) {
+        // The floor shows only the mirror image of the world and its shadow, with the blur of its height.
+        const h = Math.max(0, y - w.floorY), sx = x - h * w.lightSlope.x, sz = z - h * w.lightSlope.y, blur = h * w.look.softness * 1.5;
+        project(x, 2 * w.floorY - y, z);
+        project(sx - blur, w.floorY, sz - blur);
+        project(sx + blur, w.floorY, sz + blur);
+        project(sx - blur, w.floorY, sz + blur);
+        project(sx + blur, w.floorY, sz - blur);
+      }
     }
     if (!seen) { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
     const old = w.reach;

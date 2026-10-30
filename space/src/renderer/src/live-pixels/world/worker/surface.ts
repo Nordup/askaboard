@@ -37,6 +37,9 @@ export const SURFACE = String.raw`
     u.t.value = w.output.texture;
     u.opacity.value = Math.max(0, Math.min(1, w.placement.opacity));
     u.reveal.value = Math.max(0, Math.min(1, w.placement.reveal));
+    // The wipe runs over what the world reaches, so it does not move when the crop moves.
+    const reach = w.reach && !w.reach.full ? w.reach : { l: -w.w / 2, r: w.w / 2 };
+    u.span.value.set((reach.l * d.s - ox) / qw, (reach.r * d.s - ox) / qw);
     renderer.render(compositeScene, compositeCam);
   };
 
@@ -46,12 +49,12 @@ export const SURFACE = String.raw`
     compositeMat = new THREE.ShaderMaterial({
       toneMapped: false, depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-      uniforms: { t: { value: null }, opacity: { value: 1 }, reveal: { value: 1 }, origin: { value: new THREE.Vector2() }, axisX: { value: new THREE.Vector2() }, axisY: { value: new THREE.Vector2() } },
+      uniforms: { t: { value: null }, opacity: { value: 1 }, reveal: { value: 1 }, span: { value: new THREE.Vector2(0, 1) }, origin: { value: new THREE.Vector2() }, axisX: { value: new THREE.Vector2() }, axisY: { value: new THREE.Vector2() } },
       vertexShader: 'uniform vec2 origin, axisX, axisY; varying vec2 vUv; void main(){ vUv = uv; vec2 q = vec2(uv.x, 1.0 - uv.y); gl_Position = vec4(origin + axisX * q.x + axisY * q.y, 0.0, 1.0); }',
       fragmentShader: [
-        'uniform sampler2D t; uniform float opacity, reveal; varying vec2 vUv;',
+        'uniform sampler2D t; uniform float opacity, reveal; uniform vec2 span; varying vec2 vUv;',
         'void main(){ vec4 c = texture2D(t, vUv); float k = opacity;',
-        'if (reveal < 1.0) { float e = reveal * 1.2 - 0.1; k *= 1.0 - smoothstep(e - 0.1, e + 0.1, vUv.x); }',
+        'if (reveal < 1.0) { float e = (vUv.x - span.x) / (span.y - span.x); k *= 1.0 - smoothstep(reveal * 1.2 - 0.2, reveal * 1.2, e); }',
         'gl_FragColor = c * k; }'
       ].join('\n')
     });
