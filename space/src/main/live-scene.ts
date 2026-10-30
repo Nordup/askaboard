@@ -168,6 +168,8 @@ export class SceneStage {
   private dirty = true
   /** How many programs of the log the context holds when it is not dirty (fewer than the log after a draft ran at a place). */
   private held = 0
+  /** The program that the last run ran before (a draft at a place), or null: the end of the log. The next run usually runs there too (settle). */
+  private lastPlace: StageEntry | null = null
   /** Why the stage is new, until its first program runs. */
   private freshReason: string | null = 'the app started'
   readonly log: StageEntry[] = []
@@ -295,6 +297,21 @@ export class SceneStage {
     await this.withSignal(signal, () => this.ensure(null, signal))
   }
 
+  /** The context is what the next run needs (settle): the log up to the place of the last run. */
+  get settled(): boolean {
+    return !this.dirty && this.held === this.placeIndex(this.lastPlace)
+  }
+
+  /**
+   * Rebuild while the stage is idle (main/mcp.ts rebuildWhenIdle), so that the next run waits for nothing: up to the
+   * place of the last run, because a new version of a scene usually follows at the same place. signal stops it at once,
+   * in a program too: that program is not at fault, so it is not marked, and the context stays dirty. A stopped stage
+   * process stays stopped: the next real operation starts it. Runs inside exclusive.
+   */
+  async settle(signal: AbortSignal): Promise<void> {
+    await this.withSignal(signal, () => this.ensure(this.lastPlace, signal, false), false)
+  }
+
   /**
    * Run the log again from a new context and sample the programs of `wanted` as scenes (their frames go
    * to the board), in order, so each runs on the stage as it was when it first ran: a replay after a
@@ -419,10 +436,10 @@ export class SceneStage {
   /** The program of the log that runs again now (a rebuild): a cancel stops it, and it is marked, so no rebuild waits on it again. */
   private rebuilding: StageEntry | null = null
 
-  /** fn with signal: its abort cancels what runs on the stage. */
-  private async withSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+  /** fn with signal: its abort cancels what runs on the stage (byUser: see cancel). */
+  private async withSignal<T>(signal: AbortSignal | undefined, fn: () => Promise<T>, byUser = true): Promise<T> {
     if (signal?.aborted) throw new SceneCancelled()
-    const onAbort = (): void => this.cancel()
+    const onAbort = (): void => this.cancel(undefined, byUser)
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
       return await fn()
@@ -447,7 +464,8 @@ export class SceneStage {
   truncate(length: number): void {
     if (this.log.length > length) this.log.length = length
     this.revision++
-    this.dirty = true
+    // A context that holds exactly these programs stays good (settle at the place of a new version).
+    if (this.held !== length) this.dirty = true
   }
 
   /** Why the stage ended the last program itself (no abort signal: the board window loaded again). */
@@ -456,7 +474,7 @@ export class SceneStage {
   /**
    * End a running program now: its worker stops, and the stage is rebuilt before the next run. A program of the log that
    * a stop ends while the stage is rebuilt (a program that never ends would hold every later call) is marked, so a later
-   * rebuild does not run it again. byUser: false for the board window loading again.
+   * rebuild does not run it again. byUser: false when the program is not at fault (the board window loaded again, an idle rebuild gives way).
    */
   private cancel(why?: string, byUser = true): void {
     if (!this.process.running) return
@@ -520,6 +538,7 @@ export class SceneStage {
     // A program in the log keeps its place: only a draft runs before it.
     if (before && options.mode !== 'draft') throw new Error('stage.run: a scene runs at a place only after the restage took that place out of the log.')
     this.adopt(context)
+    this.lastPlace = before
     const fresh = this.log.length === 0 ? this.freshReason : null
     const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
     const tStart = Date.now()
@@ -603,14 +622,19 @@ export class SceneStage {
     await this.linkFrames()
   }
 
+  /** The place of before in the log; the end when it is not in the log. */
+  private placeIndex(before: StageEntry | null): number {
+    return before && this.log.includes(before) ? this.log.indexOf(before) : this.log.length
+  }
+
   /**
    * A stage process whose context holds exactly the log (before: the programs of the log before that one). Marked programs
-   * are skipped. signal: the operation's cancel, checked before each reset and each program.
+   * are skipped. signal: the operation's cancel, checked before each reset and each program. start: false stops at a stopped process (settle).
    */
-  private async ensure(before: StageEntry | null = null, signal?: AbortSignal): Promise<void> {
-    await this.startProcess()
-    // The place of before; the end when it is not in the log.
-    const upTo = before && this.log.includes(before) ? this.log.indexOf(before) : this.log.length
+  private async ensure(before: StageEntry | null = null, signal?: AbortSignal, start = true): Promise<void> {
+    if (start) await this.startProcess()
+    else if (!this.process.running) return
+    const upTo = this.placeIndex(before)
     if (!this.dirty && this.held === upTo) return
     const started = Date.now()
     await this.resetContext(signal)
@@ -618,7 +642,7 @@ export class SceneStage {
     for (const entry of this.log.slice(0, upTo)) {
       if (entry.failed) continue
       // A program that fails now is marked and keeps its place; the context starts again without it.
-      if (!(await this.runAgain(entry, 'replay', signal))) return this.ensure(before, signal)
+      if (!(await this.runAgain(entry, 'replay', signal))) return this.ensure(before, signal, start)
       ran++
     }
     this.dirty = false

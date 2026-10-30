@@ -62,6 +62,8 @@ const WRITE_TIMEOUT_MS = 45_000
 /** A large scene can take a while to turn into board items; this only frees a renderer that never answers. */
 /** Scenes have no cap on their size: the board takes as long as it needs to compile one. */
 const SCENE_TIMEOUT_MS = Infinity
+/** How long the stage stays idle before work that no call waits for starts (a board's restore, an idle rebuild). */
+const STAGE_IDLE_MS = 300
 const MAX_BODY_BYTES = 64 * 1024 * 1024
 /** A session with no open stream and no request for this long is closed. */
 const IDLE_SESSION_MS = 10 * 60_000
@@ -779,6 +781,7 @@ export class AgentServer {
   /** Run a board tool in the renderer, as this session. */
   /** End running scene programs (all, or one session's). Returns how many were running. */
   private cancelPrograms(sessionId: string | null): number {
+    this.stopIdleRebuild()
     let count = 0
     for (const [program, owner] of this.programs) {
       if (sessionId !== null && owner !== sessionId) continue
@@ -1641,7 +1644,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           return text(json({ ...publicStatus(out), replay: { scene: name ?? this.sceneName(replay.of), from_s: replay.from, starts_in_s: replay.starts_in_s } }))
         }
         if (action === 'cut') return this.cutScene(session, extra, name, after_step)
-        return this.stage.exclusive(async () => {
+        return this.onStage(async () => {
           if (action === 'clear_queue') {
             const before = await control({ action: 'status' })
             const status = await control({ action: 'skip' })
@@ -1690,7 +1693,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
    * caller's cancel, also while the stage is restored (null: none).
    */
   private staged<T>(signal: AbortSignal | null, fn: () => Promise<T>): Promise<T> {
-    return this.stage.exclusive(async () => {
+    return this.onStage(async () => {
       try {
         await this.restoreStage(signal ?? undefined)
         return await fn()
@@ -1698,6 +1701,52 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         await this.publishFailures()
       }
     })
+  }
+
+  /** How many operations are on the stage or wait for it (onStage). */
+  private stageOperations = 0
+  private idleTimer: NodeJS.Timeout | undefined
+  /** The last idle rebuild: an abort stops it at once. */
+  private idleRebuild: AbortController | null = null
+
+  /** The one way of an operation onto the stage: an idle rebuild gives way to it, and the last operation that ends starts the idle delay again. */
+  private onStage<T>(fn: () => Promise<T>): Promise<T> {
+    this.stopIdleRebuild()
+    this.stageOperations++
+    return this.stage.exclusive(fn).finally(() => {
+      if (--this.stageOperations === 0) this.rebuildWhenIdle()
+    })
+  }
+
+  private stopIdleRebuild(): void {
+    clearTimeout(this.idleTimer)
+    this.idleRebuild?.abort()
+  }
+
+  /**
+   * The stage does not match what the next run needs (a draft ran, a play added a program): rebuild it after a short idle,
+   * so the next call does not wait for it. This work is not an operation (onStage), so it never starts another one: when
+   * it fails or gives way, the next operation that ends tries again. Its board's mount and folder must still be the shown ones.
+   */
+  private rebuildWhenIdle(): void {
+    if (!this.boardKey() || this.stage.settled) return
+    const mark = this.restoreMark()
+    this.idleTimer = setTimeout(() => {
+      if (this.restoreMark() !== mark || this.restoredFor !== mark) return
+      const program = new AbortController()
+      this.idleRebuild = program
+      const rebuild = (signal: AbortSignal): Promise<void> =>
+        this.stage
+          .exclusive(async () => {
+            await this.restoreStage(signal)
+            await this.stage.settle(signal)
+          })
+          // Outside the lock: a board that does not answer must not hold a play.
+          .finally(() => this.publishFailures())
+      void this.background(rebuild, program).catch((error: unknown) => {
+        if (!(error instanceof SceneCancelled)) console.warn(`stage: the idle rebuild failed (${error instanceof Error ? error.message : String(error)})`)
+      })
+    }, STAGE_IDLE_MS)
   }
 
   /** The stage epoch and marked programs that the renderer holds (publishFailures). */
@@ -1720,8 +1769,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /** Stage work that no tool call owns (a board that mounted, the board window's replay, a replay's rebuild): play_scene cancel, stop and clear_queue end it, and so does a board that mounts. */
-  private background<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const program = new AbortController()
+  private background<T>(fn: (signal: AbortSignal) => Promise<T>, program = new AbortController()): Promise<T> {
     this.programs.set(program, '')
     return fn(program.signal).finally(() => this.programs.delete(program))
   }
@@ -1841,7 +1889,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     setTimeout(() => {
       if (this.boardKey() !== path) return
       void this.background((signal) => this.staged(signal, async () => undefined)).catch((error: unknown) => console.warn(`stage: the stage of ${path} is restored at its first use (${error instanceof Error ? error.message : String(error)})`))
-    }, 300)
+    }, STAGE_IDLE_MS)
   }
 
   /** The board window replays scenes that were restored from the records: their programs run again first. */
