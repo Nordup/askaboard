@@ -3,7 +3,7 @@ import { LIVE_ORIGIN } from '@shared/live-libs'
 import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldToPage } from '@shared/world-protocol'
 import type { NodeOverride } from '../../board/playback'
 import type { Camera, Point } from '../../board/types'
-import { WORLD_MARGIN, worldWorkerUrl } from './stub'
+import { WORLD_MARGIN, worldWorkerUrl } from './worker'
 
 /**
  * The world surface: one GPU canvas that draws every world of a board, between

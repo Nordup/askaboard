@@ -256,7 +256,12 @@ export class LiveItem implements SlotOwner {
 
   /** The host runs frames while the window shows and the item wants a host. */
   private runs(): boolean {
-    return this.wantsHost() && document.visibilityState !== 'hidden'
+    return this.wantsTicks() && document.visibilityState !== 'hidden'
+  }
+
+  /** A world can reach past its element, so a world with a host runs off screen too. */
+  private wantsTicks(): boolean {
+    return this.wantsHost() || this.node.mode === 'world'
   }
 
   /** Wanted with no host: start one (canvas and program items need a slot first). */
@@ -559,7 +564,7 @@ export class LiveItem implements SlotOwner {
 
   /** The window was hidden or shown: hosts run only while it shows. */
   windowShown(shown: boolean): void {
-    this.host?.run(shown && this.wantsHost())
+    this.host?.run(shown && this.wantsTicks())
     this.aliveAt = performance.now()
     if (shown && this.node.mode === 'shader') ensureLoop()
   }
