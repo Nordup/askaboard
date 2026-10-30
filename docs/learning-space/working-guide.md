@@ -39,6 +39,12 @@ and what went wrong before.
   show it in a new mockup, then build.
 - Judges lab runs by watching the videos; when away from the computer, wants
   them sent to the phone.
+- Judges a library by how its best work looks: "if what they do is not really
+  good, doesn't look good, then we're not gonna use it at all". Show pictures
+  first, not catalogs. Objects with no frame, on the board's own dark
+  background, are the look that impressed the founder (2026-10-31).
+- "Stop", "think" or "just update the docs" means start nothing: no agents, no
+  designs, no tests. A choice of direction is a talk first.
 
 ## The workflow that worked
 
@@ -178,6 +184,22 @@ combine; `meta.json` records `no_html` and `brief`.
   reset --mixed origin/main`, then for each old commit `git read-tree <c>`,
   `git rm -r --cached <paths>`, `git commit -C <c>`. Never `checkout`,
   `restore` or `stash` (the founder's edits).
+- **A failed agent attempt is not a failed library.** On 2026-10-31 one agent
+  tried many engines in one 40-minute run and reported runtime errors in our
+  worker as engine failures. Report "our attempt failed" with the error, and
+  check the claim before it reaches the founder. Test a recipe once before
+  agents depend on it.
+- **esm.sh can fail.** During those runs it answered "no space left on device"
+  for several packages. jsDelivr `+esm` worked for some. Real use needs local
+  bundles. Package notes from those runs: use `babylonjs`, not
+  `@babylonjs/core` (a shader module failed to load); PixiJS needs its
+  `dist/webworker.mjs` build.
+- **`drive.mjs scene` can go stale after `open_board`.** Reload the renderer
+  after each `open_board`.
+- **Screenshots of web demos with the real GPU:** Chrome headless with
+  `--headless=new --use-angle=metal --enable-gpu --ignore-gpu-blocklist
+  --virtual-time-budget=9000 --screenshot=<file>` and a new
+  `--user-data-dir`. Tested on the founder's Mac on 2026-10-31.
 
 ## Ports and paths used so far
 
