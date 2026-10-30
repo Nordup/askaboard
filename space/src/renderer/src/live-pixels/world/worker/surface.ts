@@ -12,11 +12,11 @@
  */
 export const SURFACE = String.raw`
   let THREE = null, renderer = null, canvas = null, compositeMat = null, compositeScene = null, compositeCam = null;
-  const surface = { width: 0, height: 0, cssWidth: 0, cssHeight: 0, dpr: 1, margin: 0, camera: null, seq: 0, dirty: false };
+  const surface = { width: 0, height: 0, dpr: 1, margin: 0, camera: null, seq: 0, dirty: false };
   let sent = 0, waiting = false;
 
   const sizeSurface = (m) => {
-    surface.cssWidth = m.width; surface.cssHeight = m.height; surface.dpr = m.dpr;
+    surface.dpr = m.dpr;
     if (typeof m.margin === 'number') surface.margin = m.margin;
     surface.width = Math.max(1, Math.round((m.width + 2 * surface.margin) * m.dpr));
     surface.height = Math.max(1, Math.round((m.height + 2 * surface.margin) * m.dpr));
@@ -28,7 +28,7 @@ export const SURFACE = String.raw`
   /** Draw a world's output onto the canvas: premultiplied, with its opacity and its wipe. */
   const compositeWorld = (w) => {
     const d = w.drawn, p = placed(w), u = compositeMat.uniforms;
-    const ox = (d.crop.l), oy = (d.crop.t), qw = d.crop.r - d.crop.l, qh = d.crop.b - d.crop.t;
+    const ox = d.crop.l, oy = d.crop.t, qw = d.crop.r - d.crop.l, qh = d.crop.b - d.crop.t;
     const scale = p.s / d.s;
     const toClipX = 2 / surface.width, toClipY = -2 / surface.height;
     u.origin.value.set((p.cx + (p.a * ox + p.c * oy) * scale) * toClipX - 1, (p.cy + (p.b * ox + p.d * oy) * scale) * toClipY + 1);
@@ -283,7 +283,8 @@ export const SURFACE = String.raw`
       const [three, bloomModule] = await Promise.all([import(resolveLibrary('three')), import(resolveLibrary('three/addons/postprocessing/UnrealBloomPass.js'))]);
       THREE = three;
       UnrealBloomPass = bloomModule.UnrealBloomPass;
-      canvas = m.canvas || new OffscreenCanvas(1, 1);
+      // Its own canvas, not the frame's: pictures reach the page by message, so nothing here is on screen.
+      canvas = new OffscreenCanvas(1, 1);
       canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); post({ type: 'lost' }); });
       core = true;
       renderer = new THREE.WebGLRenderer({ canvas, alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });

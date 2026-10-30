@@ -12,6 +12,9 @@
  *   fades by its distance from the world, in world space.
  * - Shared passes take pixels and not shares of the target, so the size of a
  *   target never changes the picture.
+ * - The shadow on the floor has its own map (renderFloorShadow). Its blur grows
+ *   with the height of what casts it, so the shadow is sharp at contact and soft
+ *   far from it. The light's shadow map stays for objects on each other.
  */
 export const LOOK = String.raw`
   const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';

@@ -19,7 +19,6 @@ export const REALM = String.raw`
   const nativeSetTimeout = scope.setTimeout.bind(scope);
   const nativeSetInterval = scope.setInterval.bind(scope);
   const nativeClearTimeout = scope.clearTimeout.bind(scope);
-  const nativeClearInterval = scope.clearInterval.bind(scope);
   const nativeRaf = typeof scope.requestAnimationFrame === 'function' ? scope.requestAnimationFrame.bind(scope) : (cb) => nativeSetTimeout(() => cb(realNow()), 16);
   const RealDate = scope.Date;
   const Channel = scope.MessageChannel;
