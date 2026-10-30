@@ -627,10 +627,10 @@
   /** The entry of a changing object at time t (its own entry when it does not change). */
   function specAt(entry, t) {
     if (!entry.dynamic || entry.evaluating) return entry
-    // Read by another recipe (a label of a curve, an arrow to an object): its sampling keeps its shapes for that recipe.
+    // Read by another recipe (a label of a curve, an arrow to an object): its sampling keeps its shape for that recipe.
     if (building > 0) entry.readByOthers = true
-    const memo = finalSampling ? sampleMemo.get(entry)?.get(t) : undefined
-    if (memo) {
+    const memo = finalSampling ? sampleMemo.get(entry) : undefined
+    if (memo && memo.t === t) {
       // The same evaluation again: its shape, and the handwriting stream as it left it.
       rng = seededAt(memo.seed, memo.n)
       return memo.spec
@@ -645,10 +645,7 @@
     if (own) tracking = own
     try {
       const spec = evaluate(entry.recipe)
-      if (own && !own.impure && entry.readByOthers) {
-        if (!sampleMemo.has(entry)) sampleMemo.set(entry, new Map())
-        sampleMemo.get(entry).set(t, { spec, seed: rng.seed, n: rng.n })
-      }
+      if (own && !own.impure && entry.readByOthers) sampleMemo.set(entry, { t, spec, seed: rng.seed, n: rng.n })
       return spec
     } finally {
       T = saved
@@ -2663,57 +2660,70 @@
   // changes the scene or `stage`. Only a pure evaluation is kept in
   // sampleMemo, so a recipe that reads another object (a label of a curve)
   // uses that object's shape at the same time again. Every changing object is
-  // sampled at every sample time; a recipe can be evaluated any number of
-  // times.
+  // sampled at every time of its own schedule; a recipe can be evaluated any
+  // number of times.
 
-  /** While a scene is sampled: the shapes of objects that other recipes read, by object and sample time (pure evaluations only). */
+  /** While a scene is sampled: the last shape of each object that other recipes read, with its sample time (pure evaluations only). All readers of one moment run together, so one shape for each object is enough. */
   const sampleMemo = new Map()
 
   /**
-   * One sampling of an object at these times: its geometry where it changes,
-   * and its end state. A run of equal samples keeps its first and its last
-   * sample, so the player blends from the last one to the next change over one
-   * sample step, as for every other step. Without the last one, the gap
-   * between kept samples is longer than BLEND_GAP and the player holds the
-   * shape for a step while other objects blend (a bob that stops for a moment
-   * at the end of its swing then lags its string).
+   * The sweep: one forward pass over the sample times of all objects, in time
+   * order, and in object order inside one moment. Each object has its own
+   * schedule (sampleTimes), so a moment evaluates only the objects whose
+   * schedule has it. A sweep is plain data, moved by sampleMoment one moment
+   * at a time, so a caller can stop between two moments and go on later.
    */
-  function samplePass(entry, times) {
-    const samples = []
-    let lastKey = ''
-    let final = null
-    /** The last sample of the current run of equal samples, when it is not kept yet. */
-    let runEnd = null
-    for (const t of times) {
-      evaluations++
-      const spec = specAt(entry, t)
-      // A function that changes what kind of object it is: the object keeps its first kind.
-      if (spec.kind !== entry.kind) continue
-      const g = geometryOf(spec)
-      const key = JSON.stringify(g)
-      final = spec
-      if (key === lastKey) {
-        runEnd = { t: f3(t), ...g }
-        continue
-      }
-      lastKey = key
-      if (runEnd) samples.push(runEnd)
-      runEnd = null
-      samples.push({ t: f3(t), ...g })
-    }
-    return { samples, lastKey, final }
-  }
-
-  /** Sample changing objects over this scene. Returns the objects of earlier scenes whose geometry changes in it. */
-  function sampleObjects(list) {
-    finalSampling = true
-    sampleMemo.clear()
-    const changedEarlier = new Set()
+  function startSweep(list) {
+    const runs = []
     for (const entry of list) {
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
       const times = sampleTimes(entry.born === sceneNo ? entry.created : 0)
       fullEvaluations += times.length
-      const { samples, lastKey, final } = samplePass(entry, times)
+      /** runEnd: the last sample of the current run of equal samples, when it is not kept yet. */
+      runs.push({ entry, times, next: 0, samples: [], lastKey: '', final: null, runEnd: null })
+    }
+    return { runs, moments: [...new Set(runs.flatMap((run) => run.times))].sort((p, q) => p - q), next: 0 }
+  }
+
+  /**
+   * One object at one time: its geometry where it changes, and its end state.
+   * A run of equal samples keeps its first and its last sample, so the player
+   * blends from the last one to the next change over one sample step, as for
+   * every other step. Without the last one, the gap between kept samples is
+   * longer than BLEND_GAP and the player holds the shape for a step while other
+   * objects blend (a bob that stops for a moment at the end of its swing then
+   * lags its string).
+   */
+  function sampleOne(run, t) {
+    const { entry } = run
+    run.next++
+    evaluations++
+    const spec = specAt(entry, t)
+    // A function that changes what kind of object it is: the object keeps its first kind.
+    if (spec.kind !== entry.kind) return
+    const g = geometryOf(spec)
+    const key = JSON.stringify(g)
+    run.final = spec
+    if (key === run.lastKey) {
+      run.runEnd = { t: f3(t), ...g }
+      return
+    }
+    run.lastKey = key
+    if (run.runEnd) run.samples.push(run.runEnd)
+    run.runEnd = null
+    run.samples.push({ t: f3(t), ...g })
+  }
+
+  /** The next moment of a sweep. */
+  function sampleMoment(sweep) {
+    const t = sweep.moments[sweep.next++]
+    for (const run of sweep.runs) if (run.times[run.next] === t) sampleOne(run, t)
+  }
+
+  /** The end of a sweep: what needs an object's whole sweep. The samples go out in object order. Returns the objects of earlier scenes whose geometry changes in it. */
+  function finishSweep(sweep) {
+    const changedEarlier = new Set()
+    for (const { entry, samples, lastKey, final } of sweep.runs) {
       if (!final) continue
       // The object's own fields hold the end state.
       for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
@@ -2724,6 +2734,16 @@
       }
       if (entry.born < sceneNo && (samples.length > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
     }
+    return changedEarlier
+  }
+
+  /** Sample changing objects over this scene. Returns the objects of earlier scenes whose geometry changes in it. */
+  function sampleObjects(list) {
+    finalSampling = true
+    sampleMemo.clear()
+    const sweep = startSweep(list)
+    while (sweep.next < sweep.moments.length) sampleMoment(sweep)
+    const changedEarlier = finishSweep(sweep)
     finalSampling = false
     sampleMemo.clear()
     return changedEarlier
