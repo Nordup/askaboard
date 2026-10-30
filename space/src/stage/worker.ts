@@ -1,6 +1,6 @@
 import prelude from './live-prelude.js?raw'
 import { STAGE_LIMITS, type StageMode, type StageReply, type StageTiming } from '../shared/stage-protocol'
-import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder, MAX_FRAME_BYTES } from '../shared/frames'
+import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder } from '../shared/frames'
 import { polylineInk } from '../shared/ink-points'
 import { flattenPath, parsePath } from '../shared/path-geometry'
 import { mulberry32, SCENE_EASES, trackNumber } from '../shared/live-scene'
@@ -39,9 +39,9 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * the question and waits on the bridge (Atomics.wait) until the page writes
  * the answer (worker-protocol.ts).
  *
- * A program's end (finish): the sampling pass streams each changing
- * object's samples as frame chunks (shared/frames.ts) to the page, which
- * passes them to the board. The worker waits while CREDIT_BYTES of frames are
+ * A program's end (finish): the sampling pass streams the samples of the
+ * changing objects, moment by moment, as frame chunks (shared/frames.ts) to the
+ * page, which passes them to the board. The worker waits while CREDIT_BYTES of frames are
  * on the way. The reply (the description without the samples) comes last. A
  * rebuild (replay) does not sample: it ends and bakes.
  */
@@ -93,8 +93,8 @@ const KEEP = new Set([
 
 let bridge: { state: Int32Array; bytes: Uint8Array } | null = null
 let host: Host | null = null
-/** While a program's sampling pass streams frames: where each object's samples go. */
-let frameSink: ((sid: number, kind: string, math: boolean, samples: Array<Record<string, unknown>>) => void) | null = null
+/** While a program's sampling pass streams frames: where the samples go. */
+let frameSink: FrameStream | null = null
 /** The longest wait for the board to take frames (it acknowledges each chunk at once). */
 const CREDIT_WAIT_MS = 60_000
 
@@ -148,9 +148,8 @@ function init(message: Extract<ToWorker, { t: 'init' }>): void {
     ;(Error as unknown as { stackTraceLimit: number }).stackTraceLimit = 50
     G.__fontText = message.fontText
     G.__measure = ask
-    G.__frames = (sid: number, kind: string, math: boolean, samples: Array<Record<string, unknown>>): void => {
-      if (frameSink) frameSink(sid, kind, math, samples)
-    }
+    G.__frames = (sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void => frameSink?.add(sid, kind, math, sample)
+    G.__framesThrough = (t: number): void => frameSink?.through(t)
     G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, SCENE_EASES, trackNumber, mulberry32, programSite, siteLabel })
     G.__host = (fns: Host) => {
       host = fns
@@ -354,10 +353,10 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
     fns.end()
     let json: string | null = null
     if (frames) {
-      frameSink = (sid, kind, math, samples) => frames.add(sid, kind, math, samples)
+      frameSink = frames
       json = fns.result()
       frameSink = null
-      frames.flush()
+      frames.send(true)
       if (typeof json !== 'string' || json.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
     }
     const tResult = clock()
@@ -378,11 +377,12 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): StageR
 
 /**
  * The frames of one program: encoded as the sampling makes them, and sent in
- * chunks as the board's credits allow. The encoder splits a large object
- * into several records, so a chunk is at most CHUNK_BYTES and one sample.
+ * chunks as the board's credits allow. A chunk is at most CHUNK_BYTES and one sample.
  */
 class FrameStream {
-  private readonly encoder = new FrameEncoder(() => this.flush())
+  private readonly encoder = new FrameEncoder()
+  /** The last moment sampled whole. */
+  private reached = 0
   sent = 0
   total = 0
   encodeMs = 0
@@ -390,19 +390,21 @@ class FrameStream {
 
   constructor(private readonly id: number) {}
 
-  add(sid: number, kind: string, math: boolean, samples: Array<Record<string, unknown>>): void {
+  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void {
     const t0 = clock()
-    const waited = this.waitMs
-    this.encoder.add(sid, kind, math, samples)
-    this.encodeMs += clock() - t0 - (this.waitMs - waited)
+    this.encoder.add(sid, kind, math, sample)
+    this.encodeMs += clock() - t0
+    if (this.encoder.full()) this.send(false)
   }
 
-  flush(): void {
-    if (this.encoder.empty) return
+  through(t: number): void {
+    this.reached = t
+  }
+
+  send(end: boolean): void {
     const chunk = this.encoder.take()
     const bytes = chunkBytes(chunk)
     this.total += bytes
-    if (this.total > MAX_FRAME_BYTES) throw new RangeError(`the frames of the scene are larger than ${MAX_FRAME_BYTES / 1024 / 1024} MB`)
     const { state } = bridge as NonNullable<typeof bridge>
     const t0 = clock()
     // Wait while this chunk would take the bytes on the way over the credit. With nothing on the way it goes
@@ -414,7 +416,7 @@ class FrameStream {
     }
     this.waitMs += clock() - t0
     atomics.add(state, 3, bytes)
-    post({ t: 'frames', v: FRAMES_VERSION, id: this.id, seq: this.sent++, u32: chunk.u32, f64: chunk.f64, strings: chunk.strings }, [chunk.u32.buffer, chunk.f64.buffer])
+    post({ t: 'frames', v: FRAMES_VERSION, id: this.id, seq: this.sent++, through: this.reached, end, u32: chunk.u32, f64: chunk.f64, strings: chunk.strings }, [chunk.u32.buffer, chunk.f64.buffer])
   }
 }
 

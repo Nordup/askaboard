@@ -6,18 +6,22 @@
  * headers and control messages stay JSON.
  *
  * The worker encodes (FrameEncoder); the renderer decodes (renderer/live/frames.ts)
- * into the samples that playback uses. A chunk holds whole records; a record
- * holds samples of one object, by its stage id (sid), in sampling order; a
- * large object goes on in records of the next chunks (FLAG_MORE). The skeleton of the
- * description (the worker's reply) gives each object with samples their
- * number; the renderer checks it.
+ * into the samples that playback uses. The sampling makes samples in time
+ * order, moment by moment, so the records of different objects interleave. A
+ * record adds one sample to one object, by its stage id (sid), in any chunk. The
+ * skeleton of the description (the worker's reply) gives each object with
+ * samples their number; the renderer checks it.
  *
- * Format version 1. A chunk is { t: 'frames', v, job, seq, u32, f64, strings }:
+ * Coverage: through is the time up to which every object's samples are sent. It
+ * moves only after a whole moment is sampled. A reader past an object's last
+ * sample holds that sample. The last chunk of a job has end true and through at
+ * the scene's duration; a job with no samples still sends it.
  *
- *   u32: record count, then per record: sid, kind (KIND_*), flags (1: math text; 2: more samples
- *        of the object of the record before, which is in an earlier chunk), sample count,
- *        then per sample: a field mask (F_*) and, for each field in it, its u32 parts.
- *   f64: per sample: t, bounds x, y, width, height, then the f64 parts of its fields, in mask order.
+ * Format version 2. A chunk is { t: 'frames', v, job, seq, through, end, u32, f64, strings }:
+ *
+ *   u32: record count, then per record: sid, kind (KIND_*), flags (1: math text),
+ *        a field mask (F_*) and, for each field in it, its u32 parts.
+ *   f64: per record: t, bounds x, y, width, height, then the f64 parts of its fields, in mask order.
  *   strings: the chunk's string table (path forms, raw paths, texts, parameter names, JSON fallbacks).
  *
  * Fields (in mask order):
@@ -33,7 +37,7 @@
  * Every f64 value is finite, and -0 is sent as 0 (JSON does the same).
  */
 
-export const FRAMES_VERSION = 1
+export const FRAMES_VERSION = 2
 
 export const KIND_SHAPE = 0
 export const KIND_INK = 1
@@ -52,15 +56,11 @@ export const F_JSON = 64
 export const F_ALL = 127
 
 export const FLAG_MATH = 1
-/** The record goes on with the object of the last record of the chunk before. */
-export const FLAG_MORE = 2
 
-/** A chunk is sent when it holds at least this many bytes: a chunk is at most this and one sample (large objects are split). */
+/** A chunk is sent when it holds at least this many bytes: a chunk is at most this and one sample. */
 export const CHUNK_BYTES = 1024 * 1024
 /** The bytes on the way from the worker to the board at most (the worker waits for the board's acks). */
 export const CREDIT_BYTES = 32 * 1024 * 1024
-/** The frames of one scene at most. */
-export const MAX_FRAME_BYTES = 512 * 1024 * 1024
 
 /** A chunk of frames (worker → page → renderer). */
 export interface FramesChunk {
@@ -68,6 +68,10 @@ export interface FramesChunk {
   v: number
   job: number
   seq: number
+  /** Every object's samples up to this time are in this chunk or the chunks before it. */
+  through: number
+  /** The last chunk of the job. */
+  end: boolean
   u32: Uint32Array
   f64: Float64Array
   strings: string[]
@@ -191,15 +195,8 @@ const isPlain = (value: unknown): value is Record<string, unknown> => {
   return proto === Object.prototype || proto === null
 }
 
-/**
- * The worker's encoder. add() takes the samples of one object as the sampling
- * makes them, and calls onFull when the chunk is full (also in the middle of
- * an object: the object goes on in a record with FLAG_MORE). onFull sends the
- * chunk (take() gives its arrays and starts the next).
- */
+/** The worker's encoder. add() takes one sample as the sampling makes it; take() gives the chunk's arrays and starts the next. */
 export class FrameEncoder {
-  constructor(private readonly onFull: () => void) {}
-
   private readonly u32 = new Grow(new Uint32Array(1 << 14), (n) => new Uint32Array(n))
   private readonly f64 = new Grow(new Float64Array(1 << 15), (n) => new Float64Array(n))
   private strings: string[] = []
@@ -207,8 +204,8 @@ export class FrameEncoder {
   private stringBytes = 0
   private records = 0
 
-  get empty(): boolean {
-    return this.records === 0
+  constructor() {
+    this.u32.push(0)
   }
 
   get bytes(): number {
@@ -230,31 +227,15 @@ export class FrameEncoder {
     return index
   }
 
-  /** The samples of one object (kind: shape, ink, text or live; other kinds have none that play). */
-  add(sid: number, kind: string, math: boolean, samples: readonly Record<string, unknown>[]): void {
+  /** One sample of one object (kind: shape, ink, text or live; other kinds have none that play). */
+  add(sid: number, kind: string, math: boolean, sample: Record<string, unknown>): void {
     const code = FRAME_KINDS.indexOf(kind as FrameKind)
     if (code < 0) return
-    let i = 0
-    let more = false
-    for (;;) {
-      if (!this.records) this.u32.push(0)
-      this.records++
-      this.u32.push(sid)
-      this.u32.push(code)
-      this.u32.push((math ? FLAG_MATH : 0) | (more ? FLAG_MORE : 0))
-      const countAt = this.u32.length
-      this.u32.push(0)
-      let n = 0
-      while (i < samples.length) {
-        this.sample(code, samples[i++])
-        n++
-        if (this.full()) break
-      }
-      this.u32.set(countAt, n)
-      if (this.full()) this.onFull()
-      if (i >= samples.length) return
-      more = true
-    }
+    this.records++
+    this.u32.push(sid)
+    this.u32.push(code)
+    this.u32.push(math ? FLAG_MATH : 0)
+    this.sample(code, sample)
   }
 
   private sample(kind: number, sample: Record<string, unknown>): void {
@@ -351,8 +332,9 @@ export class FrameEncoder {
 
   /** The chunk's arrays and strings; the encoder starts the next chunk. */
   take(): { u32: Uint32Array; f64: Float64Array; strings: string[] } {
-    if (this.records) this.u32.set(0, this.records)
+    this.u32.set(0, this.records)
     const out = { u32: this.u32.take(), f64: this.f64.take(), strings: this.strings }
+    this.u32.push(0)
     this.strings = []
     this.stringIndex = new Map()
     this.stringBytes = 0

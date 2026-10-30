@@ -42,9 +42,12 @@
   delete G.__measure
   const giveHost = typeof G.__host === 'function' ? G.__host : null
   delete G.__host
-  // Each changing object's samples, as the sampling makes them: (stage id, kind, math, samples). The worker streams them to the board.
+  // The sampling's output: each kept sample of a changing object (stage id, kind, math, sample), and each time up to which
+  // the samples are complete. The worker streams them to the board.
   const giveFrames = typeof G.__frames === 'function' ? G.__frames : null
   delete G.__frames
+  const giveThrough = typeof G.__framesThrough === 'function' ? G.__framesThrough : null
+  delete G.__framesThrough
   // The code the board runs too (stage/worker.ts hands it over): path geometry without the DOM (shared/path-geometry.ts), the
   // ink points of pen shapes (shared/ink-points.ts), the eases, number tracks and seeded random of scenes (shared/live-scene.ts),
   // and where in the agent's code a stack frame is: the inline code or a module file (shared/scene-program.ts).
@@ -2672,6 +2675,7 @@
    * schedule (sampleTimes), so a moment evaluates only the objects whose
    * schedule has it. A sweep is plain data, moved by sampleMoment one moment
    * at a time, so a caller can stop between two moments and go on later.
+   * Samples leave the stage as they are kept (keepSample).
    */
   function startSweep(list) {
     const runs = []
@@ -2679,10 +2683,24 @@
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
       const times = sampleTimes(entry.born === sceneNo ? entry.created : 0)
       fullEvaluations += times.length
-      /** runEnd: the last sample of the current run of equal samples, when it is not kept yet. */
-      runs.push({ entry, times, next: 0, samples: [], lastKey: '', final: null, runEnd: null })
+      /** kept: how many samples the object kept. first: its first sample, until a second one is kept. runEnd: the last sample of the current run of equal samples, when it is not kept yet. */
+      runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: '', final: null, runEnd: null })
     }
     return { runs, moments: [...new Set(runs.flatMap((run) => run.times))].sort((p, q) => p - q), next: 0 }
+  }
+
+  /** A sample that stays. An object with one kept sample does not change and sends none, so the first sample waits for a second. */
+  function keepSample(run, sample) {
+    const { entry } = run
+    if (++run.kept === 1) {
+      run.first = sample
+      return
+    }
+    if (giveFrames) {
+      if (run.first) giveFrames(entry.id, entry.kind, entry.math === true, run.first)
+      giveFrames(entry.id, entry.kind, entry.math === true, sample)
+    }
+    run.first = null
   }
 
   /**
@@ -2709,30 +2727,28 @@
       return
     }
     run.lastKey = key
-    if (run.runEnd) run.samples.push(run.runEnd)
+    if (run.runEnd) keepSample(run, run.runEnd)
     run.runEnd = null
-    run.samples.push({ t: f3(t), ...g })
+    keepSample(run, { t: f3(t), ...g })
   }
 
   /** The next moment of a sweep. */
   function sampleMoment(sweep) {
     const t = sweep.moments[sweep.next++]
     for (const run of sweep.runs) if (run.times[run.next] === t) sampleOne(run, t)
+    if (giveThrough) giveThrough(t)
   }
 
-  /** The end of a sweep: what needs an object's whole sweep. The samples go out in object order. Returns the objects of earlier scenes whose geometry changes in it. */
+  /** The end of a sweep: what needs an object's whole sweep. Returns the objects of earlier scenes whose geometry changes in it. */
   function finishSweep(sweep) {
     const changedEarlier = new Set()
-    for (const { entry, samples, lastKey, final } of sweep.runs) {
+    for (const { entry, kept, lastKey, final } of sweep.runs) {
       if (!final) continue
       // The object's own fields hold the end state.
       for (const field of ['d', 'lines', 'text', 'params', 'at', 'center', 'pressure', 'length', 'style']) if (final[field] !== undefined) entry[field] = final[field]
       entry.bounds = final.bounds
-      if (samples.length > 1) {
-        entry.dyn = samples
-        if (giveFrames) giveFrames(entry.id, entry.kind, entry.math === true, samples)
-      }
-      if (entry.born < sceneNo && (samples.length > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
+      if (kept > 1) entry.samples = kept
+      if (entry.born < sceneNo && (kept > 1 || lastKey !== entry.bakedKey)) changedEarlier.add(entry)
     }
     return changedEarlier
   }
@@ -2746,6 +2762,7 @@
     const changedEarlier = finishSweep(sweep)
     finalSampling = false
     sampleMemo.clear()
+    if (giveThrough) giveThrough(f3(endTime))
     return changedEarlier
   }
 
@@ -2831,14 +2848,8 @@
     if (cutAt !== null) applyCut(Math.min(cutAt, endTime))
   }
 
-  /** The scene's description (JSON): its objects, with the changing ones sampled, and its timeline. */
-  const result = () => {
-    const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
-    const earlier = objects.filter((e) => e.born < sceneNo && !e.dropped && !e.gone && e.kind !== 'node' && e.kind !== 'group')
-    for (const e of earlier) delete e.dyn
-    const anyChange = actions.length > 0 || values.some((v) => v.tracks.length > 0)
-    const changed = sampleObjects(anyChange ? fresh.concat(earlier) : fresh)
-    // Earlier objects this scene sends again: those it acts on, those whose recipe changes in it, and gone ones it brings back.
+  /** The objects this scene sends: its own, and earlier ones it acts on, those whose recipe changes in it (changed), and gone ones it brings back. */
+  const sentObjects = (fresh, changed) => {
     const emit = new Set(fresh)
     for (const e of objects) {
       if (e.born === sceneNo || e.dropped) continue
@@ -2868,8 +2879,20 @@
         }
       }
     }
+    return emit
+  }
+
+  /** The scene's description (JSON): its objects, with the changing ones sampled, and its timeline. */
+  const result = () => {
+    const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
+    const earlier = objects.filter((e) => e.born < sceneNo && !e.dropped && !e.gone && e.kind !== 'node' && e.kind !== 'group')
+    for (const e of earlier) delete e.samples
+    const anyChange = actions.length > 0 || values.some((v) => v.tracks.length > 0)
+    // With no action and no value, time changes no earlier object: the sweep takes only the dynamic ones the scene sends anyway.
+    const sendsAnyway = sentObjects(fresh, new Set())
+    const sampled = anyChange ? earlier : objects.filter((e) => e.born < sceneNo && e.dynamic && sendsAnyway.has(e))
+    const emit = sentObjects(fresh, sampleObjects(fresh.concat(sampled)))
     const list = objects.filter((e) => emit.has(e))
-    if (!anyChange) sampleObjects(list.filter((e) => e.born < sceneNo && e.dynamic))
     const local = new Map(list.map((e, i) => [e.id, i]))
     const out = list.map((e) => {
       const carry = e.born < sceneNo && !e.gone && e.kind !== 'node'
@@ -2880,7 +2903,7 @@
       if (e.born === sceneNo && e.key !== undefined) o.key = e.key
       if (e.parent !== undefined && local.has(e.parent)) o.parent = local.get(e.parent)
       // The samples themselves go to the board as frames (giveFrames, by sid); the description says how many.
-      if (e.dyn) o.samples = e.dyn.length
+      if (e.samples) o.samples = e.samples
       // Ink goes as its points (a pen shape's d stays in the stage).
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
@@ -2907,7 +2930,7 @@
     for (const e of objects) {
       if (e.dropped) {
         Object.assign(e, { dropped: false, gone: true, vis: 'hidden', base: { ...hidden }, tracks: {}, created: 0, removed: false, revealed: false })
-        delete e.dyn
+        delete e.samples
         continue
       }
       if (e.kind === 'node') {
@@ -2958,7 +2981,7 @@
       e.created = 0
       e.removed = false
       e.revealed = false
-      delete e.dyn
+      delete e.samples
     }
     for (const v of values) {
       v.base = sortedTrackValue(v.tracks, v.base, endTime)

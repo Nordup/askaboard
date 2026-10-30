@@ -1,4 +1,4 @@
-import { chunkBytes, type FramesChunk } from '../shared/frames'
+import { chunkBytes, FRAMES_VERSION, type FramesChunk } from '../shared/frames'
 import type { StageProgram } from '../shared/scene-program'
 import { parseReply, parseToStage, refusedHostId, refusedId, STAGE_LIMITS, type FromStage, type StageReply, type ToStage } from '../shared/stage-protocol'
 import { BRIDGE_CHUNK, BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
@@ -235,7 +235,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
       }
       context.streamed = true
       context.outstanding.set(message.seq, chunkBytes(message))
-      const chunk: FramesChunk = { t: 'frames', v: message.v, job: run.id, seq: message.seq, u32: message.u32, f64: message.f64, strings: message.strings }
+      const chunk: FramesChunk = { t: 'frames', v: message.v, job: run.id, seq: message.seq, through: message.through, end: message.end, u32: message.u32, f64: message.f64, strings: message.strings }
       frames.postMessage(chunk, [message.u32.buffer, message.f64.buffer])
       return
     }
@@ -316,15 +316,17 @@ function parseFromWorker(value: unknown): FromWorker | null {
       return typeof m.text === 'string' && m.text.length <= STAGE_LIMITS.host ? { t: 'host', text: m.text } : null
     case 'frames': {
       const ok =
-        typeof m.v === 'number' &&
+        m.v === FRAMES_VERSION &&
         typeof m.id === 'number' &&
         typeof m.seq === 'number' &&
         Number.isSafeInteger(m.seq) &&
+        typeof m.through === 'number' &&
+        typeof m.end === 'boolean' &&
         m.u32 instanceof Uint32Array &&
         m.f64 instanceof Float64Array &&
         Array.isArray(m.strings) &&
         (m.strings as unknown[]).every((text) => typeof text === 'string' && text.length <= STAGE_LIMITS.description)
-      return ok ? { t: 'frames', v: m.v as number, id: m.id as number, seq: m.seq as number, u32: m.u32 as Uint32Array, f64: m.f64 as Float64Array, strings: m.strings as string[] } : null
+      return ok ? { t: 'frames', v: FRAMES_VERSION, id: m.id as number, seq: m.seq as number, through: m.through as number, end: m.end as boolean, u32: m.u32 as Uint32Array, f64: m.f64 as Float64Array, strings: m.strings as string[] } : null
     }
     default:
       return null
