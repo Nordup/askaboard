@@ -339,6 +339,15 @@ export type FrameMoment = { kind: 'end' } | { kind: 'steps' } | { kind: 'step'; 
 /** What preview_scene frames show: everything the scene makes or touches, the learner's view, a board rect, or items (object names or item ids). */
 export type FramePart = { kind: 'scene' } | { kind: 'view' } | { kind: 'region'; rect: SceneBounds } | { kind: 'items'; items: string[] }
 
+/** A scene's steps as the agent reads them (write_scene): the one rule for a step's number, start and length. */
+export function sceneSteps(steps: Array<{ name: string; at: number; pause?: boolean }>, duration: number): DraftInfo['steps'] {
+  const r3 = (value: number): number => Math.round(value * 1000) / 1000
+  return steps.map((step, i) => {
+    const next = steps.slice(i + 1).find((entry) => entry.at > step.at + 1e-6)
+    return { number: i + 1, name: step.name, start_s: r3(step.at), length_s: r3((next ? next.at : duration) - step.at), ...(step.pause ? { pause: true } : {}) }
+  })
+}
+
 /** What write_scene reports about a draft: compiled against the board now, committing nothing. */
 export interface DraftInfo {
   duration_s: number

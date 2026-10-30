@@ -1209,6 +1209,14 @@ export class ScenePlayer {
     return play.steps[stepAt(play.steps, t)]?.name ?? null
   }
 
+  /** The scene ends at `at` (performance.now() time): the queue goes on from there, and the log and the trace get its end. */
+  private ended(scene: Playing, at: number): void {
+    if (scene.mode === 'queue') this.queueEnd = at
+    const logged = [...this.playLog].reverse().find((entry) => entry.scene === scene.play.id && entry.end === null)
+    if (logged) logged.end = Math.round(performance.timeOrigin + at)
+    report('end', scene.play, 'played', performance.timeOrigin + at)
+  }
+
   /** The learner started drawing: each playing scene pauses at its next step, or now when none is left. */
   private interrupt(now: number): void {
     for (const scene of this.scenes) {
@@ -1283,10 +1291,7 @@ export class ScenePlayer {
         scene.lastT = t
       }
       if (scene.pausedAt === null && t >= scene.play.duration) {
-        if (scene.mode === 'queue') this.queueEnd = (scene.origin as number) + scene.play.duration * 1000
-        const logged = [...this.playLog].reverse().find((entry) => entry.scene === scene.play.id && entry.end === null)
-        if (logged) logged.end = Math.round(performance.timeOrigin + (scene.origin as number) + scene.play.duration * 1000)
-        report('end', scene.play, 'played', performance.timeOrigin + (scene.origin as number) + scene.play.duration * 1000)
+        this.ended(scene, (scene.origin as number) + scene.play.duration * 1000)
         continue
       }
       keep.push(scene)
@@ -1482,7 +1487,7 @@ export class ScenePlayer {
       scene.pausedBy = null
     } else {
       this.scenes = this.scenes.filter((entry) => entry !== scene)
-      this.queueEnd = null
+      this.ended(scene, now)
     }
     this.render()
     this.schedule()

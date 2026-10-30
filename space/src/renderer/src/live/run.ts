@@ -1,5 +1,6 @@
 import { isContent, isInk, isLive, newItemId, type BoardNode, type ContentNode, type InkNode, type LiveNode } from '@shared/board-format'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneItem, SceneResult } from '@shared/live-scene'
+import { sceneSteps } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
@@ -1101,10 +1102,7 @@ export function sceneDraft(ctx: RunSceneContext, args: Record<string, unknown>):
     byKind.group = (byKind.group ?? 0) + 1
     if (o.name) named.push({ name: o.name, kind: 'group' })
   }
-  const steps = desc.steps.map((step, i) => {
-    const next = desc.steps.slice(i + 1).find((entry) => entry.at > step.at + 1e-6)
-    return { number: i + 1, name: step.name, start_s: r3(step.at), length_s: r3((next ? next.at : desc.duration) - step.at), ...(step.pause ? { pause: true } : {}) }
-  })
+  const steps = sceneSteps(desc.steps, desc.duration)
   return {
     duration_s: r3(desc.duration),
     steps,
