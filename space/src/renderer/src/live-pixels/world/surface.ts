@@ -104,6 +104,7 @@ export class WorldSurface {
   private disposed = false
   /** Messages wait here until the first size is known: `init` is the worker's first message. */
   private outbox: PageToWorld[] | null = []
+  private opened = false
   /** Generations that left: they go in the paint that shows what replaces them. */
   private removals: WorldKey[] = []
   private waiting: Picture | null = null
@@ -173,11 +174,12 @@ export class WorldSurface {
   private begin(init: Extract<PageToWorld, { type: 'init' }>): void {
     const waiting = this.outbox ?? []
     this.outbox = [init, ...waiting]
+    this.opened = true
     this.flush()
   }
 
   private flush(): void {
-    if (!this.outbox || !this.channel || !this.size) return
+    if (!this.outbox || !this.channel || !this.opened) return
     for (const message of this.outbox) this.channel.port1.postMessage(message)
     this.outbox = null
   }
