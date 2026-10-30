@@ -12,7 +12,7 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-10-30)
+## Status (2026-10-31)
 
 | Area | State |
 | --- | --- |
@@ -34,6 +34,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Feature freeze (2026-10-26) | On: the founder tests everything by hand (code items, shaders, the other media) and fixes what gets in the way. The perf work ended with the board tools (T21). One board model and one copy of each piece of scene logic: done (2026-10-27). G6 is done (B16–B22); G1 is parked (I28, row below); all open work, in batches: [`work-map.md`](work-map.md) |
 | First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6: [`first-test-gaps.md`](first-test-gaps.md) |
 | Scene speed (2026-10-26/27): the stage in V8 in a sandboxed process (T18), live items on one contract (B10), playback cost (B11), one compile per draft (B12), typed frames over a direct port (B13), stage-made ink points (B14), pen ink on its shape (B15) | Done and measured ([`perf-plan.md`](perf-plan.md)): EM wave write_scene 7.6–15.1 s → 0.5–0.9 s, preview about 0.1 s, start under 0.1 s, playback frame work 5.7 → 2.6 ms. Known playback limits: [`playback-pitfalls.md`](playback-pitfalls.md). Agents see what the script panel and the tool palette cover (T19) |
+| Streamed scenes (2026-10-30/31): `write_scene` replies after seeds, a forward sweep streams samples to the board while the scene may play, one clock holds at what is ready (T25-T31, [`streaming-scenes-plan.md`](streaming-scenes-plan.md)). The largest scene: 35 s → 98 ms. | Built. The agent texts wait for the founder's review. |
 | What agents read (2026-10-27): four board reads with one `part` address, summaries first and "Deeper:" lines, no caps (T20); `list_items`, `list_boards`, `open_board`, `move_board`, strict parameters, one word for one thing in all agent texts (T21) | Done ([`perf-plan.md`](perf-plan.md), group 2): on a 1,000-stroke board `get_changes` since 0 went from 182,835 to 471 characters, the overview from 5,567 to about 620. Texts and results: [`drafts/boards-tool-texts-2026-10-27/final.html`](drafts/boards-tool-texts-2026-10-27/final.html) |
 | Scene files (2026-10-28): scenes as JS files in `boards/scenes/` with import and export (B16 step 1, B17); the lab runs agents like the real apps (W10) | Done and measured: Opus and GPT write every scene by file; scene code 5.9k and 7.0k characters against 8.7k and 9.7k, nothing written twice |
 | Batch 1 (2026-10-28): errors come back at once, every place takes a live position, no checks in the build and no warnings (B18), `play_scene` without a wait (T23); HTML notes removed; handwriting for Cyrillic, accents and maths signs (2026-10-29) | Done ([`work-map.md`](work-map.md), batches A and F) |

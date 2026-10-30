@@ -45,7 +45,8 @@
 
 The stage evaluates the agent's program 30 times per second
 (`SAMPLE_FPS`, `space/src/stage/live-prelude.js`), and only where something
-animates. It drops a sample that equals the one before. The player runs at
+animates. Since T30 this runs after `write_scene` returns: a play can start while the sweep
+runs, and the clock holds if it reaches what is ready (T28). It drops a sample that equals the one before. The player runs at
 the display rate (60–120 Hz) and blends two samples (`blendD`,
 `blendLines`, `BLEND_GAP` in `space/src/renderer/src/live/player.ts`).
 
@@ -84,9 +85,10 @@ you add a new fix here, check if a change can remove the seam instead.
    change from one sample in one paint step. The fix of class 3 does this
    for ink; keep it as a rule for every new kind.
 
-Rejected before: frames computed on demand at display time. That cannot
-keep any agent JavaScript valid, and agents are never limited
-([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)).
+Rejected on 2026-10-27, then replaced on 2026-10-31: frames computed on demand at display time
+([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)). That design cannot
+keep any agent JavaScript valid. Scenes now stream a different way: one forward sweep in a fixed
+order, independent of the playhead ([`streaming-scenes-plan.md`](streaming-scenes-plan.md), T27-T31).
 
 ## Where the drawing pipeline lives
 

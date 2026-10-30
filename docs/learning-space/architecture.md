@@ -295,7 +295,9 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   functions to the worker directly (they are not globals). The worker's
   scheduler runs every pending job, then ends the earliest pending action,
   one task per action. Cancel ends the worker; a crash of the stage process
-  starts a new one, and the stage is rebuilt from its log. Changing objects
+  starts a new one, and the stage is rebuilt from its log. A draft replies
+  after its seeds, and its sweep then streams samples in batches to the board
+  ([`streaming-scenes-plan.md`](streaming-scenes-plan.md)). Changing objects
   are sampled only where what their recipes read changes (values, object
   tracks, the camera); a recipe that reads the time, takes random numbers
   or changes the scene while it is sampled is sampled at every time.
