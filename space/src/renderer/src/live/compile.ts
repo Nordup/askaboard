@@ -13,6 +13,7 @@ import { textHtml } from '../board/content'
 import { checkDrafts, draftsToNodes } from '../board/html'
 import { applyStyles, normalizeStyles } from '../board/style-edits'
 import { drawColor, withOpacity } from './colors'
+import type { StreamStop } from './frames'
 import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type Matrix } from './timeline'
 
 /**
@@ -136,6 +137,8 @@ export interface ScenePlay {
   ready: () => number
   /** Resolves when ready() has reached t. */
   reached: (t: number) => Promise<void>
+  /** Why its stream stopped before the end, or null. */
+  stopped: () => StreamStop | null
 }
 
 /** Every object that can show in a play. */
@@ -307,7 +310,7 @@ export interface DynFrames {
 }
 
 /** The stream of a run (frames.ts). */
-export type SceneStream = Pick<ScenePlay, 'ready' | 'reached'>
+export type SceneStream = Pick<ScenePlay, 'ready' | 'reached' | 'stopped'>
 
 /** The live form of a changing object, on the live lists of its frames. */
 function playDyn(object: SceneObjectDesc, frames: DynFrames, duration: number): PlayDyn | undefined {
@@ -1106,7 +1109,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), reached: stream?.reached ?? (() => Promise.resolve()) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), reached: stream?.reached ?? (() => Promise.resolve()), stopped: stream?.stopped ?? (() => null) },
     inkGroups,
     contentIds: contentIds.filter((id) => !untouched.has(id)),
     centers,

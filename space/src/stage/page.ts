@@ -138,9 +138,9 @@ function hold(context: Context, message: Context['held'][number], started: numbe
   }, HELD_REPLY_MS)
 }
 
-/** The board can drop the frames of a program that did not end well. */
-function retire(context: Context): void {
-  if (context.run && context.streamed) frames?.postMessage({ t: 'retire', job: context.run.id })
+/** The board can drop the frames of a program that did not end well. failed: the program failed, so a new run gives no more (a failed sweep keeps its frames). */
+function retire(context: Context, failed = false): void {
+  if (context.run && context.streamed) frames?.postMessage({ t: 'retire', job: context.run.id, failed })
 }
 
 function handle(message: ToStage): void {
@@ -237,7 +237,7 @@ function fromWorker(context: Context, data: unknown, started: number): void {
         hold(context, message, started)
         return
       }
-      retire(context)
+      retire(context, true)
       context.run = null
       context.held = []
       send(message)

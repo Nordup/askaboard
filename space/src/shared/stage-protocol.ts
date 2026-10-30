@@ -53,11 +53,12 @@ export type ToStage =
  * range: the stage ids the program took, [first, end) (null for a reset).
  * orderDependent: the objects whose recipe gave the sweep another result than its seed at the same moment.
  * sweeping: a draft's early reply: its sweep goes on, and ends with "swept" or, when it fails, a failed reply with the same id.
+ * at: in that failed reply, the scene time of the stream's last complete moment.
  * An error's line is in the module file (a path in boards/scenes/), or in the inline code when file is null.
  */
 export type StageReply =
   | { t: 'reply'; id: number; ok: true; json: string | null; frames: number; ms: number; timing: StageTiming | null; keys: Array<[number, string]> | null; range: [number, number] | null; orderDependent: string[]; sweeping: boolean }
-  | { t: 'reply'; id: number; ok: false; error: string; line: number | null; file: string | null; ms: number }
+  | { t: 'reply'; id: number; ok: false; error: string; line: number | null; file: string | null; ms: number; at?: number }
 
 export interface StageSwept {
   t: 'swept'
@@ -65,6 +66,8 @@ export interface StageSwept {
   frames: number
   ms: number
   orderDependent: string[]
+  /** What the recipes logged during the sweep. */
+  logs: string[]
 }
 
 export type FromStage =
@@ -209,21 +212,22 @@ export function parseReply(value: unknown): StageReply | null {
     return { t: 'reply', id: value.id, ok: true, json, frames: value.frames, ms: value.ms, timing, keys, range, orderDependent, sweeping: value.sweeping }
   }
   if (value.ok === false) {
-    if (!keysAre(value, ['t', 'id', 'ok', 'error', 'line', 'file', 'ms'])) return null
+    if (!keysAre(value, value.at === undefined ? ['t', 'id', 'ok', 'error', 'line', 'file', 'ms'] : ['t', 'id', 'ok', 'error', 'line', 'file', 'ms', 'at']) || (value.at !== undefined && !isMs(value.at))) return null
     const line = value.line === null || (isId(value.line) && value.line > 0) ? (value.line as number | null) : undefined
     const file = value.file === null || isText(value.file, STAGE_LIMITS.path) ? (value.file as string | null) : undefined
     if (!isText(value.error, STAGE_LIMITS.error) || line === undefined || file === undefined) return null
-    return { t: 'reply', id: value.id, ok: false, error: value.error, line, file, ms: value.ms }
+    return { t: 'reply', id: value.id, ok: false, error: value.error, line, file, ms: value.ms, ...(value.at !== undefined ? { at: value.at } : {}) }
   }
   return null
 }
 
 /** The end of a sweep, checked. */
 export function parseSwept(value: unknown): StageSwept | null {
-  if (!isShape(value) || value.t !== 'swept' || !keysAre(value, ['t', 'id', 'frames', 'ms', 'orderDependent']) || !isId(value.id) || !isId(value.frames) || !isMs(value.ms)) return null
-  const { orderDependent } = value
-  if (!Array.isArray(orderDependent) || !orderDependent.every((name) => typeof name === 'string')) return null
-  return { t: 'swept', id: value.id, frames: value.frames, ms: value.ms, orderDependent }
+  if (!isShape(value) || value.t !== 'swept' || !keysAre(value, ['t', 'id', 'frames', 'ms', 'orderDependent', 'logs']) || !isId(value.id) || !isId(value.frames) || !isMs(value.ms)) return null
+  const { orderDependent, logs } = value
+  const texts = (list: unknown): list is string[] => Array.isArray(list) && list.every((name) => typeof name === 'string')
+  if (!texts(orderDependent) || !texts(logs)) return null
+  return { t: 'swept', id: value.id, frames: value.frames, ms: value.ms, orderDependent, logs }
 }
 
 /** A message from the stage page, checked (main process side). */

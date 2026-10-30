@@ -78,6 +78,8 @@
   const actions = []
   const steps = []
   const logs = []
+  /** How many of them the description has: the rest came from the sweep. */
+  let logsInDescription = 0
   const waiters = []
   let waiterSeq = 0
   const cameraActions = []
@@ -2808,7 +2810,8 @@
     if (giveThrough) giveThrough(f3(endTime))
     return {
       lastChange: sweep.runs.filter((run) => run.kept > 1).map((run) => [run.entry.id, run.lastChange]),
-      orderDependent: sweep.runs.filter((run) => run.orderDependent).map((run) => shortName(run.entry))
+      orderDependent: sweep.runs.filter((run) => run.orderDependent).map((run) => shortName(run.entry)),
+      logs: logs.slice(logsInDescription)
     }
   }
 
@@ -2994,6 +2997,7 @@
     const moveList = reparents
       .filter((x) => local.has(x.obj) && (!x.into.obj || local.has(x.into.obj)))
       .map((x) => ({ ...x, obj: local.get(x.obj), into: x.into.obj !== undefined ? { obj: local.get(x.into.obj) } : x.into }))
+    logsInDescription = logs.length
     return JSON.stringify({ objects: out, actions: acts, edits: editList, reparents: moveList, steps, duration: f3(endTime), logs, camera: cameraActions, pointer: pointerActions, cues })
   }
 

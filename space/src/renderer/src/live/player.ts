@@ -11,7 +11,7 @@ import { allObjects, type DynSample, type PlayEdit, type PlayObject, type SceneP
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
-import { canRebuild, clearRestored, rebuildFailure, requestRebuild } from './rebuild'
+import { addRestored, canRebuild, clearRestored, rebuildFailure, requestRebuild, type RestoredScene } from './rebuild'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -604,6 +604,14 @@ export function nodeSig(node: BoardNode): string {
 export interface SceneMemory {
   play: ScenePlay
   snapshot: Map<string, { sig: string; ghost: BoardNode }>
+  /** What a replay needs to rebuild it (run.ts sceneMemory) when its stream was cut. Scenes of a board with no record have none. */
+  record?: RestoredScene
+}
+
+/** Its stream was cut, so a new run can give what it lacks. A stream that failed is whole as far as it can be: a replay reads it. */
+function cutShort(play: ScenePlay): boolean {
+  const stop = play.stopped()
+  return stop !== null && !stop.failed
 }
 
 // ---------- Overrides that stay the same object while their values stay the same ----------
@@ -1065,6 +1073,15 @@ export class ScenePlayer {
   /** Keep a committed scene for replay (also one a replay rebuilt from the records after a restart: run.ts sceneMemory). */
   remember(memory: SceneMemory): void {
     this.history.set(memory.play.id, memory)
+  }
+
+  /** A stream was cut: the scenes of it are no longer held, so a replay never reads a partial stream. It rebuilds them (requestRebuild, main/mcp.ts playable). What plays now plays on. */
+  forgetCut(): void {
+    for (const [id, memory] of this.history) {
+      if (!cutShort(memory.play)) continue
+      this.history.delete(id)
+      if (memory.record) addRestored(memory.record)
+    }
   }
 
   /** The stage started new: earlier scenes can no longer be replayed. */
@@ -1553,7 +1570,7 @@ export class ScenePlayer {
   /** The panel's step bar, step replay and line clicks: the scene that shows goes to the start of the step (or to the time) and plays on (its pause steps after it hold again); another committed scene is replayed from there. */
   playFrom(sceneOf: string, from: SceneStart): boolean {
     const scene = this.current()
-    if (scene && scene.play.id.replace(/~r\d+$/, '') === sceneOf) {
+    if (scene && scene.play.id.replace(/~r\d+$/, '') === sceneOf && !cutShort(scene.play)) {
       const at = from.at !== undefined ? Math.max(0, Math.min(scene.play.duration, from.at)) : scene.play.steps[from.step - 1]?.at
       if (at === undefined) return false
       const now = performance.now()

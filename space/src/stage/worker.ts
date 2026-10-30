@@ -66,7 +66,7 @@ interface Host {
   /** The description, built from the end seeds. */
   result(): string
   /** One batch of the sweep, until more() says stop. Null while moments are left, else what the stream's end says. */
-  sample(more: () => boolean): { lastChange: Array<[number, number]>; orderDependent: string[] } | null
+  sample(more: () => boolean): { lastChange: Array<[number, number]>; orderDependent: string[]; logs: string[] } | null
   /** The scene has an item that integrates its params, so its sweep drains before the reply. */
   stepping(): boolean
   bake(): void
@@ -405,7 +405,8 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): void {
  * The sweep after a draft's reply: batches of SWEEP_BATCH_MS, with the tick of
  * the program's clock between them, so the worker's message loop runs. Each
  * batch ends with a chunk, so the board's coverage moves often. The stream
- * ends with "swept", or a failed reply with the program's id.
+ * ends with "swept", or a failed reply with the program's id and its cutoff:
+ * the last complete moment, which the board has by then.
  */
 function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): void {
   const done = (): void => {
@@ -423,10 +424,15 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
       }
       done()
       frames.send(true, swept.lastChange)
-      post({ t: 'swept', id, frames: frames.sent, ms: clock() - started, orderDependent: swept.orderDependent })
+      post({ t: 'swept', id, frames: frames.sent, ms: clock() - started, orderDependent: swept.orderDependent, logs: swept.logs })
     } catch (error) {
       done()
-      post(failure(id, error, started))
+      try {
+        frames.send(false)
+      } catch {
+        // The board took what it took: the cutoff on the board is the last chunk it has.
+      }
+      post(failure(id, error, started, frames.reached))
     }
   }
   tick.port2.postMessage(null)
@@ -439,7 +445,7 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
 class FrameStream {
   private readonly encoder = new FrameEncoder()
   /** The last moment sampled whole. */
-  private reached = 0
+  reached = 0
   sent = 0
   total = 0
   encodeMs = 0
@@ -480,9 +486,9 @@ class FrameStream {
 /** The error of a program that waits when nothing is left to happen on the scene clock. */
 const STUCK = 'The program did not finish: it waits on something that never happens, such as an await on a promise that nothing resolves.'
 
-function failure(id: number, thrown: unknown, started: number): StageReply {
+function failure(id: number, thrown: unknown, started: number, at?: number): StageReply {
   const { message, line, file } = describe(thrown)
-  return { t: 'reply', id, ok: false, error: clip(message), line, file, ms: clock() - started }
+  return { t: 'reply', id, ok: false, error: clip(message), line, file, ms: clock() - started, ...(at !== undefined ? { at } : {}) }
 }
 
 /** An error's text and where in the agent's code it came from (the innermost frame in a module or the inline code). */

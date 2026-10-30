@@ -394,7 +394,8 @@ function currentDraft(ctx: RunSceneContext, key: unknown): CompiledDraft | null 
   if (typeof key !== 'string') return null
   let draft = drafts.get(key)
   // A stream that was cut leaves a draft with missing moments: it runs again.
-  if (!draft || draft.frames.cut || draft.summary.stage !== stageRecord.epoch) return null
+  const stop = draft?.frames.stopped()
+  if (!draft || (stop && !stop.failed) || draft.summary.stage !== stageRecord.epoch) return null
   const s = ctx.scene()
   if (draft.nodes !== s.nodes || draft.stage !== stageRecord.revision || !sameLayout(draft.layout, s.layout) || draft.groups !== groupsKey(s)) {
     draft = compileDraft(draft.desc, draft.frames, s, draft.place)
@@ -756,7 +757,8 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
   if (args.settled === true) startsIn = 0
   else if (args.slot === true && scenePlayer.swap(ctx.board, sceneId, compiled.play, revert, args.slotWhy === 'cut' ? 'cut' : 'replaced')) startsIn = scenePlayer.startsIn(sceneId)
   else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
-  scenePlayer.remember({ play: compiled.play, snapshot })
+  const { record } = result
+  scenePlayer.remember({ play: compiled.play, snapshot, ...(record ? { record: { id: sceneId, name, story: record.story, revert: record.revert, settle: record.settle ?? null } } : {}) })
   forgetRestored(sceneId)
   // A playing scene (cut) started before now: its start is negative, its end is still ahead.
   result.starts_in_s = Math.max(0, startsIn)
@@ -1271,7 +1273,7 @@ function momentsOf(play: CompiledScene['play'], moments: FrameMoment[], what: st
  * moments, of the given part of the board. The learner's board does not change. A time past what the
  * sweep has reached waits for the sweep; "end" and steps read the seeds and never wait.
  */
-export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>): Promise<FramesResult | DraftMissing> {
+export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unknown>): Promise<FramesResult | DraftMissing | { pastCutoff: number }> {
   const s = ctx.scene()
   const what = typeof args.label === 'string' ? args.label : 'the scene'
   let play: CompiledScene['play']
@@ -1299,6 +1301,9 @@ export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unk
   const asked = (args.moments as FrameMoment[] | undefined) ?? [{ kind: 'end' }]
   const moments = momentsOf(play, asked, what)
   await play.reached(Math.max(0, ...asked.map((moment) => (moment.kind === 't' ? moment.t : 0))))
+  // The end is the committed state, so a stream that stopped still shows it. Any other moment past the cutoff does not exist.
+  const stop = play.stopped()
+  if (stop && moments.some((moment) => moment.t > stop.at && moment.t < play.duration)) return { pastCutoff: stop.at }
   // Each moment evaluated once: the drawn overrides, and the boxes that framing and live stills use.
   const ends = endBoxes(play, s, nodes)
   const evaluated = moments.map((moment) => {
@@ -1483,7 +1488,7 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       return status()
     }
     case 'streamCut':
-      cutJob(args.job)
+      cutJob(args.job, args.failed === true)
       return {}
     case 'failures':
       // The stage's failure state after it changed (main/mcp.ts publishFailures): it replaces the renderer's copy.

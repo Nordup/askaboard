@@ -39,6 +39,12 @@ export function setRestored(list: RestoredScene[]): void {
   changed()
 }
 
+/** A scene of this session whose stream was cut: from now on a replay rebuilds it, as a restored scene. */
+export function addRestored(scene: RestoredScene): void {
+  scenes.set(scene.id, scene)
+  changed()
+}
+
 /** Main's failure state of the stage's programs, the full set (it replaces the one before). */
 export function setFailed(list: ReadonlyArray<[string, string]>): void {
   failed.clear()

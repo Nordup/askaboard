@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { MAX_COORD, MAX_NAME_CHARS, MAX_REGION_SIZE } from '@shared/limits'
 import { briefText, guideText, guideTopics, serverInstructions } from './guide'
 import { codeItems, htmlMaterial, NO_HTML } from './lab-switch'
-import { SceneCancelled, SceneProgramError, SceneStage, type StageEntry, type StageRun } from './live-scene'
+import { RealmBusy, SceneCancelled, SceneProgramError, SceneStage, type StageEntry, type StageRun, type SweepEnd } from './live-scene'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneLiveObject, SceneResult } from '@shared/live-scene'
 import { renderStoryboard, storyboardScale, type StoryboardInput } from './storyboard'
 import { BoardNews } from './news'
@@ -356,7 +356,7 @@ export class AgentServer {
   private readonly stage = new SceneStage(
     async (items) => (await this.bridge.request('measureText', { items })).sizes,
     async (request, place) => this.bridge.request('sceneHost', { request, ...(place ? { place } : {}) }, WRITE_TIMEOUT_MS),
-    (job, complete) => this.onSweepEnded(job, complete)
+    (end) => this.onSweepEnded(end)
   )
   readonly port = configuredPort()
   private readonly bridge: RendererBridge
@@ -708,7 +708,7 @@ export class AgentServer {
       session.lastActivity = Date.now()
       this.hooks.activity({ sessionId: session.id, tool: name })
       const start = Date.now()
-      // The board news goes out once, before the tool runs (a screenshot then counts as a look after it).
+      // The board news goes out once, before the tool runs (a screenshot then counts as a look after it). Late notes go out when the result is assembled, so one that arrives while the tool runs is in this result.
       // get_changes gets none: it lists the same changes itself.
       const news = name === 'get_changes' ? '' : await this.newsLine(session)
       let result: CallToolResult
@@ -721,7 +721,8 @@ export class AgentServer {
         thrown = error
         result = failure(error)
       }
-      if (news) result = { ...result, content: [{ type: 'text', text: news }, ...result.content] }
+      const prefix = [news, this.takeLateNotes(session)].filter((line) => line).join('\n')
+      if (prefix) result = { ...result, content: [{ type: 'text', text: prefix }, ...result.content] }
       this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown, trace.spans)
       return result
     }
@@ -730,6 +731,27 @@ export class AgentServer {
   /** The session's agent app label ("Codex", "Claude Code", …), the key of its news state. */
   private label(session: Session): string {
     return clientLabel(session.server.server.getClientVersion()?.name)
+  }
+
+  /** What a sweep found after write_scene replied, per board, until the next tool result on that board takes it. A repeat joins its line. */
+  private readonly lateNotes = new Map<string, Array<{ text: string; times: number }>>()
+
+  private addLateNote(board: string, text: string): void {
+    let notes = this.lateNotes.get(board)
+    if (!notes) this.lateNotes.set(board, (notes = []))
+    const same = notes.find((note) => note.text === text)
+    if (same) same.times++
+    else notes.push({ text, times: 1 })
+  }
+
+  /** The late notes of the shown board, one line each, or ''. */
+  private takeLateNotes(session: Session): string {
+    if (!session.id || session.id === 'catalog') return ''
+    const board = this.boardKey()
+    const notes = this.lateNotes.get(board)
+    if (!notes) return ''
+    this.lateNotes.delete(board)
+    return notes.map(({ text: line, times }) => (times > 1 ? `${line} (${times} times)` : line)).join('\n')
   }
 
   /** Deliver the board news for this session's agent app: the line, or ''. Never throws. */
@@ -805,6 +827,9 @@ export class AgentServer {
     const drafts = this.drafts.get(from)
     this.drafts.delete(from)
     if (drafts && to) this.drafts.set(to, drafts)
+    const notes = this.lateNotes.get(from)
+    this.lateNotes.delete(from)
+    if (notes && to) this.lateNotes.set(to, notes)
     for (const session of this.sessions.values()) {
       const cursor = session.cursors.get(from)
       session.cursors.delete(from)
@@ -859,6 +884,7 @@ export class AgentServer {
       if (signal.aborted) throw new SceneCancelled()
     }
     stopped()
+    this.stage.needRealm()
     const before = (await control({ action: 'status' })) as { playing_scene?: { id: string } | null; board_id?: string }
     const playingNow = before.playing_scene?.id
     // The board of this restage's record events (scene-store.ts RecordBoard), fixed now.
@@ -1584,6 +1610,12 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           }
           plan = out as FramesResult
         } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult
+        const cutoff = (plan as unknown as { pastCutoff?: number }).pastCutoff
+        if (cutoff !== undefined) {
+          await this.stage.sweepDone()
+          const why = (use === 'draft' ? draft!.entry : onBoard!).sweepError ?? 'its stream was cut'
+          return failure(new Error(`The scene "${name}" has no such moment: ${why}. It is complete only up to ${cutoff} s. ${use === 'draft' ? 'Nothing played. Change it with write_scene.' : 'It plays to that moment, then shows its end.'}`))
+        }
         const single = plan.frames.length === 1
         const options = single ? { cellLongEdge: SINGLE_FRAME_EDGE, maxScale: 4 } : {}
         // Live items first, on the main window (their hosts step through the moments), then the snapshot window puts the pictures together.
@@ -1716,20 +1748,25 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /**
-   * The way of an operation that needs the realm: it waits for a sweep outside the lock, so a play, a preview and play
-   * controls pass it. A sweep that another write started while this one queued for the lock sends it back to wait.
+   * The one way of a scene operation onto the stage. No wait for a sweep happens inside the lock: when the operation
+   * needs the realm while a sweep runs (SceneStage.needRealm), it leaves the lock, waits and starts again. So a play, a
+   * preview and play controls that do not need the realm pass a sweep, and work that does queues behind it.
    */
   private async onRealm<T>(signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
     for (;;) {
+      try {
+        return await this.staged(signal, fn)
+      } catch (error) {
+        if (!(error instanceof RealmBusy)) throw error
+      }
       await this.stage.sweepDone(signal)
-      const out = await this.staged(signal, async () => (this.stage.sweeping ? null : { value: await fn() }))
-      if (out) return out.value
     }
   }
 
-  /** A sweep ended. A stream cut short ends on the board too, and the idle rebuild (T26) starts from here. */
-  private onSweepEnded(job: number, complete: boolean): void {
-    if (!complete) void this.board('sceneControl', { action: 'streamCut', job }).catch(() => undefined)
+  /** A sweep ended: its notes wait for the next tool result, a stream cut short ends on the board too, and the idle rebuild (T26) starts from here. */
+  private onSweepEnded({ job, board, complete, failed, notes }: SweepEnd): void {
+    for (const note of notes) this.addLateNote(board ?? '', note)
+    if (!complete) void this.board('sceneControl', { action: 'streamCut', job, failed }).catch(() => undefined)
     if (this.stageOperations === 0) this.rebuildWhenIdle()
   }
 
@@ -1775,7 +1812,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           // Outside the lock: a board that does not answer must not hold a play.
           .finally(() => this.publishFailures())
       void this.background(rebuild, program).catch((error: unknown) => {
-        if (!(error instanceof SceneCancelled)) console.warn(`stage: the idle rebuild failed (${error instanceof Error ? error.message : String(error)})`)
+        if (!(error instanceof SceneCancelled || error instanceof RealmBusy)) console.warn(`stage: the idle rebuild failed (${error instanceof Error ? error.message : String(error)})`)
       })
     }, STAGE_IDLE_MS)
   }
@@ -1812,7 +1849,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
 
   /** The stage made to match the records, when it does not yet (a read that needs the stage's scenes runs it first). */
   private async restoreIfNeeded(): Promise<void> {
-    if (this.boardKey() && this.restoredFor !== this.restoreMark()) await this.background((signal) => this.staged(signal, async () => undefined))
+    if (this.boardKey() && this.restoredFor !== this.restoreMark()) await this.background((signal) => this.onRealm(signal, async () => undefined))
   }
 
   /**
@@ -1836,6 +1873,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       if (!path) return
       const mark = this.restoreMark()
       if (this.restoredFor === mark) return
+      this.stage.needRealm()
       const stale = (): boolean => this.restoreMark() !== mark
       const started = Date.now()
       const status = (await this.board('sceneControl', { action: 'status' })) as { board_id?: string | null }
@@ -1919,13 +1957,13 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     }
     setTimeout(() => {
       if (this.boardKey() !== path) return
-      void this.background((signal) => this.staged(signal, async () => undefined)).catch((error: unknown) => console.warn(`stage: the stage of ${path} is restored at its first use (${error instanceof Error ? error.message : String(error)})`))
+      void this.background((signal) => this.onRealm(signal, async () => undefined)).catch((error: unknown) => console.warn(`stage: the stage of ${path} is restored at its first use (${error instanceof Error ? error.message : String(error)})`))
     }, STAGE_IDLE_MS)
   }
 
   /** The board window replays scenes that were restored from the records: their programs run again first. */
   async rebuildScenes(sceneIds: string[]): Promise<void> {
-    await this.background((signal) => this.staged(signal, () => this.ensureMemories(sceneIds, signal)))
+    await this.background((signal) => this.onRealm(signal, () => this.ensureMemories(sceneIds, signal)))
   }
 
   /** Make the play data of these scenes, when the player does not hold it (scenes restored from the records), and say why one could not be rebuilt. */
@@ -1934,7 +1972,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     const ids = sceneIds.filter((id) => !this.failuresOf([id]).size)
     const state = (await this.board('sceneControl', { action: 'remembered', scenes: ids })) as { held: string[]; restored: string[] }
     if (ids.every((id) => state.held.includes(id))) return this.failuresOf(sceneIds)
-    return this.background((signal) => this.staged(signal, () => this.ensureMemories(sceneIds, signal)))
+    return this.background((signal) => this.onRealm(signal, () => this.ensureMemories(sceneIds, signal)))
   }
 
   /**
@@ -2007,7 +2045,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   private async freshDraft(session: Session, extra: ToolExtra, draft: Draft, force?: string): Promise<{ rerun: string | null } | CallToolResult> {
     try {
       return await this.withProgram(session, extra, (signal) =>
-        this.staged(signal, async () => {
+        this.onRealm(signal, async () => {
           const place = this.placeOf(draft.name)
           const context = await this.contextAt(place)
           this.stage.adopt(context)
@@ -2035,7 +2073,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args)) as Record<string, unknown>
     try {
       return await this.withProgram(session, extra, (signal) =>
-        this.staged(signal, async () => {
+        this.onRealm(signal, async () => {
           const playing = await control({ action: 'status' })
           if (!playing.playing_scene) return failure(new Error('No scene is playing, so there is nothing to cut.'))
           if (name && (playing.name as string | null) !== name) return failure(new Error(`The scene "${name}" is not the one that plays now (that is "${playing.name ?? playing.scene}"). cut acts on the playing scene only.`))
@@ -2063,12 +2101,13 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       if (this.boardScene(name)) return failure(new Error(`No draft named "${name}": the scene "${name}" is on the board already and has no new version. replay plays it again; to change it, write_scene "${name}" first, then start.`))
       return failure(this.unknownScene(name, 'draft'))
     }
+    if (draft.entry.sweepError) return failure(new Error(`The draft "${name}" cannot start: ${draft.entry.sweepError}. Nothing played, and the draft is kept. Change it with write_scene.`))
     const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args)) as Record<string, unknown>
     let outcome: CallToolResult | { result: SceneResult & { ends_in_s: number }; rerun: string | null; replaced: boolean; others?: unknown[]; stage?: string }
     const tQueue = Date.now()
     try {
       outcome = await this.withProgram(session, extra, (signal) =>
-        this.staged(signal, async () => {
+        this.onRealm(signal, async () => {
           spans.queue_ms = Date.now() - tQueue
           const onBoard = this.boardScene(name)
           if (onBoard?.scene) {

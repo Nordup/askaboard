@@ -33,9 +33,10 @@ import { StageProcess } from './stage-process'
  *
  * A draft replies before its sweep ends. One record (Producer) lives from that
  * reply to the sweep's terminal event: done, failed, cancelled, a window
- * reload or a crash. Work that needs the realm waits for that event (sweepDone,
- * ensure); a play, a preview and play controls do not. The answer recorder and
- * the place of the run stay alive with the record.
+ * reload or a crash. Work that needs the realm finds it busy until that event
+ * (needRealm, RealmBusy): it leaves the stage lock, waits (sweepDone) and starts
+ * again (main/mcp.ts onRealm). A play, a preview and play controls do not need the
+ * realm. The answer recorder and the place of the run stay alive with the record.
  */
 
 /** An error of a scene program, at a line of the inline code ("Line 12: …") or of a scene file (file: "lib/arrows.js line 12: …"). detail: the message without the place. */
@@ -46,6 +47,13 @@ export class SceneProgramError extends Error {
     readonly file: string | null = null
   ) {
     super(line ? `${siteLabel({ file, line })}: ${detail}` : file ? `${file}: ${detail}` : detail)
+  }
+}
+
+/** A sweep holds the realm. Nothing waits for it inside the stage lock: main/mcp.ts onRealm leaves the lock, waits and starts the operation again. */
+export class RealmBusy extends Error {
+  constructor() {
+    super('A sweep holds the stage.')
   }
 }
 
@@ -94,6 +102,8 @@ export interface StageEntry {
    * a replay of it says that it could not be rebuilt.
    */
   failed?: string
+  /** Its sweep failed after the reply: the error with its place and scene time. Rebuilds do not sample, so it can still run; a draft with this cannot start. */
+  sweepError?: string
 }
 
 export interface StageRun {
@@ -130,6 +140,15 @@ interface Producer {
   end: () => void
 }
 
+/** A sweep's terminal event. notes: what the agent should read about it, one line each. failed: its stream ended with an error, not with a cut. */
+export interface SweepEnd {
+  job: number
+  board: string | null
+  complete: boolean
+  failed: boolean
+  notes: string[]
+}
+
 /** The error of a reply that never came, because the program was cancelled. */
 const CANCELLED = 'cancelled'
 /** The error of a program that ended the stage process by going over V8's heap limit (stage-process.ts, onGone). */
@@ -143,12 +162,12 @@ export class SceneStage {
   /**
    * measureText: the renderer lays the text out as the board does (renderer/live/measure.ts).
    * host: the renderer answers html(), image(), space() and copy() requests (renderer/live/host.ts).
-   * sweepEnded: a sweep's terminal event; complete: false when its stream stopped short of the end.
+   * sweepEnded: a sweep's terminal event.
    */
   constructor(
     private readonly measureText: (items: TextItem[]) => Promise<Array<[number, number]>>,
     private readonly host: (request: HostRequest, place: unknown) => Promise<unknown>,
-    private readonly sweepEnded: (job: number, complete: boolean) => void
+    private readonly sweepEnded: (end: SweepEnd) => void
   ) {
     this.process = new StageProcess(
       (message, reply) => this.onStageMessage(message, reply),
@@ -341,7 +360,7 @@ export class SceneStage {
    */
   async resample(wanted: ReadonlySet<StageEntry>, onRun: (entry: StageEntry, run: { desc: SceneDescription; job: number; frames: number }) => Promise<void>, signal?: AbortSignal): Promise<void> {
     await this.withSignal(signal, async () => {
-      await this.sweepDone(signal)
+      this.needRealm()
       const started = Date.now()
       const done = new Set<StageEntry>()
       let sampled = 0
@@ -495,6 +514,11 @@ export class SceneStage {
     return this.producer !== null
   }
 
+  /** The one gate of the realm: every operation that needs it passes here, inside the stage lock, before it changes anything. */
+  needRealm(): void {
+    if (this.producer) throw new RealmBusy()
+  }
+
   /** Wait for the sweep's terminal event. A signal ends the wait, not the sweep. */
   async sweepDone(signal?: AbortSignal | null): Promise<void> {
     const producer = this.producer
@@ -507,13 +531,13 @@ export class SceneStage {
   }
 
   /** The record's end: what waited on the sweep goes on, and the answers of its run are closed. */
-  private endProducer(complete: boolean): void {
+  private endProducer(complete: boolean, failed = false, notes: string[] = []): void {
     const producer = this.producer
     if (!producer) return
     this.producer = null
     this.answers = { record: new Map(), given: null }
     producer.end()
-    this.sweepEnded(producer.job, complete)
+    this.sweepEnded({ job: producer.job, board: producer.board, complete, failed, notes })
   }
 
   /** End the sweep now (of this version only, when one is named): its stream stops where it is. */
@@ -692,7 +716,7 @@ export class SceneStage {
    * are skipped. signal: the operation's cancel, checked before each reset and each program. start: false stops at a stopped process (settle).
    */
   private async ensure(before: StageEntry | null = null, signal?: AbortSignal, start = true): Promise<void> {
-    await this.sweepDone(signal)
+    this.needRealm()
     if (start) await this.startProcess()
     else if (!this.process.running) return
     const upTo = this.placeIndex(before)
@@ -717,11 +741,7 @@ export class SceneStage {
       const resolve = this.pending.get(message.id)
       if (!resolve) {
         // A failed reply after the early reply: the sweep failed.
-        if (this.producer?.job === message.id && !message.ok) {
-          console.warn(`stage: the sweep of ${this.producer.entry?.name ?? `job ${message.id}`} failed: ${message.error}`)
-          this.dirty = true
-          this.endProducer(false)
-        }
+        if (this.producer?.job === message.id && !message.ok) this.sweepFailed(this.producer, message)
         return
       }
       this.pending.delete(message.id)
@@ -735,13 +755,23 @@ export class SceneStage {
       const producer = this.producer
       if (producer?.job !== message.id) return
       console.log(`stage: swept ${producer.entry?.name ?? `job ${message.id}`} on ${producer.board ?? 'no board'} in ${Math.round(message.ms)} ms, ${message.frames} chunks${message.orderDependent.length ? `; order dependent: ${message.orderDependent.join(', ')}` : ''}`)
-      this.endProducer(true)
+      const scene = producer.entry?.name ?? 'without a name'
+      this.endProducer(true, false, [...message.orderDependent.map((object) => `Scene "${scene}": ${object} gave another result in play than in write_scene: its recipe depends on the order of its calls.`), ...message.logs.map((line) => `Scene "${scene}" logged: ${line}`)])
     } else if (message.t === 'host') void this.answerHost(message.hid, message.text, reply)
     else if (message.t === 'linked') {
       const waiters = this.linkWaiters
       this.linkWaiters = []
       for (const resolve of waiters) resolve()
     }
+  }
+
+  /** The sweep threw: its entry keeps the error, the board's stream ends at its cutoff, and the agent gets the error with its place. */
+  private sweepFailed(producer: Producer, reply: Extract<StageReply, { ok: false }>): void {
+    console.warn(`stage: the sweep of ${producer.entry?.name ?? `job ${reply.id}`} failed: ${reply.error}`)
+    const error = `${new SceneProgramError(reply.error, reply.line, reply.file).message}${reply.at !== undefined ? `, at ${Math.round(reply.at * 100) / 100} s of the scene` : ''}`
+    if (producer.entry) producer.entry.sweepError = error
+    this.dirty = true
+    this.endProducer(false, true, [`Scene "${producer.entry?.name ?? 'without a name'}" failed after write_scene returned: ${error}. It plays to that moment, then shows its end. A draft of it cannot start: change it with write_scene.`])
   }
 
   /** The stage process stopped (a crash, an out-of-memory): what waited on it fails, and the next operation starts a new process and rebuilds the stage (as its own work, which a cancel stops). */

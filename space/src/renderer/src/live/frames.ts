@@ -16,7 +16,9 @@ import { scenePlayer } from './player'
  *
  * A job is open while it receives: each chunk adds samples to its objects, and
  * moves readyThrough. Its last chunk ends it, and it is then complete: the
- * scene's whole duration is here.
+ * scene's whole duration is here. A job that stops before that ends with a
+ * cutoff, its last complete moment: samples past it go, and each live form ends
+ * there, so no read blends toward a partial moment.
  *
  * One owner: this store until takeFrames, then the compile (and its play),
  * which holds the job's live objects. The store keeps a taken job only to
@@ -48,12 +50,21 @@ export interface RunFrames {
   bytes: number
   /** The last chunk is here, or the stream was cut. */
   ended: boolean
-  /** The stream stopped before the end (a cancel, a failure, a crash, a window reload). */
-  cut: boolean
+  /** Why the stream stopped before the end, or null. */
+  stopped: () => StreamStop | null
   /** How far it can play: Infinity after the end. */
   ready: () => number
   /** Resolves when every moment up to t is here, or the stream ended. */
   reached: (t: number) => Promise<void>
+}
+
+/**
+ * A stream that stopped before its end. at: its cutoff, the last complete moment. failed: the sweep failed, so a
+ * run of the same program gives no more. Else it was cut (a cancel, a crash, a window reload): a new run gives the whole stream.
+ */
+export interface StreamStop {
+  at: number
+  failed: boolean
 }
 
 interface JobFrames extends RunFrames {
@@ -61,6 +72,7 @@ interface JobFrames extends RunFrames {
   next: number
   /** Every moment up to this time is complete on the board. */
   readyThrough: number
+  stop: StreamStop | null
   /** A compile holds it (takeFrames). */
   taken: boolean
   /** ms spent decoding, and the longest chunk. */
@@ -76,13 +88,14 @@ function newJob(): JobFrames {
     objects: new Map(),
     readyThrough: 0,
     ended: false,
-    cut: false,
+    stop: null,
     taken: false,
     bytes: 0,
     ms: 0,
     longest: 0,
     error: null,
     waiting: [],
+    stopped: () => job.stop,
     ready: () => (job.ended ? Number.POSITIVE_INFINITY : job.readyThrough),
     reached: (t) => (t <= job.ready() ? Promise.resolve() : new Promise((resolve) => job.waiting.push({ t, resolve })))
   }
@@ -108,28 +121,33 @@ function wake(job: JobFrames): void {
 }
 
 /**
- * The end of a job: complete, or cut. Complete: each live form takes its last change, and an object with no samples shows as
- * committed. A play of it updates its settled times and units from here (scenePlayer.playsChanged).
+ * The end of a job. Complete: each live form takes its last change, and an object with no samples shows as committed.
+ * Stopped: each live form ends at the cutoff at the latest. A play of it updates its settled times and units from here
+ * (scenePlayer.playsChanged); a scene whose stream was cut no longer counts as held (scenePlayer.forgetCut).
  */
-function endJob(id: number, job: JobFrames, cut: boolean): void {
+function endJob(id: number, job: JobFrames, stop: { failed: boolean } | null): void {
   if (job.ended) return
   job.ended = true
-  job.cut = cut
-  if (!cut) {
-    for (const entry of job.objects.values()) {
-      for (const dyn of entry.dyns) if (Number.isFinite(dyn.end)) dyn.end = entry.samples.length ? Math.min(dyn.end, entry.lastChange) : Number.NEGATIVE_INFINITY
+  const at = job.readyThrough
+  if (stop) job.stop = { at, failed: stop.failed }
+  for (const entry of job.objects.values()) {
+    if (stop) {
+      while (entry.samples.length && entry.samples[entry.samples.length - 1].t > at) entry.samples.pop()
+      entry.lastChange = Math.min(entry.lastChange, at)
     }
+    for (const dyn of entry.dyns) if (Number.isFinite(dyn.end)) dyn.end = stop ? Math.min(dyn.end, at) : entry.samples.length ? Math.min(dyn.end, entry.lastChange) : Number.NEGATIVE_INFINITY
   }
   wake(job)
   if (!job.taken) return
   jobs.delete(id)
   scenePlayer.playsChanged()
+  if (stop && !stop.failed) scenePlayer.forgetCut()
 }
 
 /** The stream of `job` stopped before its end: nothing waits for it any more. */
-export function cutJob(id: unknown): void {
+export function cutJob(id: unknown, failed = false): void {
   const job = typeof id === 'number' ? jobs.get(id) : undefined
-  if (job) endJob(id as number, job, true)
+  if (job) endJob(id as number, job, { failed })
 }
 
 let port: MessagePort | null = null
@@ -160,8 +178,9 @@ function onPortMessage(data: unknown): void {
   if (typeof data !== 'object' || data === null) return
   const m = data as Record<string, unknown>
   if (m.t === 'retire' && typeof m.job === 'number') {
-    cutJob(m.job)
-    jobs.delete(m.job)
+    cutJob(m.job, m.failed === true)
+    // A failed sweep can end before the draft takes its frames: they stay for takeFrames.
+    if (m.failed !== true) jobs.delete(m.job)
     return
   }
   if (m.t !== 'frames' || typeof m.job !== 'number' || typeof m.seq !== 'number') return
@@ -187,11 +206,11 @@ function onPortMessage(data: unknown): void {
       frames.bytes += chunkBytes(chunk)
       frames.next++
       frames.readyThrough = chunk.through
-      if (chunk.end) endJob(job, frames, false)
+      if (chunk.end) endJob(job, frames, null)
       else wake(frames)
     } catch (error) {
       frames.error = error instanceof Error ? error.message : String(error)
-      endJob(job, frames, true)
+      endJob(job, frames, { failed: false })
     }
   }
   port?.postMessage({ t: 'ack', job, seq: m.seq })
