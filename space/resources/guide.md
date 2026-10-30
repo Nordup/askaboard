@@ -15,7 +15,7 @@
 <!-- topic: html -->
 <!-- summary: html(): material to read and keep (pages, exercises, tables, cards) as board items: the HTML subset, tags, layout, names, parts, style keys and units. -->
 
-Use html() for material the learner reads and keeps: pages, exercises, tables, cards. Drawings and explanations are ink and shapes in a scene (topic "scene").
+Use html() for material the learner reads and keeps: pages, exercises, tables, cards.
 
 html(markup, o) in a scene (topic "scene") turns a small HTML subset into board items. get_item with as "html" returns an existing item in the same subset.
 
@@ -207,9 +207,9 @@ A scene program can be a file in `boards/scenes/` of the learning folder, and fi
 
 ## Program items (program())
 <!-- topic: scene-code -->
-<!-- summary: program(src, o): a live item that runs your own JavaScript and keeps running, for what ink cannot do: the learner's own hands on it (turn, drag, slide), or heavy computation (particles, fluids, simulations). Canvas, WebGL 2, WebGPU, three.js and any library; scene clock, params, steps, learner input, report(). -->
+<!-- summary: program(src, o): a live item that runs your own JavaScript and keeps running: three-dimensional worlds, fields, simulations, particles, and things the learner turns, drags or slides. Canvas, WebGL 2, WebGPU, three.js and any library; scene clock, params, steps, learner input, report(). -->
 
-Use a live item for what a scene of ink and shapes cannot do: input from the learner's own hands, or computation such as particles, fluids and simulations. A drawing that turns or moves, in two dimensions or three, is ink and shapes in a scene (topic "scene").
+A live item holds whatever code can make: a lit three-dimensional world, a field, a simulation, something the learner turns or drags. Its transparent pixels show the board, so what it shows can sit on the board with no visible frame. Anything outside its box is cut off, so give glows, reflections and labels room inside it.
 
 `program(src, o)` in a scene makes a live item whose pixels come from your own program. Options as `canvas()`: o.at (top-left) or o.center, o.size [w, h] in board points (default [320, 200]), o.params {name: number}.
 

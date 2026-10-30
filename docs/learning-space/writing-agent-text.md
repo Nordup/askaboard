@@ -146,7 +146,8 @@ voice, and the founder brought the old text back (I25).
 
 | Intent | Where it lives |
 | --- | --- |
-| Ink first; code items and HTML for narrower jobs (I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-code` and `html`. Not in a tool description. |
+| Every medium is an equal choice (I30, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-code` and `html`. Not in a tool description. |
+| The picture carries the meaning (I30) | The brief, "Let the picture do the explaining" and the calibration list. |
 | Check a scene before the person sees it (I22, I25) | The brief, "Take the time it needs, and check your work"; the write_scene pointer to preview_scene; the preview_scene opening. |
 | Explain fully, then check (I21) | The brief only. |
 | Draw step by step, in front of the person | The brief ("Explain by drawing, one step at a time"); the instructions ("in front of the learner"); write_scene's opening. |
@@ -378,7 +379,8 @@ that Anthropic writes for its own models: the claude.ai system prompt and the
   whatever the brief said (I14). Hand drawing came back when code items were
   switched off (lab switch `--no-code`), and then, with code items on, once
   the brief and the guide said what each kind is for (I20): "a
-  three-dimensional subject alone is not a reason for one".
+  three-dimensional subject alone is not a reason for one". I30 replaced that
+  steer on 2026-10-31, so this pull toward code can come back. Watch for it.
 - **Measure with tasks that pull toward the defaults.** The EM wave and the
   seasons are pictures by nature, so most briefs look alike there.
   `stddev` ("I can compute it but I don't get it") pulls toward formulas and
