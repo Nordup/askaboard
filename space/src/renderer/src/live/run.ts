@@ -412,6 +412,9 @@ function currentDraft(ctx: RunSceneContext, key: unknown): CompiledDraft | null 
 function takeDraft(ctx: RunSceneContext, key: unknown, sceneId: string, name: string | null): { summary: SceneSummary; compiled: CompiledScene } | null {
   const draft = currentDraft(ctx, key)
   if (!draft) return null
+  // A failed stream stays as a draft for preview_scene, and it never plays. It can fail while the start waits for the stage.
+  const stop = draft.frames.stopped()
+  if (stop?.failed) throw new Error(`The draft "${name}" cannot start: its sweep failed, and it is complete only up to ${stop.at} s. Nothing played, and the draft is kept. Change it with write_scene.`)
   drafts.delete(key as string)
   const { compiled } = draft
   const draftId = compiled.play.id
@@ -434,7 +437,8 @@ export interface CommittedScene {
  * from now on, so it never draws the later scene's geometry.
  */
 function keepInkLook(object: PlayObject, s: Scene): void {
-  if (object.dyn) {
+  // A constant dynamic ink has an empty dyn: its strokes are on the board, not in the stream.
+  if (object.dyn && (object.dyn.samples.length || object.dyn.seeds.length)) {
     object.settled = Math.max(object.settled, object.dyn.end)
     object.dyn.end = Number.POSITIVE_INFINITY
     return
@@ -551,7 +555,7 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
   // The scene's items as they are now, for a replay after later scenes change them.
   const snapshot: SceneMemory['snapshot'] = new Map()
   const byId = new Map(state.nodes.map((node) => [node.id, node]))
-  for (const object of compiled.play.objects) {
+  for (const object of allObjects(compiled.play)) {
     if (object.ghost) continue
     for (const target of object.targets) {
       const node = byId.get(target.nodeId)
@@ -969,7 +973,7 @@ function restoredSnapshot(compiled: CompiledScene, story: SceneStory, board: Boa
   for (const item of story.items) item.nodes.forEach((id, k) => item.sigs?.[k] !== undefined && recorded.set(id, item.sigs[k]))
   const byId = new Map(compiled.next.map((node) => [node.id, node]))
   const snapshot: SceneMemory['snapshot'] = new Map()
-  for (const object of compiled.play.objects) {
+  for (const object of allObjects(compiled.play)) {
     if (object.ghost) continue
     for (const target of object.targets) {
       const id = target.nodeId

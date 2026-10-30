@@ -372,14 +372,21 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): void {
     let json: string | null = null
     let orderDependent: string[] = []
     if (frames) {
-      json = fns.result()
-      if (typeof json !== 'string' || json.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
+      const description = (): string => {
+        const text = fns.result()
+        if (typeof text !== 'string' || text.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
+        return text
+      }
       early = mode === 'draft' && !fns.stepping()
-      if (early) frames.send(false)
-      else {
+      if (early) {
+        json = description()
+        frames.send(false)
+      } else {
         const swept = fns.sample(() => true) as NonNullable<ReturnType<Host['sample']>>
         orderDependent = swept.orderDependent
         frameSink = null
+        // After the sweep: the description then holds the logs of the sweep's recipes too.
+        json = description()
         frames.send(true, swept.lastChange)
       }
     }

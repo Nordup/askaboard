@@ -659,7 +659,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         contentIds.push(node.id)
         madeBy(object.id, node.id)
       }
-      if (text.center && !isRemoved) centers.push({ nodeId: node.id, center: apply(end, text.center), object: object.id })
+      if (text.center && !isRemoved && !object.unchanged) centers.push({ nodeId: node.id, center: apply(end, text.center), object: object.id })
       play.targets.push({ nodeId: node.id, ink: false, inverseBaked: invert(upright) })
       continue
     }

@@ -548,6 +548,11 @@ export class SceneStage {
     this.endProducer(false)
   }
 
+  /** A new write of a name: the sweep of that name on this board has no more use, whether its version is still a draft or started. */
+  cancelSweepOf(name: string): void {
+    if (this.producer?.entry?.name === name && this.producer.board === this.boardPath) this.cancelSweep()
+  }
+
   /** Why the stage ended the last program itself (no abort signal: the board window loaded again). */
   private cancelWhy = 'The program was stopped.'
 

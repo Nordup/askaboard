@@ -1168,7 +1168,7 @@ export class ScenePlayer {
     const ghosts: BoardNode[] = []
     const hidden: string[] = []
     const remap = new Map<string, string>()
-    for (const object of play.objects) {
+    for (const object of allObjects(play)) {
       for (const t of object.targets) {
         if (remap.has(t.nodeId)) continue
         const snap = memory.snapshot.get(t.nodeId)

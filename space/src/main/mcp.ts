@@ -279,6 +279,8 @@ interface StagePlace {
 
 /** The frames preview_scene draws (renderer sceneFrames). */
 type FramesResult = StoryboardInput & { scene: string; duration_s: number; live: LiveStillsItem[] }
+/** sceneFrames for a moment past the cutoff of a scene whose stream stopped. */
+type PastCutoff = { pastCutoff: number }
 
 /**
  * The key of each version of a draft. The renderer keeps the compile of a
@@ -1478,7 +1480,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const before = this.draftsOf(board).get(name)
         const seq = ++this.draftSeq
         // Its sweep has no more use: this write does not wait for it.
-        if (before) this.stage.cancelSweep(before.entry)
+        this.stage.cancelSweepOf(name)
         let replaces = false
         // The snapshot: the inline code or the file, and every file it imports, read now and never again for this draft.
         let source: SceneSource
@@ -1591,7 +1593,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const framePart: FramePart =
           part === undefined || part === 'scene' ? { kind: 'scene' } : part === 'view' ? { kind: 'view' } : 'region' in part ? { kind: 'region', rect: part.region } : { kind: 'items', items: part.items }
         let rerun: string | null = null
-        let plan: FramesResult
+        let plan: FramesResult | PastCutoff
         const framesStart = Date.now()
         if (use === 'draft') {
           const args = { label: `the draft "${name}"`, moments, part: framePart }
@@ -1608,11 +1610,10 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             out = await this.board('sceneFrames', { ...args, draft: draftKey(draft!.desc) }, SCENE_TIMEOUT_MS)
             if (isMissing(out)) throw new Error('The board did not keep the draft. Write it again with write_scene.')
           }
-          plan = out as FramesResult
-        } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult
-        const cutoff = (plan as unknown as { pastCutoff?: number }).pastCutoff
-        if (cutoff !== undefined) {
-          await this.stage.sweepDone()
+          plan = out as FramesResult | PastCutoff
+        } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult | PastCutoff
+        if ('pastCutoff' in plan) {
+          const cutoff = plan.pastCutoff
           const why = (use === 'draft' ? draft!.entry : onBoard!).sweepError ?? 'its stream was cut'
           return failure(new Error(`The scene "${name}" has no such moment: ${why}. It is complete only up to ${cutoff} s. ${use === 'draft' ? 'Nothing played. Change it with write_scene.' : 'It plays to that moment, then shows its end.'}`))
         }
