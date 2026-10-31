@@ -115,15 +115,17 @@ export const LOOK = String.raw`
     });
     // The last pass: tone mapping, sRGB, premultiplied output with real alpha. The glow keeps its own alpha, so it joins any board.
     finalMat = new THREE.ShaderMaterial({ ...noTone(),
-      uniforms: { tA: { value: null }, tB: { value: null }, box: { value: new THREE.Vector4(0, 0, 1, 1) }, glow: { value: 0 }, seed: { value: 0 }, toneMappingExposure: { value: 1 }, tone: { value: 1 } },
+      uniforms: { tA: { value: null }, tB: { value: null }, box: { value: new THREE.Vector4(0, 0, 1, 1) }, glow: { value: 0 }, display: { value: 0 }, seed: { value: 0 }, toneMappingExposure: { value: 1 }, tone: { value: 1 } },
       vertexShader: QUAD_VS,
       fragmentShader: [
         '#include <tonemapping_pars_fragment>',
-        'uniform sampler2D tA, tB; uniform vec4 box; uniform float seed, tone, glow; varying vec2 vUv;',
+        'uniform sampler2D tA, tB; uniform vec4 box; uniform float seed, tone, glow, display; varying vec2 vUv;',
         'float n(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }',
         'vec3 tm(vec3 c){ vec3 v = max(c, vec3(0.0)); v = tone > 0.5 ? ACESFilmicToneMapping(v) : clamp(v, 0.0, 1.0);',
         ' return sRGBTransferOETF(vec4(v, 1.0)).rgb; }',
         'void main(){ vec2 u = (vUv - box.xy) / box.zw; vec4 a = u.x < 0.0 || u.y < 0.0 || u.x > 1.0 || u.y > 1.0 ? vec4(0.0) : texture2D(tA, u);',
+        // Plain: the target holds display colours, premultiplied. They pass as they are.
+        'if (display > 0.5 && glow == 0.0) { gl_FragColor = vec4(clamp(a.rgb, 0.0, 1.0), clamp(a.a, 0.0, 1.0)); return; }',
         'float al = clamp(a.a, 0.0, 1.0); vec3 S = al > 0.002 ? a.rgb / al : vec3(0.0);',
         'vec3 G = max(texture2D(tB, vUv).rgb, vec3(0.0)) * glow;',
         'vec3 sc = tm(S) * al; vec3 gl = tm(G) * (1.0 - al);',
@@ -314,9 +316,12 @@ export const LOOK = String.raw`
   };
 
   const targetOptions = (samples, depth) => ({ type: THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
-  const sceneTarget = (W, H) => sharedOf('scene', W, H, () => {
+  // The plain look renders as three.js does to a canvas: materials write display colours, blending happens there, and a
+  // ShaderMaterial's vec3(0.5) is 128 on screen. three.js does this for a target that says it is an XR target with an sRGB texture.
+  const sceneTarget = (W, H, display) => sharedOf(display ? 'scene-display' : 'scene', W, H, () => {
     const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(4, true));
     rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
+    if (display) { rt.isXRRenderTarget = true; rt.texture.colorSpace = THREE.SRGBColorSpace; }
     return rt;
   });
   const flatTarget = (name, W, H) => sharedOf(name, W, H, () => new THREE.WebGLRenderTarget(W, H, targetOptions(0, false)));
@@ -466,7 +471,7 @@ export const LOOK = String.raw`
         r.spread.value.set(((12 * s) / FILM_SCALE) / iw, ((12 * s) / FILM_SCALE) / ih);
       }
 
-      const scene = sceneTarget(IW, IH);
+      const scene = sceneTarget(IW, IH, look.name === 'plain');
       renderer.setRenderTarget(scene);
       renderer.clear();
       renderer.render(w.scene, camera);
@@ -489,6 +494,7 @@ export const LOOK = String.raw`
       u.seed.value = w.tickMs % 97;
       u.toneMappingExposure.value = look.exposure;
       u.tone.value = look.tone ? 1 : 0;
+      u.display.value = look.name === 'plain' ? 1 : 0;
       pass(finalMat, output);
     } finally {
       rendering = null;

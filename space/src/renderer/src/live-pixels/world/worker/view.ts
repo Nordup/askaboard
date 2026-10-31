@@ -57,7 +57,10 @@ export const VIEW = String.raw`
       }
       for (const child of o.children) visit(child);
     };
-    for (const child of w.scene.children) visit(child);
+    // What hangs on the camera comes last: it counts for reach, and not for the floor or the focus.
+    for (const child of w.scene.children) if (child !== w.camera) visit(child);
+    w.probesOnStage = list.length;
+    if (w.camera.parent === w.scene) visit(w.camera);
     return list;
   };
 
@@ -79,10 +82,10 @@ export const VIEW = String.raw`
     if (w.reachSet === 'full') { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
     const probes = probeWorld(w);
     const box = w.bounds.makeEmpty(), v = reachVector();
-    for (let i = 0; i < probes.length; i += 3) box.expandByPoint(v.set(probes[i], probes[i + 1], probes[i + 2]));
-    if (box.isEmpty()) { w.reach = null; return; }
+    for (let i = 0; i < w.probesOnStage; i += 3) box.expandByPoint(v.set(probes[i], probes[i + 1], probes[i + 2]));
+    if (!probes.length) { w.reach = null; return; }
     const floor = floorOn(w);
-    if (floor) fitFloor(w, box);
+    if (floor && !box.isEmpty()) fitFloor(w, box);
     nominalCamera(w);
     const c = w.camera, r = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity, full: false };
     let seen = true;
@@ -100,7 +103,7 @@ export const VIEW = String.raw`
     for (let i = 0; i < probes.length; i += 3) {
       const x = probes[i], y = probes[i + 1], z = probes[i + 2];
       project(x, y, z);
-      if (floor) {
+      if (floor && i < w.probesOnStage && w.floorBuilt) {
         // The floor shows only the mirror image of the world and its shadow, with the blur of its height.
         const h = Math.max(0, y - w.floorY), sx = x - h * w.lightSlope.x, sz = z - h * w.lightSlope.y, blur = h * w.look.softness * 1.5;
         project(x, 2 * w.floorY - y, z);

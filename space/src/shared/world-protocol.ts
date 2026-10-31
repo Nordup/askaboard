@@ -2,6 +2,9 @@
 // MessagePort. See docs/learning-space/one-world-architecture.md.
 // Board values are board points. Pixels are device pixels of the surface.
 
+/** Ticks per second of item time: the grid of previews and stills. */
+export const WORLD_TICK_HZ = 60
+
 export interface WorldCamera {
   /** Board point at the board element's top-left corner. */
   x: number
@@ -175,6 +178,8 @@ export type WorldToPage =
   | { type: 'report'; key: WorldKey; values: unknown }
   /** The answer to `pick`. part: the nearest published ancestor. local: in the part's space. point: in world space. hit null: nothing there. */
   | { type: 'picked'; key: WorldKey; request: number; hit: { part: string | null; local: [number, number, number]; point: [number, number, number] } | null }
+  /** The cursor the world asks for over itself, a CSS cursor. Empty: the board's own. Sent on a change. */
+  | { type: 'cursor'; key: WorldKey; value: string }
   /** Which input the world's code listens to now. Sent on a change. */
   | { type: 'subscribe'; key: WorldKey; pointer: boolean; ink: boolean }
   /**

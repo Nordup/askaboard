@@ -1,9 +1,8 @@
 /**
  * The realm of the world worker. All worlds run here and share one `three`.
- * Worlds keep the clock rules of live-pixels/runtime.ts and clock.ts: item
- * time, scene time, step events, a hold on pause, the tick grid for previews.
- * The difference: runtime.ts owns a whole worker, and here each rule is per
- * world.
+ * The clock rules of a world: item time, scene time, step events, a hold on
+ * pause, and a tick grid of WORLD_TICK_HZ for previews. Playback is live and
+ * has no grid: each display frame runs one frame at the clock's time now.
  *
  * Who owns the globals. performance.now, Date, Math.random, the timers and
  * requestAnimationFrame go to the world whose code runs at that moment (see
@@ -56,7 +55,7 @@ export const REALM = String.raw`
     try { return fn(); } finally { current = previous; }
   };
 
-  // Seeded Math.random (sfc32), one state per world. The same generator as runtime.ts.
+  // Seeded Math.random (sfc32), one state per world.
   const coreState = new Int32Array(4);
   const randomOf = (rs) => {
     const a = rs[0], b = rs[1], c = rs[2], d = rs[3];
@@ -335,6 +334,13 @@ export const REALM = String.raw`
     if (wait <= 0) send(); else w.reportTimer = nativeSetTimeout(send, wait);
   };
 
+  const listen = (w, type, fn) => {
+    if (!w.events.has(type)) w.events.set(type, new Set());
+    w.events.get(type).add(fn);
+    subscribe(w);
+    return () => { w.events.get(type).delete(fn); subscribe(w); };
+  };
+
   /** The world object of a world's code. */
   const worldApi = (w) => ({
     get scene() { return w.scene; },
@@ -343,6 +349,19 @@ export const REALM = String.raw`
     set camera(c) { w.camera = c; },
     get time() { return w.tickMs / 1000; },
     get data() { return w.data; },
+    get node() { return w.key.node; },
+    /** The nominal size in board points: [w, h]. */
+    get size() { return [w.w, w.h]; },
+    get colors() { return w.colors; },
+    /** The same function as the on of a world's code. */
+    on(type, fn) { return listen(w, type, fn); },
+    /** The cursor over the world, as a CSS cursor. Empty: the board's own. */
+    cursor(value) {
+      const cursor = String(value || '');
+      if (cursor === w.cursorNow) return;
+      w.cursorNow = cursor;
+      post({ type: 'cursor', key: w.key, value: cursor });
+    },
     get strokes() { return w.strokes; },
     /** The nearest hit at a board point: part, point, local, object, distance. Null when none. */
     pick(x, y) { return pickAt(w, x, y); },
@@ -409,12 +428,7 @@ export const REALM = String.raw`
       get dpr() { return surface.dpr; },
       get t() { return w.tickMs / 1000; }
     });
-    const on = (type, fn) => {
-      if (!w.events.has(type)) w.events.set(type, new Set());
-      w.events.get(type).add(fn);
-      subscribe(w);
-      return () => { w.events.get(type).delete(fn); subscribe(w); };
-    };
+    const on = (type, fn) => listen(w, type, fn);
     const input = (mode) => {
       if (mode !== 'none' && mode !== 'enter' && mode !== 'direct') throw new Error('input(mode): mode is "none", "enter" or "direct"');
       post({ type: 'input', key: w.key, mode });
@@ -467,7 +481,7 @@ export const REALM = String.raw`
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
-      placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
+      cursorNow: '', placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false
     };
     if (w.view.step === undefined) w.view.step = null;

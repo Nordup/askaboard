@@ -232,7 +232,7 @@ export const SURFACE = String.raw`
     return !!crop && !contains(w.drawn.crop, crop);
   };
 
-  /** A still: its full reach with glow and floor, within these limits (as stills.ts). */
+  /** A still: its full reach with glow and floor, within these limits. */
   const STILL_MAX = 4096, STILL_PIXELS = 2000000;
   /** Render one still of world w, at its full reach, and read it before anything else uses the target. It needs no view. */
   const readStill = (w) => {

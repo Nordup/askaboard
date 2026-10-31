@@ -1,6 +1,6 @@
 import { BLEND_GAP, paramsAtTime } from '../../../live/params'
 import { LOCAL_LIBRARIES, programBody, resolveLiveSpecifier } from '@shared/live-libs'
-import { TICK_HZ } from '../../clock'
+import { WORLD_TICK_HZ } from '@shared/world-protocol'
 import { LOOK } from './look'
 import { REALM } from './realm'
 import { SURFACE } from './surface'
@@ -12,7 +12,7 @@ import { VIEW } from './view'
  * docs/learning-space/one-world-architecture.md. The contract with the page is
  * shared/world-protocol.ts.
  *
- * The script is a data: URL, as in program.ts, and it runs in the sandboxed
+ * The script is a data: URL, and it runs in the sandboxed
  * frame of main/live-item-protocol.ts. These parts share one closure:
  *
  * - realm.ts: time, Math.random and timers per world, the clock, the API that
@@ -44,7 +44,7 @@ function source(): string {
   return `'use strict';
 (() => {
   const scope = self;
-  const hz = ${TICK_HZ};
+  const hz = ${WORLD_TICK_HZ};
   const paramsAtTime = ${paramsAtTime.toString()};
   const BLEND_GAP = ${BLEND_GAP};
   const LIBS = ${JSON.stringify(librariesTable())};
@@ -67,7 +67,7 @@ ${SURFACE}
 
 let url: string | null = null
 
-/** The worker's URL. The surface gives it to the frame, as ProgramHost gives programUrl. */
+/** The worker's URL. The surface gives it to the frame. */
 export function worldWorkerUrl(): string {
   url ??= `data:text/javascript;charset=utf-8,${encodeURIComponent(source())}`
   return url
