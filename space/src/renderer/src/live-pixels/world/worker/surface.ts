@@ -73,15 +73,63 @@ export const SURFACE = String.raw`
     if (!crop) return false;
     const same = old && Math.abs(old.s - p.s) < 1e-6;
     if (!w.stale && same && contains(old.crop, crop)) return true;
-    const W = crop.r - crop.l, H = crop.b - crop.t;
+    // Resolution falls only while a world moves. It renders sharp again when it rests.
+    const res = w.moving || (old && !same) ? QUALITY[quality] : 1;
+    const W = Math.ceil(((crop.r - crop.l) * res) / 2) * 2, H = Math.ceil(((crop.b - crop.t) * res) / 2) * 2;
     if (!w.output || w.output.width !== W || w.output.height !== H) {
       if (w.output) giveOutput(w.output);
       w.output = takeOutput(W, H);
     }
-    renderWorld(w, p.s, crop, w.output);
-    w.drawn = { s: p.s, crop };
+    renderWorld(w, p.s, crop, innerOf(w, p.s, crop), w.output);
+    w.drawn = { s: p.s, crop, res };
     w.stale = false;
+    w.moving = false;
     return true;
+  };
+
+  /**
+   * Where the published points of w are now, in nominal board points from the anchor, with a flag for each: shown or not.
+   * A world code error here stops that world.
+   */
+  const measurePoints = (w) => {
+    const list = [];
+    if (!w.parts.size) return list;
+    const c = w.camera, v = new THREE.Vector3();
+    nominalCamera(w);
+    w.scene.updateMatrixWorld();
+    for (const [name, part] of w.parts) {
+      const t = part.target;
+      if (t === null || t === undefined) continue;
+      let seen = true;
+      if (t.isObject3D) {
+        t.getWorldPosition(v);
+        for (let o = t; o; o = o.parent) if (!o.visible) seen = false;
+      } else if (t.isVector3) v.copy(t).applyMatrix4(w.root.matrixWorld);
+      else {
+        const at = inside(w, () => { try { return t(); } catch (e) { fail(w, e); return null; } });
+        if (!at) continue;
+        v.set(at[0], at[1], at[2]).applyMatrix4(w.root.matrixWorld);
+      }
+      const view = v.clone().applyMatrix4(c.matrixWorldInverse);
+      if (c.isPerspectiveCamera && view.z > -c.near) seen = false;
+      v.applyMatrix4(c.matrixWorldInverse).applyMatrix4(c.projectionMatrix);
+      const x = (v.x * w.w) / 2, y = (-v.y * w.h) / 2, r = w.reach;
+      if (!r || (!r.full && (x < r.l || x > r.r || y < r.t || y > r.b))) seen = false;
+      list.push([name, x, y, seen]);
+    }
+    return list;
+  };
+  /** The points of all placed worlds on the board, for one picture. */
+  const boardPoints = () => {
+    const points = {};
+    for (const w of worlds.values()) {
+      const p = w.placement;
+      if (!p || !w.parts.size || w.failed || !(w.setUp || w.ran)) continue;
+      const m = p.matrix, cx = p.x + p.w / 2 + m[4], cy = p.y + p.h / 2 + m[5], own = {};
+      for (const [name, x, y, seen] of measurePoints(w)) own[name] = [cx + m[0] * x + m[2] * y, cy + m[1] * x + m[3] * y, seen && p.shown];
+      points[w.key.node] = own;
+    }
+    return points;
   };
 
   /** One picture of the surface, when something changed. */
@@ -95,6 +143,7 @@ export const SURFACE = String.raw`
         const p = w.placement;
         if (!p || !p.shown) continue;
         const ready = (w.setUp || w.ran) && !w.failed;
+        if (ready && !w.moving && w.drawn && w.drawn.res < 1) w.stale = true;
         const stale = w.stale;
         if (ready) {
           try {
@@ -116,7 +165,8 @@ export const SURFACE = String.raw`
       surface.dirty = false;
       waiting = true;
       sent++;
-      post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, bitmap, points: {} }, [bitmap]);
+      post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, bitmap, points: boardPoints() }, [bitmap]);
+      watchGpu();
     } finally { core = false; }
   };
 
@@ -136,18 +186,21 @@ export const SURFACE = String.raw`
     try {
       sampleReach(w);
       if (!w.reach || w.reach.full) w.reach = { l: -w.w / 2, t: -w.h / 2, r: w.w / 2, b: w.h / 2, full: false };
-      const pad = room(w), reach = w.reach;
+      const reach = w.reach;
       let s = Math.max(1, Math.min(2, surface.dpr));
+      const pad = room(w, s);
       const needed = Math.max((reach.r - reach.l) * s + 2 * pad, (reach.b - reach.t) * s + 2 * pad);
       if (needed > STILL_MAX) s = Math.max(0.25, s * ((STILL_MAX - 2 * pad - 2 * GRID) / needed));
       const crop = snapped(reach.l * s - pad, reach.t * s - pad, reach.r * s + pad, reach.b * s + pad);
       if (!crop) return null;
       const W = crop.r - crop.l, H = crop.b - crop.t;
       target = takeOutput(W, H);
-      renderWorld(w, s, crop, target);
+      renderWorld(w, s, crop, innerOf(w, s, crop), target);
       const data = new Uint8Array(W * H * 4);
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
-      return { data, W, H, s, crop };
+      const points = {};
+      for (const [name, x, y, seen] of measurePoints(w)) points[name] = [x + w.w / 2, y + w.h / 2, seen];
+      return { data, W, H, s, crop, points };
     } finally {
       if (target) giveOutput(target);
       core = false;
@@ -174,17 +227,48 @@ export const SURFACE = String.raw`
     let shot = null;
     try { shot = readStill(w); } catch (e) { fail(w, e); }
     const answer = (blob) => {
-      const still = shot ? { blob, x: shot.crop.l / shot.s + w.w / 2, y: shot.crop.t / shot.s + w.h / 2, w: shot.W / shot.s, h: shot.H / shot.s } : emptyStill(w);
+      const still = shot ? { blob, x: shot.crop.l / shot.s + w.w / 2, y: shot.crop.t / shot.s + w.h / 2, w: shot.W / shot.s, h: shot.H / shot.s, points: shot.points } : emptyStill(w);
       for (const request of requests) post({ type: 'frame', key: w.key, request, tick, still });
     };
     if (!shot) { answer(null); return; }
     stillBlob(shot).then(answer, () => answer(null));
   };
 
+  // One frame in flight on the GPU. A fence says when the last picture is done, so the queue never grows and
+  // the page's own paints do not wait behind a backlog of worlds.
+  let gpuBusy = false;
+  const gpu = { ms: 0 };
+  /** Shares of full resolution while worlds move, and the GPU time per picture (ms) that moves between them. */
+  const QUALITY = [1, 0.85, 0.72, 0.6, 0.5];
+  const GPU_HIGH = 14, GPU_LOW = 8.5, DROP_AFTER = 5, RISE_AFTER = 45;
+  let quality = 0, slowPictures = 0, fastPictures = 0;
+  const steer = (ms) => {
+    slowPictures = ms > GPU_HIGH ? slowPictures + 1 : 0;
+    fastPictures = ms < GPU_LOW ? fastPictures + 1 : 0;
+    if (slowPictures >= DROP_AFTER && quality < QUALITY.length - 1) { quality++; slowPictures = 0; }
+    if (fastPictures >= RISE_AFTER && quality > 0) { quality--; fastPictures = 0; }
+  };
+  const watchGpu = () => {
+    const gl = renderer.getContext(), sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), start = realNow();
+    gl.flush();
+    gpuBusy = true;
+    const poll = () => {
+      const state = gl.getSyncParameter(sync, gl.SYNC_STATUS);
+      if (state !== gl.SIGNALED && !gl.isContextLost()) { nativeSetTimeout(poll, 1); return; }
+      gl.deleteSync(sync);
+      gpuBusy = false;
+      gpu.ms = realNow() - start;
+      steer(gpu.ms);
+      post({ type: 'cost', ms: gpu.ms, quality });
+      kick();
+    };
+    nativeSetTimeout(poll, 1);
+  };
+
   // The frame loop.
   let loop = false, busyFrame = false;
   const wanted = () => {
-    if (waiting || !renderer) return false;
+    if (waiting || gpuBusy || !renderer) return false;
     if (surface.dirty && surface.camera) return true;
     for (const w of worlds.values()) {
       if (due(w)) return true;
@@ -213,6 +297,9 @@ export const SURFACE = String.raw`
     nativeSetTimeout(go, 100);
   };
 
+  /** Start the next frame now. The page showed the last picture, so the next one reaches its next paint. */
+  const kick = () => { if (!loop && wanted()) frame(); };
+
   const handle = (m) => {
     if (m.type === 'view') {
       surface.camera = m.camera;
@@ -228,7 +315,7 @@ export const SURFACE = String.raw`
       }
       for (const w of worlds.values()) if (!shown.has(w)) w.placement = null;
     } else if (m.type === 'resize') sizeSurface(m);
-    else if (m.type === 'presented') { if (m.n === sent) waiting = false; }
+    else if (m.type === 'presented') { if (m.n === sent) { waiting = false; kick(); } }
     else if (m.type === 'add') addWorld(m.world);
     else if (m.type === 'remove') removeWorld(m.key);
     else if (m.type === 'ping') post({ type: 'pong', n: m.n, running: current ? current.key.node : last ? last.key.node : null });
@@ -247,11 +334,13 @@ export const SURFACE = String.raw`
         w.picked = null;
         w.base = Object.assign({}, m.params);
         Object.assign(w.params, m.params);
+        syncParts(w);
         follow(w, m);
       } else if (m.type === 'run') w.running = !!m.on;
       else if (m.type === 'params') {
         w.base = Object.assign({}, m.params);
         Object.assign(w.params, m.params);
+        syncParts(w);
         if (held(w) && w.running) redraw(w);
       } else if (m.type === 'size') {
         const resized = m.w !== w.w || m.h !== w.h;
@@ -280,9 +369,7 @@ export const SURFACE = String.raw`
   const boot = async (m) => {
     booting = true;
     try {
-      const [three, bloomModule] = await Promise.all([import(resolveLibrary('three')), import(resolveLibrary('three/addons/postprocessing/UnrealBloomPass.js'))]);
-      THREE = three;
-      UnrealBloomPass = bloomModule.UnrealBloomPass;
+      THREE = await import(resolveLibrary('three'));
       // Its own canvas, not the frame's: pictures reach the page by message, so nothing here is on screen.
       canvas = new OffscreenCanvas(1, 1);
       canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); post({ type: 'lost' }); });

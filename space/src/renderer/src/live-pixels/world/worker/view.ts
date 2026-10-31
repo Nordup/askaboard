@@ -16,8 +16,8 @@
 export const VIEW = String.raw`
   /** Steps of a crop and of a render target, in pixels. The last bloom mip is 1/32, so its texels stay fixed on the world too. */
   const GRID = 64;
-  /** Room for glow in pixels: bloom spreads a fixed number of pixels, up to 22 texels of its 1/32 mip. */
-  const GLOW_ROOM = 448;
+  /** Room for glow in board points. */
+  const GLOW_ROOM = 224;
   /** Room for anything else, in pixels: a soft edge, a thin line on the bounds. */
   const SOFT_ROOM = 32;
   /** Renders of a world between two measures of its bounds. */
@@ -141,7 +141,7 @@ export const VIEW = String.raw`
     return { l: Math.floor(l / GRID) * GRID, t: Math.floor(t / GRID) * GRID, r: Math.ceil(r / GRID) * GRID, b: Math.ceil(b / GRID) * GRID };
   };
 
-  const room = (w) => (w.look.bloom > 0 ? GLOW_ROOM : SOFT_ROOM);
+  const room = (w, s) => (w.look.bloom > 0 ? GLOW_ROOM * s : SOFT_ROOM);
 
   /** What must be rendered now: reach cut by the surface, in nominal pixels from the anchor. Null when none of it is on the surface. */
   const cropFor = (w, place) => {
@@ -159,9 +159,16 @@ export const VIEW = String.raw`
       if (qy > sb) sb = qy;
     }
     if (reach.full) return snapped(sl, st, sr, sb);
-    const pad = room(w);
-    const s = place.s;
+    const s = place.s, pad = room(w, s);
     return snapped(Math.max(sl, reach.l * s - pad), Math.max(st, reach.t * s - pad), Math.min(sr, reach.r * s + pad), Math.min(sb, reach.b * s + pad));
+  };
+
+  /** The part of a crop that holds the scene: reach and a soft edge. Outside it, only glow. */
+  const innerOf = (w, s, crop) => {
+    const reach = w.reach;
+    if (reach.full || !(w.look.bloom > 0)) return crop;
+    const inner = snapped(reach.l * s - SOFT_ROOM, reach.t * s - SOFT_ROOM, reach.r * s + SOFT_ROOM, reach.b * s + SOFT_ROOM);
+    return { l: Math.max(crop.l, inner.l), t: Math.max(crop.t, inner.t), r: Math.min(crop.r, inner.r), b: Math.min(crop.b, inner.b) };
   };
 
   const contains = (a, b) => a.l <= b.l && a.t <= b.t && a.r >= b.r && a.b >= b.b;

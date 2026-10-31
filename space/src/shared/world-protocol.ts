@@ -64,6 +64,8 @@ export interface WorldStart extends WorldKey {
   scene: WorldSceneView
   timeline: { params: Array<[number, Record<string, number>]> | null; steps: Array<[number, string]> } | null
   colors: Record<string, string>
+  /** A JSON value for the world's code: world.data. */
+  data?: unknown
 }
 
 export type PageToWorld =
@@ -93,6 +95,8 @@ export interface WorldStill {
   y: number
   w: number
   h: number
+  /** The world's published points: [x, y, visible], with x and y from the nominal rect's top-left, as above. */
+  points?: Record<string, [number, number, boolean]>
 }
 
 export type WorldToPage =
@@ -109,7 +113,7 @@ export type WorldToPage =
       seq: number
       camera: WorldCamera
       bitmap: ImageBitmap
-      /** Slice 2: board positions of published points, by node. */
+      /** Board positions of published points by node, name: [x, y, visible], for exactly the state in this picture. */
       points: Record<string, Record<string, [number, number, boolean]>>
     }
   | { type: 'alive'; key: WorldKey; frames: number; tick: number }

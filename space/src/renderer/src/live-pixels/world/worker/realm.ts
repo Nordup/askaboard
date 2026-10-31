@@ -165,8 +165,46 @@ export const REALM = String.raw`
     setStep(w, step);
   };
 
+  // Parts. publish(name, target) makes a part, and the reserved param part.<name>.reveal (0..1) drives it.
+  // The page writes that param through tween and draw; agents never write it. The default is a fade by material opacity.
+  const fades = new WeakMap();
+  const fadeMaterial = (m, v) => {
+    if (!fades.has(m)) fades.set(m, { opacity: m.opacity, transparent: m.transparent, uniform: m.uniforms && m.uniforms.opacity ? m.uniforms.opacity.value : null });
+    const was = fades.get(m), transparent = was.transparent || v < 1;
+    m.opacity = was.opacity * v;
+    if (was.uniform !== null) m.uniforms.opacity.value = was.uniform * v;
+    if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
+  };
+  const fadePart = (part, v) => {
+    const t = part.target;
+    if (!t || !t.isObject3D) return;
+    t.traverse((o) => {
+      o.userData.lsFade = v;
+      if (o.material) for (const m of [].concat(o.material)) fadeMaterial(m, v);
+    });
+    t.visible = v > 0;
+  };
+  /** Bring each part to its reserved param. Only a change does anything. */
+  const syncParts = (w) => {
+    for (const [name, part] of w.parts) {
+      const raw = w.params['part.' + name + '.reveal'];
+      const v = raw === undefined ? 1 : Math.max(0, Math.min(1, Number(raw) || 0));
+      if (v === part.v) continue;
+      part.v = v;
+      w.stale = true;
+      inside(w, () => { try { if (part.reveal) part.reveal(v); else fadePart(part, v); } catch (e) { fail(w, e); } });
+    }
+  };
+  const partOf = (w, name) => {
+    const key = String(name);
+    if (!w.parts.has(key)) w.parts.set(key, { target: null, reveal: null, v: 1 });
+    return w.parts.get(key);
+  };
+
   // The drawing of a tick: the frame callbacks, then the captures of this tick.
   const drawTick = (w, dt) => {
+    if (dt > 0) w.moving = true;
+    syncParts(w);
     inside(w, () => {
       const list = [...w.callbacks.values()];
       w.callbacks.clear();
@@ -269,6 +307,7 @@ export const REALM = String.raw`
     get camera() { return w.camera; },
     set camera(c) { w.camera = c; },
     get time() { return w.tickMs / 1000; },
+    get data() { return w.data; },
     get look() { return w.look; },
     set look(v) { setLook(w, v); },
     get floor() { return w.floor; },
@@ -288,6 +327,11 @@ export const REALM = String.raw`
       w.frames.push(fn);
       schedule();
       return () => { const i = w.frames.indexOf(fn); if (i >= 0) w.frames.splice(i, 1); };
+    },
+    /** Change how a part reveals: reveal(v), v from 0 to 1, in place of the fade. */
+    part(name, options) {
+      if (!options || typeof options.reveal !== 'function') throw new Error('world.part(name, { reveal }): reveal is a function of v, 0..1');
+      partOf(w, name).reveal = options.reveal;
     },
     /** Set what the world can reach: r board points around its anchor, or "full" for the whole surface. No argument gives the measure back to the app. */
     reach(r) {
@@ -330,7 +374,10 @@ export const REALM = String.raw`
       if (mode !== 'none' && mode !== 'enter' && mode !== 'direct') throw new Error('input(mode): mode is "none", "enter" or "direct"');
       post({ type: 'input', key: w.key, mode });
     };
-    const publish = (name, target) => { w.published.set(String(name), target); };
+    const publish = (name, target) => {
+      if (!target || !(target.isObject3D || target.isVector3 || typeof target === 'function')) throw new Error('publish(name, target): target is an Object3D, a Vector3 or a function that gives [x, y, z]');
+      partOf(w, name).target = target;
+    };
     const args = [THREE, worldApi(w), w.params, sceneApi, itemApi, Object.freeze(w.colors), on, input, (values) => report(w, values), publish];
     setting = w;
     let turn = 0;
@@ -338,7 +385,7 @@ export const REALM = String.raw`
       const code = new AsyncFunction(...WORLD_ARGS, "'use strict';" + compileBody(w.code) + '\n//# sourceURL=world.js');
       const main = inside(w, () => code(...args));
       main.then(
-        () => { w.setUp = true; w.floorBuilt = false; w.stale = true; if (held(w)) redraw(w); schedule(); },
+        () => { w.setUp = true; w.floorBuilt = false; w.stale = true; syncParts(w); if (held(w)) redraw(w); schedule(); },
         (e) => { w.setUp = true; fail(w, e); }
       );
       await Promise.race([main.catch(() => {}), new Promise((resolve) => { turn = nativeSetTimeout(resolve, SETUP_TURN_MS); })]);
@@ -364,10 +411,10 @@ export const REALM = String.raw`
       clock: m.clock || { t: 0, at: 0, rate: 0 },
       view: Object.assign({ t: 0, playing: false, active: false, ended: true, step: null }, m.scene),
       timeline: m.timeline || null,
-      timers: new Map(), callbacks: new Map(), frames: [], events: new Map(), published: new Map(), captures: [],
+      timers: new Map(), callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
-      placement: null, stale: false, culled: false, reachSet: null, reach: null, samples: 0,
+      placement: null, stale: false, moving: false, culled: false, reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false
     };
     if (w.view.step === undefined) w.view.step = null;

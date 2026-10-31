@@ -23,6 +23,11 @@ export const LOOK = String.raw`
   const PLAIN = { name: 'plain', exposure: 1, bloom: 0, threshold: 1.1, glowRadius: 0.32, dof: 0, shadows: false, shadow: 0.55, softness: 0.22, environment: 0, tone: false };
   /** The scale the numbers of film.js were tuned at: 2 pixels per board point. */
   const FILM_SCALE = 2;
+  /**
+   * The look's bloom: radii in board points and their weights, measured against UnrealBloomPass of film.js at 2 pixels per point.
+   * look.glowRadius 0.32 is that size; another value scales the radii. BLOOM_LEVELS: the most levels of the pyramid.
+   */
+  const BLOOM_REACH = [6, 20, 56, 144, 352], BLOOM_WEIGHT = [2.1, 1.4, 1.1, 0.85, 0.36], BLOOM_LEVELS = 10;
   /** The floor's shadow map: size, its widest blur as a mip level, the layer of what casts a shadow. */
   const SHADOW_SIZE = 1024, SHADOW_TOP_LOD = 7, SHADOW_LAYER = 5;
 
@@ -43,8 +48,8 @@ export const LOOK = String.raw`
   }
 
   // The parts that all worlds share. Made once, when the renderer exists.
-  let environment = null, UnrealBloomPass = null;
-  let quadScene = null, quadCam = null, quad = null, dofMat = null, copyMat = null, finalMat = null, floorMask = null, heightMat = null;
+  let environment = null;
+  let quadScene = null, quadCam = null, quad = null, dofMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
   const noTone = () => ({ toneMapped: false, depthTest: false, depthWrite: false, transparent: false, blending: THREE.NoBlending });
 
   const makeLook = () => {
@@ -73,20 +78,49 @@ export const LOOK = String.raw`
         'gl_FragColor = sum / w; }'
       ].join('\n')
     });
-    copyMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: { t: { value: null } }, vertexShader: QUAD_VS, fragmentShader: 'uniform sampler2D t; varying vec2 vUv; void main(){ gl_FragColor = texture2D(t, vUv); }' });
+    // Bloom: a pyramid. A bright pass, 13-tap down passes, tent up passes with one weight per level. UnrealBloomPass gave this look
+    // and took half of the frame; a pyramid costs about half a screen of pixels, and its weights can follow the zoom.
+    brightMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: { t: { value: null }, px: { value: new THREE.Vector2() }, box: { value: new THREE.Vector4(0, 0, 1, 1) }, threshold: { value: 1.1 } }, vertexShader: QUAD_VS,
+      fragmentShader: [
+        'uniform sampler2D t; uniform vec2 px; uniform vec4 box; uniform float threshold; varying vec2 vUv;',
+        'void main(){ vec2 u = (vUv - box.xy) / box.zw; if (u.x < 0.0 || u.y < 0.0 || u.x > 1.0 || u.y > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }',
+        'vec3 c = (texture2D(t, u + px * vec2(-1.0, -1.0)).rgb + texture2D(t, u + px * vec2(1.0, -1.0)).rgb + texture2D(t, u + px * vec2(-1.0, 1.0)).rgb + texture2D(t, u + px).rgb) * 0.25;',
+        'float l = dot(c, vec3(0.299, 0.587, 0.114)); gl_FragColor = vec4(max(c, vec3(0.0)) * smoothstep(threshold, threshold + 0.01, l), 1.0); }'
+      ].join('\n')
+    });
+    downMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: { t: { value: null }, px: { value: new THREE.Vector2() } }, vertexShader: QUAD_VS,
+      fragmentShader: [
+        'uniform sampler2D t; uniform vec2 px; varying vec2 vUv;',
+        'vec3 at(float x, float y){ return texture2D(t, vUv + px * vec2(x, y)).rgb; }',
+        'void main(){ vec3 c = at(0.0, 0.0) * 0.125;',
+        'c += (at(-2.0, -2.0) + at(2.0, -2.0) + at(-2.0, 2.0) + at(2.0, 2.0)) * 0.03125;',
+        'c += (at(-2.0, 0.0) + at(2.0, 0.0) + at(0.0, -2.0) + at(0.0, 2.0)) * 0.0625;',
+        'c += (at(-1.0, -1.0) + at(1.0, -1.0) + at(-1.0, 1.0) + at(1.0, 1.0)) * 0.125;',
+        'gl_FragColor = vec4(c, 1.0); }'
+      ].join('\n')
+    });
+    upMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: { tD: { value: null }, tU: { value: null }, px: { value: new THREE.Vector2() }, weight: { value: 1 }, hasUp: { value: 0 } }, vertexShader: QUAD_VS,
+      fragmentShader: [
+        'uniform sampler2D tD, tU; uniform vec2 px; uniform float weight, hasUp; varying vec2 vUv;',
+        'vec3 at(float x, float y){ return texture2D(tU, vUv + px * vec2(x, y)).rgb; }',
+        'void main(){ vec3 c = texture2D(tD, vUv).rgb * weight;',
+        'if (hasUp > 0.5) { c += at(0.0, 0.0) * 0.25 + (at(-1.0, 0.0) + at(1.0, 0.0) + at(0.0, -1.0) + at(0.0, 1.0)) * 0.125 + (at(-1.0, -1.0) + at(1.0, -1.0) + at(-1.0, 1.0) + at(1.0, 1.0)) * 0.0625; }',
+        'gl_FragColor = vec4(c, 1.0); }'
+      ].join('\n')
+    });
     // The last pass: tone mapping, sRGB, premultiplied output with real alpha. The glow keeps its own alpha, so it joins any board.
     finalMat = new THREE.ShaderMaterial({ ...noTone(),
-      uniforms: { tA: { value: null }, tB: { value: null }, seed: { value: 0 }, toneMappingExposure: { value: 1 }, tone: { value: 1 } },
+      uniforms: { tA: { value: null }, tB: { value: null }, box: { value: new THREE.Vector4(0, 0, 1, 1) }, glow: { value: 0 }, seed: { value: 0 }, toneMappingExposure: { value: 1 }, tone: { value: 1 } },
       vertexShader: QUAD_VS,
       fragmentShader: [
         '#include <tonemapping_pars_fragment>',
-        'uniform sampler2D tA, tB; uniform float seed, tone; varying vec2 vUv;',
+        'uniform sampler2D tA, tB; uniform vec4 box; uniform float seed, tone, glow; varying vec2 vUv;',
         'float n(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + seed) * 43758.5453); }',
         'vec3 tm(vec3 c){ vec3 v = max(c, vec3(0.0)); v = tone > 0.5 ? ACESFilmicToneMapping(v) : clamp(v, 0.0, 1.0);',
         ' return sRGBTransferOETF(vec4(v, 1.0)).rgb; }',
-        'void main(){ vec4 a = texture2D(tA, vUv); vec3 all3 = texture2D(tB, vUv).rgb;',
+        'void main(){ vec2 u = (vUv - box.xy) / box.zw; vec4 a = u.x < 0.0 || u.y < 0.0 || u.x > 1.0 || u.y > 1.0 ? vec4(0.0) : texture2D(tA, u);',
         'float al = clamp(a.a, 0.0, 1.0); vec3 S = al > 0.002 ? a.rgb / al : vec3(0.0);',
-        'vec3 G = max(all3 - a.rgb, vec3(0.0));',
+        'vec3 G = max(texture2D(tB, vUv).rgb, vec3(0.0)) * glow;',
         'vec3 sc = tm(S) * al; vec3 gl = tm(G) * (1.0 - al);',
         'vec3 c = sc + gl + (n(gl_FragCoord.xy) - 0.5) / 255.0 * step(0.002, al + gl.r + gl.g + gl.b);',
         'float g = max(gl.r, max(gl.g, gl.b)); gl_FragColor = vec4(max(c, vec3(0.0)), clamp(al + g * (1.0 - al), 0.0, 1.0)); }'
@@ -95,10 +129,15 @@ export const LOOK = String.raw`
     // What casts a shadow on the floor, seen from under the floor along the light.
     // Red is coverage and green is coverage times height. Mips average both, so any mip gives a blurred shadow and the mean height over a point.
     heightMat = new THREE.ShaderMaterial({ toneMapped: false, side: THREE.DoubleSide, blending: THREE.NoBlending,
-      uniforms: { floorY: { value: 0 } },
+      uniforms: { floorY: { value: 0 }, fade: { value: 1 } },
       vertexShader: 'uniform float floorY; varying float vH; void main(){ vec4 p = vec4(position, 1.0);\n#ifdef USE_INSTANCING\n p = instanceMatrix * p;\n#endif\n p = modelMatrix * p; vH = max(p.y - floorY, 0.0); gl_Position = projectionMatrix * viewMatrix * p; }',
-      fragmentShader: 'varying float vH; void main(){ gl_FragColor = vec4(1.0, vH, 0.0, 1.0); }'
+      fragmentShader: 'uniform float fade; varying float vH; void main(){ gl_FragColor = vec4(fade, vH * fade, 0.0, 1.0); }'
     });
+    // A part that fades takes its shadow with it.
+    heightMat.onBeforeRender = (r, sc, c, g, object) => {
+      const fade = object.userData.lsFade === undefined ? 1 : object.userData.lsFade;
+      if (fade !== heightMat.uniforms.fade.value) { heightMat.uniforms.fade.value = fade; heightMat.uniformsNeedUpdate = true; }
+    };
     // The floor's fade with distance from the world: long, with no end you can see.
     const c = new OffscreenCanvas(512, 512), g = c.getContext('2d');
     const r = g.createRadialGradient(256, 256, 0, 256, 256, 256);
@@ -134,8 +173,8 @@ export const LOOK = String.raw`
     const key = new THREE.DirectionalLight('#e8efff', 2.6);
     key.position.set(4, 10, 5);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.radius = 7; key.shadow.blurSamples = 20; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.radius = 3; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
     const rim = new THREE.DirectionalLight('#ffd0ae', 1.4);
     rim.position.set(-6, 3, -7);
 
@@ -150,7 +189,7 @@ export const LOOK = String.raw`
         // The mirror image fades with its height above the floor: the far part of an object leaves no end you can see.
         'float fade(vec2 u){ vec4 p = toWorld * vec4(u * 2.0 - 1.0, texture2D(tD, u).x * 2.0 - 1.0, 1.0); float h = max(0.0, floorY - p.y / p.w) / fadeH; return exp(-h * h * 2.2); }',
         'void main(){ vec2 s = vC.xy / vC.w * 0.5 + 0.5; vec3 c = vec3(0.0); float tot = 0.0;',
-        'for (int i = 0; i < 14; i++) { float a = float(i) * 2.399963; float r = sqrt(float(i) / 14.0); vec2 d = vec2(cos(a), sin(a)) * r * spread; vec2 u = s + d;',
+        'for (int i = 0; i < 8; i++) { float a = float(i) * 2.399963; float r = sqrt((float(i) + 0.5) / 8.0); vec2 d = vec2(cos(a), sin(a)) * r * spread; vec2 u = s + d;',
         '  c += min(texture2D(tR, u).rgb, vec3(2.0)) * fade(u); tot += 1.0; }',
         'c = c / tot * texture2D(tM, vUv).r * amount; float m = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c, min(m, 1.0)); }'
       ].join('\n')
@@ -256,12 +295,62 @@ export const LOOK = String.raw`
   });
   const flatTarget = (name, W, H) => sharedOf(name, W, H, () => new THREE.WebGLRenderTarget(W, H, targetOptions(0, false)));
   const mirrorTarget = (W, H) => sharedOf('mirror', W, H, () => {
-    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(2, true));
+    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(0, true));
     rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
     return rt;
   });
   const shadowTarget = () => sharedOf('floor-shadow', SHADOW_SIZE, SHADOW_SIZE, () => new THREE.WebGLRenderTarget(SHADOW_SIZE, SHADOW_SIZE, { type: THREE.HalfFloatType, depthBuffer: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true }));
-  const bloomOf = (W, H) => sharedOf('bloom', W, H, () => new UnrealBloomPass(new THREE.Vector2(W, H), 0.26, 0.32, 1.1));
+
+  /** Levels of the bloom pyramid of a W x H target: level 1 is half size. */
+  const pyramidOf = (W, H) => sharedOf('pyramid', W, H, () => {
+    const down = [null], up = [null];
+    let w = W, h = H;
+    for (let i = 1; i <= BLOOM_LEVELS && Math.min(w, h) > 3; i++) {
+      w = Math.max(1, Math.ceil(w / 2)); h = Math.max(1, Math.ceil(h / 2));
+      down.push(new THREE.WebGLRenderTarget(w, h, targetOptions(0, false)));
+      up.push(new THREE.WebGLRenderTarget(w, h, targetOptions(0, false)));
+    }
+    return { down, up, dispose() { for (const t of down.concat(up)) if (t) t.dispose(); } };
+  });
+  /**
+   * Weights per pyramid level for a scale in pixels per board point. BLOOM_REACH holds the radii of the look in board points, so the glow
+   * keeps its size on the board at any zoom: each radius falls between two levels and shares its weight between them.
+   */
+  const bloomWeights = (scale, top, radius) => {
+    const weights = new Array(top + 1).fill(0);
+    for (let j = 0; j < BLOOM_REACH.length; j++) {
+      const at = Math.max(1, Math.min(top, Math.log2(BLOOM_REACH[j] * scale * (radius / 0.32))));
+      const i = Math.min(top - 1, Math.floor(at)), k = at - i;
+      weights[i] += BLOOM_WEIGHT[j] * (1 - k);
+      weights[i + 1] += BLOOM_WEIGHT[j] * k;
+    }
+    return weights;
+  };
+  /** The bloom of texture t, as a texture. */
+  const renderBloom = (t, iW, iH, box, W, H, scale, look) => {
+    const p = pyramidOf(W, H), top = p.down.length - 1, weights = bloomWeights(scale, top, look.glowRadius);
+    let lo = 1;
+    while (lo < top && weights[lo] === 0) lo++;
+    brightMat.uniforms.t.value = t;
+    brightMat.uniforms.px.value.set(0.5 / iW, 0.5 / iH);
+    brightMat.uniforms.box.value.copy(box);
+    brightMat.uniforms.threshold.value = look.threshold;
+    pass(brightMat, p.down[1]);
+    for (let i = 2; i <= top; i++) {
+      downMat.uniforms.t.value = p.down[i - 1].texture;
+      downMat.uniforms.px.value.set(1 / p.down[i - 1].width, 1 / p.down[i - 1].height);
+      pass(downMat, p.down[i]);
+    }
+    for (let i = top; i >= lo; i--) {
+      const u = upMat.uniforms;
+      u.tD.value = p.down[i].texture;
+      u.weight.value = weights[i];
+      u.hasUp.value = i < top ? 1 : 0;
+      if (i < top) { u.tU.value = p.up[i + 1].texture; u.px.value.set(1 / p.up[i + 1].width, 1 / p.up[i + 1].height); }
+      pass(upMat, p.up[i]);
+    }
+    return p.up[lo].texture;
+  };
 
   /** The floor's shadow: only casters, from under the floor. A world with no casters clears it. */
   const renderFloorShadow = (w, look) => {
@@ -286,9 +375,13 @@ export const LOOK = String.raw`
   };
 
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
-  const renderWorld = (w, s, crop, output) => {
+  const renderWorld = (w, s, crop, inner, output) => {
     const look = w.look, camera = w.camera;
-    const W = crop.r - crop.l, H = crop.b - crop.t;
+    // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
+    const W = output.width, H = output.height, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
+    const iw = inner.r - inner.l, ih = inner.b - inner.t;
+    const IW = Math.max(2, Math.min(W, Math.ceil(iw * res))), IH = Math.max(2, Math.min(H, Math.ceil(ih * res)));
+    const box = new THREE.Vector4((inner.l - crop.l) / cw, (crop.b - inner.b) / ch, iw / cw, ih / ch);
     const saved = {
       target: renderer.getRenderTarget(), autoClear: renderer.autoClear, tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,
       shadows: renderer.shadowMap.enabled, type: renderer.shadowMap.type, autoUpdate: renderer.shadowMap.autoUpdate, alpha: renderer.getClearAlpha()
@@ -299,7 +392,7 @@ export const LOOK = String.raw`
       renderer.toneMappingExposure = 1;
       renderer.setClearColor(0x000000, 0);
       renderer.shadowMap.enabled = !!look.shadows;
-      renderer.shadowMap.type = THREE.VSMShadowMap;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
       w.scene.environment = look.environment > 0 ? environment : null;
       w.scene.environmentIntensity = look.environment;
       const lit = look.name !== 'plain';
@@ -309,7 +402,7 @@ export const LOOK = String.raw`
       const on = floorOn(w);
       const floor = on && w.floorBuilt;
       w.floorGroup.visible = floor;
-      aimCamera(w, s, crop);
+      aimCamera(w, s, inner);
 
       if (floor) {
         w.catcher.visible = !!look.shadows;
@@ -320,7 +413,7 @@ export const LOOK = String.raw`
       // Reflection: the world mirrored in the floor, into a half-size target.
       if (floor) {
         const root = w.root, sy = root.scale.y, py = root.position.y, castShadow = w.keyLight.castShadow;
-        const mirror = mirrorTarget(W / 2, H / 2);
+        const mirror = mirrorTarget(Math.ceil(IW / 3), Math.ceil(IH / 3));
         root.scale.y = -sy; root.position.y = 2 * w.floorY - py; root.updateMatrixWorld(true);
         w.floorGroup.visible = false;
         w.keyLight.castShadow = false;
@@ -341,35 +434,29 @@ export const LOOK = String.raw`
         r.toWorld.value.copy(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
         r.floorY.value = w.floorY;
         r.fadeH.value = w.floorHeight;
-        r.spread.value.set((12 * s) / FILM_SCALE / W, (12 * s) / FILM_SCALE / H);
+        r.spread.value.set(((12 * s) / FILM_SCALE) / iw, ((12 * s) / FILM_SCALE) / ih);
       }
 
-      const scene = sceneTarget(W, H);
+      const scene = sceneTarget(IW, IH);
       renderer.setRenderTarget(scene);
       renderer.clear();
       renderer.render(w.scene, camera);
 
-      const a = flatTarget('a', W, H), b = flatTarget('b', W, H);
+      let sharp = scene.texture;
       if (look.dof > 0 && camera.isPerspectiveCamera) {
-        const u = dofMat.uniforms;
+        const a = flatTarget('a', IW, IH), u = dofMat.uniforms;
         u.tC.value = scene.texture; u.tD.value = scene.depthTexture;
         u.focus.value = w.bounds.isEmpty() ? 10 : camera.position.distanceTo(w.bounds.getCenter(reachVector()));
         u.ap.value = look.dof; u.near.value = camera.near; u.far.value = camera.far;
-        u.px.value.set(1 / W, 1 / H); u.scale.value = s / FILM_SCALE;
+        u.px.value.set(1 / IW, 1 / IH); u.scale.value = scale / FILM_SCALE;
         pass(dofMat, a);
-      } else {
-        copyMat.uniforms.t.value = scene.texture;
-        pass(copyMat, a);
+        sharp = a.texture;
       }
-      copyMat.uniforms.t.value = a.texture;
-      pass(copyMat, b);
-      if (look.bloom > 0) {
-        const bloom = bloomOf(W, H);
-        bloom.strength = look.bloom; bloom.radius = look.glowRadius; bloom.threshold = look.threshold;
-        bloom.render(renderer, null, b, 1 / 60, false);
-      }
+      const glow = look.bloom > 0 ? renderBloom(sharp, IW, IH, box, W, H, scale, look) : sharp;
       const u = finalMat.uniforms;
-      u.tA.value = a.texture; u.tB.value = b.texture;
+      u.tA.value = sharp; u.tB.value = glow;
+      u.box.value.copy(box);
+      u.glow.value = look.bloom > 0 ? look.bloom : 0;
       u.seed.value = w.tickMs % 97;
       u.toneMappingExposure.value = look.exposure;
       u.tone.value = look.tone ? 1 : 0;
