@@ -232,20 +232,30 @@ export const LOOK = String.raw`
     w.floor = true;
   };
 
+  /** Free what a world holds on the GPU. Shared textures stay: the environment, the floor's mask, the pool's targets. */
   const undressWorld = (w) => {
     const seen = new Set();
+    const freeTexture = (t) => {
+      if (!t || !t.isTexture || seen.has(t) || t === floorMask || t === environment || t.isRenderTargetTexture) return;
+      seen.add(t);
+      t.dispose();
+    };
     w.scene.traverse((o) => {
       if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
       for (const m of [].concat(o.material || [])) {
         if (seen.has(m)) continue;
         seen.add(m);
-        for (const value of Object.values(m)) if (value && value.isTexture && value !== floorMask && value !== environment) value.dispose();
+        for (const value of Object.values(m)) freeTexture(value);
+        if (m.uniforms) for (const u of Object.values(m.uniforms)) freeTexture(u.value);
         m.dispose();
       }
-      if (o.isInstancedMesh) o.dispose();
+      if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose();
+      if ((o.isInstancedMesh || o.isLight) && o.dispose) o.dispose();
     });
-    if (w.keyLight.shadow && w.keyLight.shadow.map) w.keyLight.shadow.map.dispose();
+    freeTexture(w.scene.background);
+    freeTexture(w.scene.environment);
     if (w.output) { giveOutput(w.output); w.output = null; }
+    w.drawn = null;
   };
 
   /** world.look = "plain", "film", or an object of changes. */

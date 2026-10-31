@@ -101,7 +101,13 @@ export interface WorldStill {
 
 export type WorldToPage =
   | { type: 'ready' }
-  | { type: 'pong'; n: number; running: string | null }
+  /** info: what the GPU holds and the renders per node, for checks. */
+  | { type: 'pong'; n: number; running: string | null; info?: { geometries: number; textures: number; programs: number; targets: number; renders: Record<string, number> } }
+  /**
+   * The world that runs now, or null for the runtime. Sent only on a change, so that after a hang the last
+   * one names the world at fault. No `key` field: this message is for the surface, not for one world.
+   */
+  | { type: 'running'; running: WorldKey | null }
   /**
    * One finished surface picture, transferred. The page shows it in one paint,
    * together with its transform and its points, so everything stays in step.

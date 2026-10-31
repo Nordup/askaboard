@@ -39,11 +39,20 @@ export const REALM = String.raw`
   // True while the runtime itself renders: the globals are real then, and no world's numbers are used.
   let core = false;
   const owner = () => (core ? null : current || setting || last);
+  // Who runs, for the page: a worker in an endless loop answers no ping, so the page keeps the last of these.
+  // Only changes go out. The runtime's own work counts as nobody.
+  let announced = null;
+  const announce = (w) => {
+    if (w === announced) return;
+    announced = w;
+    post({ type: 'running', running: w ? w.key : null });
+  };
   /** Run fn as world w. */
   const inside = (w, fn) => {
     const previous = current;
     current = w;
     last = w;
+    announce(w);
     try { return fn(); } finally { current = previous; }
   };
 
@@ -380,6 +389,7 @@ export const REALM = String.raw`
     };
     const args = [THREE, worldApi(w), w.params, sceneApi, itemApi, Object.freeze(w.colors), on, input, (values) => report(w, values), publish];
     setting = w;
+    announce(w);
     let turn = 0;
     try {
       const code = new AsyncFunction(...WORLD_ARGS, "'use strict';" + compileBody(w.code) + '\n//# sourceURL=world.js');
@@ -395,6 +405,7 @@ export const REALM = String.raw`
     }
     nativeClearTimeout(turn);
     if (setting === w) setting = null;
+    announce(setting);
   };
 
   const addWorld = (m) => {
@@ -414,7 +425,7 @@ export const REALM = String.raw`
       timers: new Map(), callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
-      placement: null, stale: false, moving: false, culled: false, reachSet: null, reach: null, samples: 0,
+      placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false
     };
     if (w.view.step === undefined) w.view.step = null;
@@ -435,7 +446,11 @@ export const REALM = String.raw`
     for (const request of w.captures.splice(0)) post({ type: 'frame', key: w.key, request, tick: w.tick, still: emptyStill(w) });
     if (last === w) last = null;
     if (setting === w) setting = null;
-    undressWorld(w);
+    if (announced === w) announce(setting);
+    if (w.reportTimer) nativeClearTimeout(w.reportTimer);
+    w.timers.clear(); w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear();
+    core = true;
+    try { undressWorld(w); } finally { core = false; }
     surface.dirty = true;
     schedule();
   };
