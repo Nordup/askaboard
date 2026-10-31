@@ -133,12 +133,12 @@ export type PageToWorld =
 /** A still of one world, larger than its nominal rect when it needs to be. */
 export interface WorldStill {
   blob: Blob | null
-  /** Where the picture sits, in board points, from the nominal rect's top-left. */
+  /** Where the picture sits, in board points, from the nominal rect's top-left. It includes the world's `anchor` move. */
   x: number
   y: number
   w: number
   h: number
-  /** The world's published points: [x, y, visible], with x and y from the nominal rect's top-left, as above. */
+  /** The world's published points: [x, y, visible], with x and y from the nominal rect's top-left, as above, with the same move. */
   points?: Record<string, [number, number, boolean]>
 }
 

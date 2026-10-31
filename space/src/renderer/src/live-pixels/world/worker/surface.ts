@@ -156,13 +156,16 @@ export const SURFACE = String.raw`
   };
   /** The points of all placed worlds on the board, for one picture. */
   const boardPoints = () => {
-    const points = {};
+    const points = {}, from = {};
     for (const w of worlds.values()) {
       const p = w.placement;
-      if (!p || (!w.parts.size && !w.pins.size) || w.failed || !(w.setUp || w.ran)) continue;
+      // Only a generation that shows speaks for its node: one that catches up unseen must not touch the old one's points.
+      if (!p || !p.shown || (!w.parts.size && !w.pins.size) || w.failed || !(w.setUp || w.ran)) continue;
+      if (from[w.key.node] > w.key.generation) continue;
+      from[w.key.node] = w.key.generation;
       const m = p.matrix, cx = p.x + p.w / 2 + m[4] + w.moved.x, cy = p.y + p.h / 2 + m[5] + w.moved.y, own = {};
       // A world that waits for its turn shows its last output, so its points stay those of that output.
-      for (const [name, x, y, seen] of w.drawn ? w.shownPoints : measurePoints(w)) own[name] = [cx + m[0] * x + m[2] * y, cy + m[1] * x + m[3] * y, seen && p.shown];
+      for (const [name, x, y, seen] of w.drawn ? w.shownPoints : measurePoints(w)) own[name] = [cx + m[0] * x + m[2] * y, cy + m[1] * x + m[3] * y, seen];
       points[w.key.node] = own;
     }
     return points;
@@ -255,7 +258,7 @@ export const SURFACE = String.raw`
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
       firstPicture(w);
       const points = {};
-      for (const [name, x, y, seen] of measurePoints(w)) points[name] = [x + w.w / 2, y + w.h / 2, seen];
+      for (const [name, x, y, seen] of measurePoints(w)) points[name] = [x + w.w / 2 + w.moved.x, y + w.h / 2 + w.moved.y, seen];
       return { data, W, H, s, crop, points };
     } finally {
       if (target) giveOutput(target);
@@ -285,7 +288,7 @@ export const SURFACE = String.raw`
     let shot = null;
     try { shot = readStill(w); } catch (e) { fail(w, e); }
     const answer = (blob) => {
-      const still = shot ? { blob, x: shot.crop.l / shot.s + w.w / 2, y: shot.crop.t / shot.s + w.h / 2, w: shot.W / shot.s, h: shot.H / shot.s, points: shot.points } : emptyStill(w);
+      const still = shot ? { blob, x: shot.crop.l / shot.s + w.w / 2 + w.moved.x, y: shot.crop.t / shot.s + w.h / 2 + w.moved.y, w: shot.W / shot.s, h: shot.H / shot.s, points: shot.points } : emptyStill(w);
       for (const request of requests) post({ type: 'frame', key: w.key, request, tick, still });
     };
     if (!shot) { answer(null); return; }
@@ -464,7 +467,9 @@ export const SURFACE = String.raw`
       renderer.debug.onShaderError = (gl, program, vs, fs) => {
         if (gl.isContextLost()) return;
         const info = [gl.getProgramInfoLog(program), gl.getShaderInfoLog(vs), gl.getShaderInfoLog(fs)].filter(Boolean).join('\n');
-        fail(current || last, new Error('A shader did not compile:\n' + info.slice(0, 1500)));
+        // Shaders compile inside a render, so the world being rendered is at fault. The runtime's own passes belong to nobody.
+        const error = new Error('A shader did not compile:\n' + info.slice(0, 1500)), at = rendering || (core ? null : current || last);
+        if (at) fail(at, error); else console.error(error);
       };
       renderer.setClearColor(0x000000, 0);
       sizeSurface(m);

@@ -134,7 +134,7 @@ export const REALM = String.raw`
       .join('\n');
   };
 
-  const emptyStill = (w) => ({ blob: null, x: 0, y: 0, w: w.w, h: w.h });
+  const emptyStill = (w) => ({ blob: null, x: w.moved.x, y: w.moved.y, w: w.w, h: w.h });
 
   /** An error stops that world only. Its last output stays on the surface. */
   const fail = (w, error) => {
@@ -184,12 +184,38 @@ export const REALM = String.raw`
     if (was.uniform !== null) m.uniforms.opacity.value = was.uniform * v;
     if (m.transparent !== transparent) { m.transparent = transparent; m.needsUpdate = true; }
   };
-  const fadePart = (part, v) => {
+  /** A part's meshes get their own copy of a material that a mesh outside the part uses too. So parts fade apart. */
+  const ownMaterials = (w, t) => {
+    const mine = new Set(), others = new Set(), copies = new Map();
+    t.traverse((o) => mine.add(o));
+    w.scene.traverse((o) => { if (o.material && !mine.has(o)) for (const m of [].concat(o.material)) others.add(m); });
+    const own = (m) => {
+      if (!others.has(m)) return m;
+      if (!copies.has(m)) {
+        const copy = m.clone();
+        if (fades.has(m)) fades.set(copy, fades.get(m));
+        copies.set(m, copy);
+      }
+      return copies.get(m);
+    };
+    t.traverse((o) => { if (o.material) o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material); });
+  };
+  /** The reveal of each part's object. An object shows the product of the reveals over it, so a part inside a part fades with both. */
+  const reveals = new WeakMap();
+  const revealOf = (o) => {
+    let v = 1;
+    for (let p = o; p; p = p.parent) if (reveals.has(p)) v *= reveals.get(p);
+    return v;
+  };
+  const fadePart = (w, part, v) => {
     const t = part.target;
     if (!t || !t.isObject3D) return;
+    reveals.set(t, v);
+    ownMaterials(w, t);
     t.traverse((o) => {
-      o.userData.lsFade = v;
-      if (o.material) for (const m of [].concat(o.material)) fadeMaterial(m, v);
+      const shown = revealOf(o);
+      o.userData.lsFade = shown;
+      if (o.material) for (const m of [].concat(o.material)) fadeMaterial(m, shown);
     });
     t.visible = v > 0;
   };
@@ -201,7 +227,7 @@ export const REALM = String.raw`
       if (v === part.v) continue;
       part.v = v;
       w.stale = true;
-      inside(w, () => { try { if (part.reveal) part.reveal(v); else fadePart(part, v); } catch (e) { fail(w, e); } });
+      inside(w, () => { try { if (part.reveal) part.reveal(v); else fadePart(w, part, v); } catch (e) { fail(w, e); } });
     }
   };
   const partOf = (w, name) => {

@@ -52,6 +52,8 @@ export const LOOK = String.raw`
 
   // The parts that all worlds share. Made once, when the renderer exists.
   let environment = null;
+  /** The world whose passes run now. A failure in a pass belongs to it. */
+  let rendering = null;
   let quadScene = null, quadCam = null, quad = null, dofMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
   const noTone = () => ({ toneMapped: false, depthTest: false, depthWrite: false, transparent: false, blending: THREE.NoBlending });
 
@@ -403,6 +405,7 @@ export const LOOK = String.raw`
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
   const renderWorld = (w, s, crop, inner, output) => {
     const look = w.look, camera = w.camera;
+    rendering = w;
     // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
     const W = output.width, H = output.height, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
     const iw = inner.r - inner.l, ih = inner.b - inner.t;
@@ -488,6 +491,7 @@ export const LOOK = String.raw`
       u.tone.value = look.tone ? 1 : 0;
       pass(finalMat, output);
     } finally {
+      rendering = null;
       renderer.setRenderTarget(saved.target);
       renderer.autoClear = saved.autoClear;
       renderer.toneMapping = saved.tone;
