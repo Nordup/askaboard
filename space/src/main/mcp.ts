@@ -325,7 +325,7 @@ const LIVE_CHECKS = 3
 const contextKey = (context: SceneContext): string => JSON.stringify(context)
 
 /** The code items of a description, to check them. */
-type LiveCheck = Pick<SceneLiveObject, 'api' | 'mode' | 'code' | 'params' | 'width' | 'height' | 'line' | 'file'>
+type LiveCheck = Pick<SceneLiveObject, 'api' | 'mode' | 'code' | 'params' | 'data' | 'width' | 'height' | 'line' | 'file'>
 const livesOf = (desc: SceneDescription): LiveCheck[] => desc.objects.filter((object): object is SceneLiveObject => object.kind === 'live')
 
 const isMissing = (value: unknown): boolean => typeof value === 'object' && value !== null && (value as { draftMissing?: unknown }).draftMissing === true
@@ -1066,7 +1066,7 @@ export class AgentServer {
     // The same code is checked once; at most LIVE_CHECKS checks run at once.
     const checks = new Map<string, { args: AgentMethods['validateLive']['params']; lives: Live[] }>()
     for (const live of lives) {
-      const args = { mode: live.mode, code: live.code, params: live.params, size: [live.width, live.height] as [number, number] }
+      const args = { mode: live.mode, code: live.code, params: live.params, size: [live.width, live.height] as [number, number], ...(live.data === undefined ? {} : { data: live.data }) }
       const key = JSON.stringify(args)
       const check = checks.get(key)
       if (check) check.lives.push(live)

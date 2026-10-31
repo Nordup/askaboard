@@ -70,6 +70,8 @@ export interface WorldMember {
   /** Its code has run no frame yet. */
   readonly settingUp: boolean
   showPoints(points: Record<string, [number, number, boolean]> | undefined): void
+  /** Its code ran and gave the turn back: a world with no frame loop has only this to show that it is there. */
+  settled(): void
   receive(message: Extract<WorldToPage, { key: WorldKey }>): void
   failed(message: string): void
   lost(): void
@@ -204,7 +206,7 @@ export class WorldSurface {
     this.checkedAt = now
     if (!this.answeredAt || this.outbox) return
     if (late || document.visibilityState === 'hidden' || !this.members.size) this.answeredAt = now
-    else if (now - this.answeredAt > (this.running && this.members.get(keyOf(this.running))?.settingUp ? SETUP_MS : HANG_MS)) {
+    else if (now - this.answeredAt > ([...this.members.values()].some((member) => member.settingUp) ? SETUP_MS : HANG_MS)) {
       this.recover(this.running)
       return
     }
@@ -279,7 +281,10 @@ export class WorldSurface {
     if (this.disposed) return
     this.answeredAt = performance.now()
     if (m.type === 'picture') this.picture(m)
-    else if (m.type === 'running') this.running = m.running
+    else if (m.type === 'running') {
+      if (this.running && (!m.running || keyOf(m.running) !== keyOf(this.running))) this.members.get(keyOf(this.running))?.settled()
+      this.running = m.running
+    }
     else if (m.type === 'lost') this.recover(null)
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }

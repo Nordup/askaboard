@@ -161,10 +161,10 @@ export async function stillAt(node: LiveNode, params: Record<string, number>, t:
  * import, a runtime error), or null. A program still busy after CHECK_MS
  * (a slow import, a setup that waits) passes.
  */
-export async function programError(mode: 'program' | 'world', code: string, params: Record<string, number>, size: [number, number] = [320, 200]): Promise<string | null> {
+export async function programError(mode: 'program' | 'world', code: string, params: Record<string, number>, size: [number, number] = [320, 200], data?: unknown): Promise<string | null> {
   let error: string | null = null
   await withStepHost(
-    { mode, code, params },
+    { mode, code, params, data },
     stillSize({ w: size[0], h: size[1] }, 1),
     0,
     null,

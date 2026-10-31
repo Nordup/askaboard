@@ -833,7 +833,7 @@ export function liveReport(id: string): unknown {
 }
 
 /** Check live code: the shader compile log, the canvas syntax error, or the first error of a program or a world; null when it is fine. */
-export async function validateLiveCode(mode: 'shader' | 'canvas' | 'program' | 'world', code: string, params: Record<string, number> = {}, size?: [number, number]): Promise<string | null> {
-  if (mode === 'program' || mode === 'world') return programError(mode, code, params, size)
+export async function validateLiveCode(mode: 'shader' | 'canvas' | 'program' | 'world', code: string, params: Record<string, number> = {}, size?: [number, number], data?: unknown): Promise<string | null> {
+  if (mode === 'program' || mode === 'world') return programError(mode, code, params, size, data)
   return mode === 'shader' ? shaderError(code, params) : canvasSyntaxError(code)
 }

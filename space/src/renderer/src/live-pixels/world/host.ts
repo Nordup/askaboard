@@ -130,6 +130,12 @@ export class WorldHost implements LiveHost, WorldMember {
     this.surface.changed()
   }
 
+  settled(): void {
+    if (this.shown || !this.startsLive || this.stopped) return
+    this.show()
+    this.events.onAlive(1, 0)
+  }
+
   /** The points of the picture on the surface. */
   showPoints(points: Record<string, [number, number, boolean]> | undefined): void {
     if (points) this.parts = Object.keys(points).filter((name) => !name.startsWith('pin:'))

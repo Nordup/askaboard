@@ -455,7 +455,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     }
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']
-      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size) }
+      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size, params.data) }
     }
     case 'liveStills':
       return liveStillsOf(request.params as AgentMethods['liveStills']['params'])
