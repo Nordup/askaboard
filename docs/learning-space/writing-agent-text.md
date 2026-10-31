@@ -30,7 +30,7 @@ difference, so the next writer starts from the second draft's approach.
 | **The brief** (the space and your part; what the person wants; their work; explaining by drawing; what can go on the board; talking; checking facts; the learning folder) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
 | The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 45,000 characters) | Topics from about 400 characters to about 16,000 (`scene`) |
+| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 41,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
 | Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. Our Codex plugin gets these and the server instructions whole. Codex cuts them at 1,000 bytes only for an Agent Plugin, so the plugin must stay a Codex plugin, with no `plugin.json` at the plugin root (I30). |
 | Plugin skill | [`learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md`](../../../learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
 | Tool names in other places | The same names appear in `space/README.md` (tool table), `architecture.md` (MCP server), the plugin skill and README, and the lab's old-call mappers (`space/scripts/perf/replay.mjs`, `space/scripts/trace-report.mjs`, which keep old names on purpose). A rename changes all of them in one commit. | People and agents who read the docs | — |
@@ -146,8 +146,8 @@ voice, and the founder brought the old text back (I25).
 
 | Intent | Where it lives |
 | --- | --- |
-| Every medium is an equal choice (I30, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-world` and `html`. Not in a tool description. |
-| The picture carries the meaning (I30) | The brief, "Let the picture do the explaining" and the calibration list. |
+| Every medium is an equal choice (I31, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-world` and `html`. Not in a tool description. |
+| The picture carries the meaning (I31) | The brief, "Let the picture do the explaining" and the calibration list. |
 | Check a scene before the person sees it (I22, I25) | The brief, "Take the time it needs, and check your work"; the write_scene pointer to preview_scene; the preview_scene opening. |
 | Explain fully, then check (I21) | The brief only. |
 | Draw step by step, in front of the person | The brief ("Explain by drawing, one step at a time"); the instructions ("in front of the learner"); write_scene's opening. |
@@ -379,7 +379,7 @@ that Anthropic writes for its own models: the claude.ai system prompt and the
   whatever the brief said (I14). Hand drawing came back when code items were
   switched off (lab switch `--no-code`), and then, with code items on, once
   the brief and the guide said what each kind is for (I20): "a
-  three-dimensional subject alone is not a reason for one". I30 replaced that
+  three-dimensional subject alone is not a reason for one". I31 replaced that
   steer on 2026-10-31, so this pull toward code can come back. Watch for it.
 - **Measure with tasks that pull toward the defaults.** The EM wave and the
   seasons are pictures by nature, so most briefs look alike there.

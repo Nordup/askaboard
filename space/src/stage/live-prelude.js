@@ -177,7 +177,6 @@
   const SHAPE_OPTIONS = ['color', 'width', 'opacity', 'fill', 'fillOpacity', 'hatch', 'dash', 'pen', 'jitter', 'tool', 'name']
   const WRITE_OPTIONS = ['at', 'center', 'size', 'slant', ...INK_OPTIONS]
   const TEXT_OPTIONS = ['at', 'center', 'size', 'color', 'opacity', 'name']
-  const LIVE_OPTIONS = ['at', 'center', 'size', 'params', 'opacity', 'name']
   const MATERIAL_OPTIONS = ['at', 'center', 'near', 'into', 'index', 'mode', 'opacity', 'name']
   const TIMING_OPTIONS = ['dur', 'ease']
   const OPTION_NAMES = {
@@ -196,9 +195,7 @@
     text: TEXT_OPTIONS,
     label: ['side', 'gap', 'tex', 'text', ...WRITE_OPTIONS],
     around: ['shape', 'pad', ...INK_OPTIONS],
-    shader: LIVE_OPTIONS,
-    canvas: LIVE_OPTIONS,
-    program: LIVE_OPTIONS,
+    world: ['at', 'center', 'size', 'params', 'data', 'opacity', 'name'],
     html: MATERIAL_OPTIONS,
     image: ['size', ...MATERIAL_OPTIONS],
     copy: ['at', 'center', 'by', 'near', 'name'],
