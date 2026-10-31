@@ -525,7 +525,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
    */
   const followPoints = useCallback(
     (points: WorldPoints) => {
-      worldPointsRef.current = points
+      // A world that gives no points in this picture keeps its last ones.
+      worldPointsRef.current = { ...worldPointsRef.current, ...points }
       const links = linksRef.current
       const changed = new Set<string>()
       const nodes = linkedNodes()
