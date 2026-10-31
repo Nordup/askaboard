@@ -124,7 +124,7 @@ function readContext(context: AgentContext, scenes: SceneNames): ReadContext {
 
 // ---------- Board news: the learner's changes since an agent's last look ----------
 
-const KIND_WORDS: Record<string, string> = { svg: 'svg', frame: 'frame', text: 'text', image: 'image', live: 'live item' }
+const KIND_WORDS: Record<string, string> = { svg: 'svg', frame: 'frame', text: 'text', image: 'image', live: 'world' }
 
 /**
  * "your SVG \"Thermal spectra\"", "the learner's text \"Find x\"", or with the id when it has no name.
