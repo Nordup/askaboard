@@ -1531,7 +1531,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             const place = this.placeOf(name)
             replaces = !!place
             const context = await this.contextAt(place)
-            const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place })
+            const run = await this.stage.run(source, context, { mode: 'draft', name, signal, place, checkOptions: true })
             unpublished = run.entry
             Object.assign(spans, run.timing)
             orderDependent = run.orderDependent
