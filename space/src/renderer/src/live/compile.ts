@@ -1,6 +1,6 @@
 import { ownSteps, stepAt } from '@shared/scene-story'
 import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
-import { mulberry32, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStep, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
+import { mulberry32, type StageFollows, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStep, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
 import { splitPath, type FrameKind, type MomentsFailure } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
@@ -678,6 +678,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         mode: live.mode,
         code: live.code,
         params: { ...live.params },
+        ...(live.data === undefined ? {} : { data: live.data }),
         x: r1(x),
         y: r1(y),
         w: r1(live.width * scale),
@@ -1106,10 +1107,11 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   const endStep: string | undefined = programSteps[stepAt(programSteps, desc.duration)]?.name
   const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
   next = next.map((node) => (node.kind === 'live' && ((node as LiveNode).mode === 'program' || (node as LiveNode).mode === 'world') && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
+  next = linkNodes(next, desc, nodesOf, stage)
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: desc.camera ?? [], pointer: desc.pointer ?? [], cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: linkActions(desc.camera ?? [], desc, nodesOf, stage), pointer: linkActions(desc.pointer ?? [], desc, nodesOf, stage), cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
     inkGroups,
     contentIds: contentIds.filter((id) => !untouched.has(id)),
     centers,
@@ -1118,6 +1120,46 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     reparented,
     revert: { created: created.map((node) => node.id), changed: [...changed.keys()].map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean), removed: removedAll }
   }
+}
+
+/** The board node of a stage object: made by this scene, or by an earlier one. */
+function nodeOfStage(sid: number, desc: SceneDescription, nodesOf: ReadonlyMap<number, string[]>, stage: StageLookup | undefined): string | null {
+  const own = desc.objects.find((object) => object.sid === sid)
+  const ids = own ? nodesOf.get(own.id) : stage?.(sid)?.nodeIds
+  return ids?.[0] ?? null
+}
+
+/** Each object's link goes on its nodes, with the world as a node id. A world that is not on the board gives no link. */
+function linkNodes(nodes: BoardNode[], desc: SceneDescription, nodesOf: ReadonlyMap<number, string[]>, stage: StageLookup | undefined): BoardNode[] {
+  const links = new Map<string, StageFollows>()
+  for (const object of desc.objects) if (object.follows) for (const id of nodesOf.get(object.id) ?? []) links.set(id, object.follows)
+  if (!links.size) return nodes
+  const world = (sid: number): string | null => nodeOfStage(sid, desc, nodesOf, stage)
+  return nodes.map((node) => {
+    const link = links.get(node.id)
+    if (!link || !isKnown(node)) return node
+    if ('ends' in link) {
+      const ends = link.ends.map((end) => {
+        if (Array.isArray(end)) return end
+        const id = world(end.world)
+        return id ? { world: id, point: end.point, offset: [0, 0] as [number, number] } : null
+      })
+      if (!ends[0] || !ends[1]) return node
+      return { ...node, follows: { ends: [ends[0], ends[1]], at: link.at, origin: [node.x, node.y], ...(link.head === undefined ? {} : { head: link.head }) } } as BoardNode
+    }
+    const id = world(link.world)
+    return id ? ({ ...node, follows: { world: id, point: link.point, offset: [-link.at[0], -link.at[1]] } } as BoardNode) : node
+  })
+}
+
+/** Pointer glides and camera moves that follow a point: the world as a node id. */
+function linkActions<T extends { follows?: { world: number | string; point: string } }>(list: T[], desc: SceneDescription, nodesOf: ReadonlyMap<number, string[]>, stage: StageLookup | undefined): T[] {
+  return list.map((action) => {
+    if (typeof action.follows?.world !== 'number') return action
+    const id = nodeOfStage(action.follows.world, desc, nodesOf, stage)
+    const { follows, ...rest } = action
+    return (id ? { ...rest, follows: { world: id, point: follows.point } } : rest) as T
+  })
 }
 
 /** The world matrix of an object now, relative to what its node shows when the scene has ended. */

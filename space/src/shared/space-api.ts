@@ -451,7 +451,7 @@ export interface AgentMethods {
    */
   liveStills: {
     params: { items: LiveStillsItem[]; scale: number }
-    result: { stills: Array<{ frame: number; id: string; url: string | null; tick: number | null }> }
+    result: { stills: Array<{ frame: number; id: string; url: string | null; tick: number | null; points?: Record<string, [number, number, boolean]> }> }
   }
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
   measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }

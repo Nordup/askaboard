@@ -384,6 +384,32 @@
     return entry
   }
 
+  /** A named point of a world (world.point): its place is known only when the world runs, so the stage uses the world's anchor and stores the link. */
+  class ScenePoint {
+    constructor(entry, name) {
+      this.entry = entry
+      this.name = name
+    }
+    toString() {
+      return `[point "${this.name}" of ${this.entry.api} ${this.entry.id}]`
+    }
+  }
+  /** A named part of a world (world.part), for draw, fadeIn, fadeOut and erase. */
+  class ScenePart {
+    constructor(entry, name) {
+      this.entry = entry
+      this.name = name
+    }
+    toString() {
+      return `[part "${this.name}" of ${this.entry.api} ${this.entry.id}]`
+    }
+  }
+  const isWorld = (entry) => entry.kind === 'live' && entry.mode === 'world'
+  const partName = (name, what) => {
+    if (typeof name !== 'string' || !name) fail(`${what}(name) needs a name`)
+    return name
+  }
+
   class SceneObject {
     constructor(id) {
       Object.defineProperty(this, 'id', { value: id, enumerable: true })
@@ -414,8 +440,21 @@
     }
     part(key) {
       const entry = objects[this.id]
+      if (isWorld(entry)) return new ScenePart(entry, partName(key, 'part'))
       if (entry.kind !== 'html') fail(`part(): ${entry.api} ${this.id} has no parts; only ${H('html(), ')}image() and copies of material have`)
       return partOf(entry, key)
+    }
+    /** Worlds: a stage value bound to params[name]. */
+    value(name) {
+      const entry = objects[this.id]
+      if (!isWorld(entry)) fail(`value(): ${entry.api} ${this.id} has no named values; only world() has`)
+      return optionValue(entry, `params.${partName(name, 'value')}`)
+    }
+    /** Worlds: a named point that the world publishes. */
+    point(name) {
+      const entry = objects[this.id]
+      if (!isWorld(entry)) fail(`point(): ${entry.api} ${this.id} has no named points; only world() has`)
+      return new ScenePoint(entry, partName(name, 'point'))
     }
     toString() {
       return `[${this.kind} object ${this.id}]`
@@ -668,13 +707,25 @@
    * and again over time when the program ends (the object then changes as
    * they change). `skip`: argument indexes passed as they are (plot's function).
    */
+  /** The points of worlds read while a creator builds its object: the first one is the object's link. */
+  let pointNotes = null
   function creator(api, impl, { optIndex, skip = [], always = false } = {}) {
     return (...args) => {
       const dynamic = always || args.some((a, i) => !skip.includes(i) && isDynamicArg(a, 5))
       const recipe = { impl, args, seed: nextSeed++, optIndex, skip, overrides: null }
       const before = reads
-      const entry = evaluate(recipe)
+      const outer = pointNotes
+      pointNotes = []
+      let notes
+      let entry
+      try {
+        entry = evaluate(recipe)
+      } finally {
+        notes = pointNotes
+        pointNotes = outer
+      }
       const handle = register(entry)
+      if (notes.length) entry.follows = { world: notes[0].handle.entry.id, point: notes[0].handle.name, at: notes[0].at }
       entry.recipe = recipe
       entry.dynamic = dynamic || reads !== before
       return handle
@@ -820,7 +871,34 @@
     const d = `M${p[0]} ${p[1]} L${q[0]} ${q[1]} M${a[0]} ${a[1]} L${q[0]} ${q[1]} L${b[0]} ${b[1]}`
     const at = (v) => [v[0] + 0, v[1] + 0]
     const known = [p, q, a, b].every((v) => Number.isFinite(v[0]) && Number.isFinite(v[1])) ? [[at(p), at(q)], [at(a), at(q), at(b)]] : null
-    return shapeObject('arrow', d, opts, { closed: false }, known)
+    const spec = shapeObject('arrow', d, opts, { closed: false }, known)
+    spec.head = head
+    return spec
+  }
+
+  /**
+   * line() and arrow() with an end at a point of a world: each end is x, y or a point. The ends that are
+   * points show at the world's anchor here; the item stores both ends, and the page rebuilds its path.
+   */
+  const withEnds = (make) => (...args) => {
+    if (!args.some((a) => a instanceof ScenePoint)) return make(...args)
+    const ends = []
+    let i = 0
+    for (let k = 0; k < 2; k++) {
+      const v = args[i]
+      if (typeof v === 'number') {
+        ends.push([v, args[i + 1]])
+        i += 2
+      } else {
+        ends.push(v)
+        i += 1
+      }
+    }
+    const at = ends.map((end, k) => pointArg(end, `end ${k + 1}`))
+    const handle = make(at[0][0], at[0][1], at[1][0], at[1][1], args[i])
+    const entry = handles.get(handle)
+    entry.follows = { ends: ends.map((end, k) => (end instanceof ScenePoint ? { world: end.entry.id, point: end.name } : at[k])), at, ...(entry.head === undefined ? {} : { head: entry.head }) }
+    return handle
   }
 
   function circle(cx, cy, r, opts) {
@@ -1402,11 +1480,21 @@
       if (!plain(opts.params)) fail(`${api} params must be an object of numbers like {k: 1}`)
       for (const [key, v] of Object.entries(opts.params)) params[key] = num(v, `${api} params.${key}`)
     }
+    let data
+    if (opts.data !== undefined) {
+      if (mode !== 'world') fail(`${api} has no data option; only world() has`)
+      try {
+        data = JSON.parse(JSON.stringify(opts.data))
+      } catch {
+        fail('world data must be plain data')
+      }
+    }
     return make({
       kind: 'live',
       api,
       mode,
       name: nameOf(opts),
+      ...(data === undefined ? {} : { data }),
       code,
       width: w,
       height: h,
@@ -1459,6 +1547,13 @@
    */
   function placeOf(value, what = 'place', rects = true) {
     value = resolveArg(value, 2)
+    if (value instanceof ScenePoint) {
+      // The stage has no place for it: the world's anchor stands in, and the link moves the item.
+      const b = worldBounds(value.entry, T)
+      const at = [b.x + b.width / 2, b.y + b.height / 2]
+      if (pointNotes) pointNotes.push({ handle: value, at })
+      return { box: { x: at[0], y: at[1], width: 0, height: 0 }, point: true }
+    }
     if (value && typeof value === 'object' && handles.has(value)) return { box: worldBounds(handles.get(value), T), point: false }
     if (rects && Array.isArray(value) && value.length === 4 && value.every((v) => typeof v === 'number')) return { box: { x: coord(value[0], `${what}[0]`), y: coord(value[1], `${what}[1]`), width: num(value[2], `${what}[2]`), height: num(value[3], `${what}[3]`) }, point: false }
     if (plain(value) && ['x', 'y', 'width', 'height'].every((key) => typeof value[key] === 'number')) return { box: { x: value.x, y: value.y, width: value.width, height: value.height }, point: false }
@@ -2121,7 +2216,17 @@
     entry.revealed = true
   }
 
+  /** draw, fadeIn, fadeOut or erase of a part of a world: the reserved param part.<name>.reveal. A part that comes in is hidden until then. */
+  function revealPart(part, to, timing, api, natural) {
+    const { dur, ease } = durationArg(timing, api, natural)
+    const v = values[optionValue(part.entry, `params.part.${part.name}.reveal`).id]
+    if (to === 1 && !v.tracks.length) v.base = 0
+    addValueTrack(v, T, dur, to, ease || 'inOut')
+    return new Action(T, T + dur)
+  }
+
   function draw(target, timing) {
+    if (target instanceof ScenePart) return revealPart(target, 1, timing, 'draw', 0.8)
     const entry = entryOf(target, 'draw(object)')
     const { dur, ease } = durationArg(timing, 'draw', naturalDraw(entry))
     const start = T
@@ -2162,6 +2267,7 @@
   const FADE_DUR = 0.5
 
   function fadeIn(target, timing) {
+    if (target instanceof ScenePart) return revealPart(target, 1, timing, 'fadeIn', FADE_DUR)
     const entry = entryOf(target, 'fadeIn(object)')
     const { dur, ease } = durationArg(timing, 'fadeIn', FADE_DUR)
     for (const e of leaves(entry)) {
@@ -2176,6 +2282,7 @@
   }
 
   function fadeOut(target, timing) {
+    if (target instanceof ScenePart) return revealPart(target, 0, timing, 'fadeOut', 0.5)
     const entry = entryOf(target, 'fadeOut(object)')
     const { dur, ease } = durationArg(timing, 'fadeOut', 0.5)
     for (const e of leaves(entry)) {
@@ -2187,6 +2294,7 @@
   }
 
   function erase(target, timing) {
+    if (target instanceof ScenePart) return revealPart(target, 0, timing, 'erase', 0.5)
     const entry = entryOf(target, 'erase(object)')
     const { dur, ease } = durationArg(timing, 'erase', Math.min(1.2, Math.max(0.35, naturalDraw(entry) * 0.4)))
     for (const e of leaves(entry)) {
@@ -2250,7 +2358,7 @@
     const spec = specAt(entry, T)
     const given = resolveArg(recipe.args[recipe.optIndex], 5)
     let start
-    if (key.startsWith('params.')) start = spec.params ? spec.params[key.slice(7)] : undefined
+    if (key.startsWith('params.')) start = (spec.params ? spec.params[key.slice(7)] : undefined) ?? (key.startsWith('params.part.') ? 1 : undefined)
     else if (plain(given) && typeof given[key] === 'number') start = given[key]
     else if (spec.style && typeof spec.style[key] === 'number') start = spec.style[key]
     else if (key === 'size' && spec.style && typeof spec.style.size === 'number') start = spec.style.size
@@ -2450,7 +2558,7 @@
       if (zoomGiven !== null) zoom = zoomGiven
       return { center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000 }
     }
-    const move = { start: f3(T), dur: f3(dur), ...aim(), ease: ease || 'inOut' }
+    const move = { start: f3(T), dur: f3(dur), ...aim(), ease: ease || 'inOut', ...(spec.to instanceof ScenePoint ? { follows: { world: spec.to.entry.id, point: spec.to.name } } : {}) }
     cameraActions.push(move)
     if (collector) collector.push({ kind: 'camera', c: move })
     cameraActions.sort((a, b) => a.start - b.start)
@@ -2464,7 +2572,7 @@
     const { dur } = durationArg(timing, 'point', 0.6)
     const hide = target === null || target === false
     const aim = () => ({ to: pointArg(target, 'point target').map(f2) })
-    const glide = { start: f3(T), dur: f3(dur), to: hide ? null : aim().to }
+    const glide = { start: f3(T), dur: f3(dur), to: hide ? null : aim().to, ...(target instanceof ScenePoint ? { follows: { world: target.entry.id, point: target.name } } : {}) }
     pointerActions.push(glide)
     if (collector) collector.push({ kind: 'pointer', p: glide })
     pointerActions.sort((a, b) => a.start - b.start)
@@ -3002,6 +3110,13 @@
     sweep.runs.forEach(keepSeeds)
   }
 
+  /** An object's link as it leaves the stage. A changing object rests where the world's anchor is at the end. */
+  function followsOut(e) {
+    if (e.follows.ends || !e.dynamic) return e.follows
+    const b = worldBounds(objects[e.follows.world], endTime)
+    return { ...e.follows, at: [b.x + b.width / 2, b.y + b.height / 2] }
+  }
+
   /** The scene's description (JSON): its objects at their end seeds, and its timeline. Nothing changes it after this. */
   const result = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
@@ -3031,7 +3146,8 @@
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
-      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}) })
+      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}), ...(e.data === undefined ? {} : { data: e.data }) })
+      if (e.follows) o.follows = followsOut(e)
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
       if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}) })
@@ -3211,8 +3327,8 @@
 
   const api = {
     stroke: creator('stroke', stroke, { optIndex: 1 }),
-    line: creator('line', line, { optIndex: 4 }),
-    arrow: creator('arrow', arrow, { optIndex: 4 }),
+    line: withEnds(creator('line', line, { optIndex: 4 })),
+    arrow: withEnds(creator('arrow', arrow, { optIndex: 4 })),
     circle: creator('circle', circle, { optIndex: 3 }),
     ellipse: creator('ellipse', ellipse, { optIndex: 4 }),
     rect: creator('rect', rect, { optIndex: 4 }),

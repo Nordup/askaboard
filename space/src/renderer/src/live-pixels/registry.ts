@@ -133,7 +133,9 @@ export function liveInput(id: string): LiveInput {
 
 // ---------- Items ----------
 
-const items = new Map<string, LiveItem>()
+// The items outlive a hot reload of this file or of the world files in dev.
+const items: Map<string, LiveItem> = (import.meta.hot?.data.items as Map<string, LiveItem> | undefined) ?? new Map()
+if (import.meta.hot) import.meta.hot.data.items = items
 
 function pixelSize(element: HTMLElement, w: number, h: number): CanvasSize {
   const rect = element.getBoundingClientRect()
@@ -336,6 +338,7 @@ export class LiveItem implements SlotOwner {
       {
         id: this.id,
         code: this.node.code,
+        data: this.node.data,
         seed: this.seed,
         size: this.size,
         // Stepping: the item's own params under the timeline's, as in a preview.
@@ -524,7 +527,12 @@ export class LiveItem implements SlotOwner {
     const before = this.node
     this.node = node
     const seed = seedOf(node)
-    const restart = node.mode !== before.mode || node.code !== before.code || seed !== this.seed || (node.mode === 'shader' && paramNames(node.params) !== paramNames(before.params))
+    const restart =
+      node.mode !== before.mode ||
+      node.code !== before.code ||
+      seed !== this.seed ||
+      (node.mode === 'shader' && paramNames(node.params) !== paramNames(before.params)) ||
+      (node.mode === 'world' && JSON.stringify(node.data) !== JSON.stringify(before.data))
     if (restart) {
       this.seed = seed
       this.params = this.currentParams()

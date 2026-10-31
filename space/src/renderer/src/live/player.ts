@@ -308,6 +308,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
   if (!play.pointer.length || t < play.pointer[0].start || t > play.duration + 0.05) return null
   let pos: Point | null = null
   let alpha = 0
+  let follows: PlaybackTip['follows']
   for (const action of play.pointer) {
     if (action.start > t) break
     const k = action.dur > 0 ? SCENE_EASES.inOut(clamp01((t - action.start) / action.dur)) : 1
@@ -316,6 +317,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
       continue
     }
     const to = action.to as Point
+    follows = typeof action.follows?.world === 'string' ? { world: action.follows.world, point: action.follows.point, at: to, share: k } : undefined
     // The first glide comes in from a little below and to the right, as a hand does.
     const from: Point = pos && alpha > 0.01 ? pos : [to[0] + 40, to[1] + 56]
     const fromAlpha = pos && alpha > 0.01 ? alpha : 0
@@ -323,7 +325,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
     alpha = lerp(fromAlpha, 1, Math.min(1, k * 2))
   }
   if (!pos || alpha <= 0.01) return null
-  return { point: pos, color: sceneColor('accent').hex, size: 9, kind: 'pointer', alpha }
+  return { point: pos, color: sceneColor('accent').hex, size: 9, kind: 'pointer', alpha, ...(follows ? { follows } : {}) }
 }
 
 export interface SceneFrame {
@@ -1360,7 +1362,10 @@ export class ScenePlayer {
           // The learner moved the view during this scene: the scene's later camera moves are skipped.
           if (state.learnerViewAt > scene.startedEpoch) scene.cameraBlocked = true
           if (scene.cameraBlocked) continue
-          board.animateTo({ center: move.center, zoom: clampZoom(move.zoom) }, Math.max(1, move.dur * 1000), () => this.held(scene))
+          // A move to a point of a world goes on following it until the scene ends.
+          const link = move.follows
+          const follow = typeof link?.world === 'string' ? (): Point | null => (this.scenes.includes(scene) ? (board.worldPoint(link.world as string, link.point) ?? move.center) : null) : undefined
+          board.animateTo({ center: move.center, zoom: clampZoom(move.zoom) }, Math.max(1, move.dur * 1000), () => this.held(scene), follow)
         }
         scene.lastT = t
       }

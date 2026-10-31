@@ -48,6 +48,8 @@ export interface PlaybackTip {
   kind?: 'pen' | 'pointer'
   /** 0..1 (fading in or out). */
   alpha?: number
+  /** The pointer goes to a point of a world: `share` of its glide is done, and `at` stands in for the point in `point`. */
+  follows?: { world: string; point: string; at: Point; share: number }
 }
 
 export interface PlaybackFrame {

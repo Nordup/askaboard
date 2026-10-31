@@ -39,6 +39,8 @@ export type LiveInput = 'none' | 'enter' | 'direct'
 export interface LiveFrame {
   url: string | null
   tick: number
+  /** Worlds: the published points in this picture, from the nominal rect's top-left. */
+  points?: Record<string, [number, number, boolean]>
 }
 
 export interface HostStart {
@@ -46,6 +48,8 @@ export interface HostStart {
   id: string
   code: string
   seed: number
+  /** Worlds: world.data. */
+  data?: unknown
   size: CanvasSize
   params: Record<string, number>
   /** live: follow the item clock in real time (board items). step: run ticks only on advance (previews, stills, checks). */

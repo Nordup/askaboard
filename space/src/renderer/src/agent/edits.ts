@@ -1,4 +1,5 @@
 import { isKnown, type BoardNode } from '@shared/board-format'
+import { followsText } from '@shared/world-links'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
@@ -81,6 +82,7 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
   }
   if (isKnown(node)) {
     if (node.locked) info.locked = true
+    if (node.follows) info.follows = followsText(node.follows)
     if (node.kind === 'ink') Object.assign(info, { tool: node.tool, color: node.color, width: node.width, points: node.points.length })
     else info.style = node.style
     if (node.kind === 'text') info.text = node.text

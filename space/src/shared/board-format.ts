@@ -15,6 +15,8 @@
  * both use it.
  */
 
+import type { NodeFollows } from './world-links'
+
 export const BOARD_FORMAT = 'learning-space.board'
 export const BOARD_VERSION = 2
 export const BOARD_SUFFIX = '.board.json'
@@ -132,6 +134,8 @@ interface NodeBase {
   seq: number
   /** Locked nodes can be selected, but not moved, resized or deleted by hand. */
   locked?: boolean
+  /** A link to a point of a world: the item moves with it (shared/world-links.ts). */
+  follows?: NodeFollows
 }
 
 export interface InkNode extends NodeBase {
@@ -189,6 +193,8 @@ export interface LiveNode extends NodeBase {
   mode: 'shader' | 'canvas' | 'program' | 'world'
   code: string
   params: Record<string, number>
+  /** Worlds: a JSON value for the code (world.data). */
+  data?: unknown
   w: number
   h: number
   /** Other look (opacity, border radius…). Its width and height are ignored: `w`, `h` set the size. */

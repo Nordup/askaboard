@@ -62,6 +62,7 @@ export class WorldHost implements LiveHost, WorldMember {
         ...this.key,
         code: start.code,
         seed: start.seed,
+        ...(start.data === undefined ? {} : { data: start.data }),
         w: start.size.w,
         h: start.size.h,
         params: start.params,
@@ -91,7 +92,8 @@ export class WorldHost implements LiveHost, WorldMember {
         break
       case 'frame': {
         const { request, tick } = m
-        void stillUrl(m.still, this.w, this.h).then((url) => this.settle(request, { url, tick }))
+        const { points } = m.still
+        void stillUrl(m.still, this.w, this.h).then((url) => this.settle(request, { url, tick, ...(points ? { points } : {}) }))
         break
       }
       case 'error':

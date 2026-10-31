@@ -67,9 +67,16 @@ export interface SceneStyle {
   size?: number
 }
 
+/** A link as it leaves the stage: world is the world's stage id, and at is the anchor that stands in for the point. */
+export type StageFollows =
+  | { world: number; point: string; at: [number, number] }
+  | { ends: [{ world: number; point: string } | [number, number], { world: number; point: string } | [number, number]]; at: [[number, number], [number, number]]; head?: number }
+
 interface SceneObjectBase {
   id: number
   api: string
+  /** The item follows a point of a world. */
+  follows?: StageFollows
   /** When the object was made (s); an object shown without a reveal appears then. */
   created: number
   /** hidden: invisible until a reveal action; shown: visible from `created`. */
@@ -164,6 +171,7 @@ export interface SceneLiveObject extends SceneObjectBase {
   width: number
   height: number
   params: Record<string, number>
+  data?: unknown
   style: SceneStyle
   /** The program line of the shader()/canvas() call, for compile errors; file: its module in boards/scenes/ (none: the inline code). */
   line?: number
@@ -244,6 +252,8 @@ export interface SceneCameraAction {
   center: [number, number]
   zoom: number
   ease: SceneEase
+  /** The camera goes to this point of a world and stays on it. world: the stage id, then the node id. */
+  follows?: { world: number | string; point: string }
 }
 
 /** The pointer (a tutor's hand) glides to `to` over [start, start + dur] and rests there; null hides it. */
@@ -251,6 +261,8 @@ export interface ScenePointerAction {
   start: number
   dur: number
   to: [number, number] | null
+  /** The pointer goes to this point of a world and stays on it; to is the world's anchor. */
+  follows?: { world: number | string; point: string }
 }
 
 /** A line (say) on the timeline: text the learner reads; nothing is spoken. dur is its reading time. */

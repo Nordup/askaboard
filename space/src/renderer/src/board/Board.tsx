@@ -23,6 +23,7 @@ import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
 import { enterLive, enteredLive, liveInput, setLivePlayback } from '../live-pixels/registry'
 import { bindWorldBoard, syncWorlds } from '../live-pixels/world/surface'
+import { linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -88,8 +89,12 @@ export interface BoardHandle {
   clientRect(): Region | null
   /** Pan (and zoom out if needed) so the board rect is in view with a margin. Keeps the camera when it already is. */
   reveal(rect: Region): void
-  /** Glide the camera to `camera` over `ms`. Any learner pan, zoom or pointer input stops the glide. While `held` says true, the glide stands, and it goes on from there. */
-  animateTo(camera: Camera, ms?: number, held?: () => boolean): void
+  /** Glide the camera to `camera` over `ms`. With `follow`, the camera goes to the place it gives, and stays on it until it gives null. Any learner pan, zoom or pointer input stops the glide. While `held` says true, the glide stands, and it goes on from there. */
+  animateTo(camera: Camera, ms?: number, held?: () => boolean, follow?: () => Point | null): void
+  /** The place of a point of a world in the last picture shown, or null. */
+  worldPoint(world: string, point: string): Point | null
+  /** The points of the last picture shown. */
+  worldPoints(): WorldPoints
   /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
   applyColor(color: string): boolean
   /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
@@ -179,6 +184,8 @@ export const HIGHLIGHTER_SCALE = 4
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
 const GRID_PITCH = 24
+/** A linked item fades out over this long when its point is hidden. */
+const LINK_FADE_MS = 200
 /** How long the "an agent looked here" outline shows. */
 const FLASH_MS = 1400
 /** Share of a new stroke's bounds that must lie inside a frame to join it. */
@@ -350,6 +357,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** The overrides with live item params (for the live pixel registry), and what it got last. */
   const liveParamsRef = useRef(new Map<string, NodeOverride>())
   const liveSentRef = useRef<{ dirty: boolean; clocks: PlaybackFrame['clocks'] | null; on: boolean }>({ dirty: false, clocks: null, on: false })
+  /** The items that follow a point of a world: how each shows now, and its fade when its point is hidden or shown again. */
+  const linksRef = useRef(new Map<string, { look: LinkLook; alpha: number }>())
+  const linkedNodesRef = useRef<{ index: SceneIndex | null; list: LinkedNode[] }>({ index: null, list: [] })
+  const worldPointsRef = useRef<WorldPoints>({})
+  const fadeAtRef = useRef(0)
   /** Pen tips and changing ink in the last frame (the ink canvas paints again when they go). */
   const inkMomentRef = useRef({ tips: 0, inks: 0 })
   const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
@@ -442,7 +454,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const live = liveParamsRef.current
     const sent = liveSentRef.current
     const show = (id: string): void => {
-      const override = frame?.overrides.get(id)
+      const own = frame?.overrides.get(id)
+      const link = linksRef.current.get(id)
+      const override = link ? withLink(own, link.look, link.alpha) : own
       if (override?.params) {
         if (live.get(id) !== override) {
           live.set(id, override)
@@ -450,26 +464,27 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         }
       } else if (live.delete(id)) sent.dirty = true
       const before = applied.get(id)
-      const own = elementsRef.current.get(id)
-      const element = own ?? ghostElementsRef.current.get(id)
-      const node = override && element?.isConnected ? (own ? indexRef.current.byId.get(id) : ghostByIdRef.current.get(id)) : undefined
+      const mine = elementsRef.current.get(id)
+      const element = mine ?? ghostElementsRef.current.get(id)
+      const node = override && element?.isConnected ? (mine ? indexRef.current.byId.get(id) : ghostByIdRef.current.get(id)) : undefined
       if (before && before !== element) clearElementOverride(before)
       if (!override || !element || !node || isInk(node)) {
         if (before === element && before) clearElementOverride(before)
         applied.delete(id)
         return
       }
-      const box = own ? layoutRef.current.get(id) : null
+      const box = mine ? layoutRef.current.get(id) : null
       const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
       const opacity = Number((node as ContentNode).style?.opacity ?? '1')
       applyElementOverride(element, override, origin, Number.isFinite(opacity) ? opacity : 1)
       applied.set(id, element)
     }
-    if (frame && changed) for (const id of changed) show(id)
+    if (changed) for (const id of changed) show(id)
     else {
       for (const id of [...applied.keys()]) if (!frame?.overrides.has(id)) show(id)
       for (const id of [...live.keys()]) if (!frame?.overrides.has(id)) show(id)
       if (frame) for (const id of frame.overrides.keys()) show(id)
+      for (const id of linksRef.current.keys()) if (!frame?.overrides.has(id)) show(id)
     }
     // Live pixel items: their params and scene clocks, when they changed.
     if (!frame) {
@@ -481,6 +496,83 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     }
   }, [])
   applyPlaybackRef.current = applyPlaybackToDom
+
+  /** The nodes with a link now: the same list while the nodes are the same. */
+  const linkedNodes = useCallback(() => {
+    const memo = linkedNodesRef.current
+    if (memo.index !== indexRef.current) {
+      const list = [...indexRef.current.byId.values()].filter((node) => isKnown(node) && !!node.follows) as unknown as LinkedNode[]
+      linkedNodesRef.current = { index: indexRef.current, list }
+      return list
+    }
+    return memo.list
+  }, [])
+
+  /** Show these links now: on content elements here, on the ink in the paint that is under way. */
+  const showLinks = useCallback(
+    (changed: ReadonlySet<string>) => {
+      if (!changed.size) return
+      applyPlaybackToDom(changed)
+      inkLayersRef.current.note(changed)
+      dirtyLayersRef.current.playback = true
+    },
+    [applyPlaybackToDom]
+  )
+
+  /**
+   * The points of the picture this paint adopts: linked items move to them.
+   * An item whose world has no point now stays at its last place.
+   */
+  const followPoints = useCallback(
+    (points: WorldPoints) => {
+      worldPointsRef.current = points
+      const links = linksRef.current
+      const changed = new Set<string>()
+      const nodes = linkedNodes()
+      for (const node of nodes) {
+        const look = linkLook(node, points)
+        if (!look) continue
+        const was = links.get(node.id)
+        if (was && JSON.stringify(was.look) === JSON.stringify(look)) continue
+        links.set(node.id, { look, alpha: was?.alpha ?? (look.visible ? 1 : 0) })
+        changed.add(node.id)
+      }
+      if (links.size > nodes.length || nodes.length === 0) {
+        const kept = new Set(nodes.map((node) => node.id))
+        for (const id of links.keys()) {
+          if (kept.has(id)) continue
+          links.delete(id)
+          changed.add(id)
+        }
+      }
+      showLinks(changed)
+    },
+    [linkedNodes, showLinks]
+  )
+
+  /** One step of the fades of links: true while one goes on. */
+  const fadeLinks = useCallback((): boolean => {
+    const now = performance.now()
+    const step = Math.min(0.25, (now - fadeAtRef.current) / LINK_FADE_MS)
+    fadeAtRef.current = now
+    const changed = new Set<string>()
+    for (const [id, link] of linksRef.current) {
+      const target = link.look.visible ? 1 : 0
+      if (link.alpha === target) continue
+      link.alpha = target > link.alpha ? Math.min(target, link.alpha + step) : Math.max(target, link.alpha - step)
+      changed.add(id)
+    }
+    showLinks(changed)
+    return changed.size > 0
+  }, [showLinks])
+
+  const paintOverrides = useCallback((): ReadonlyMap<string, NodeOverride> | null => {
+    const overrides = playbackRef.current?.overrides ?? null
+    if (!linksRef.current.size) return overrides
+    const out = new Map(overrides ?? [])
+    for (const [id, link] of linksRef.current) out.set(id, withLink(out.get(id), link.look, link.alpha))
+    return out
+  }, [])
 
   /**
    * Paint the dirty ink layers: in the next animation frame, or with `now`
@@ -501,6 +593,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (paintFrameRef.current !== null) return
       const paint = (): void => {
         paintFrameRef.current = null
+        // First the worlds: a new picture moves the items linked to it, and they paint in this same paint.
+        syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
+        const fading = fadeLinks()
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
         // The learner's stroke first: it never waits for the scene's ink.
@@ -512,20 +607,19 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             inks: paintInks(),
             ghosts: ghostInks(),
             transients: (frame?.inks ?? []) as readonly InkNode[],
-            overrides: frame?.overrides ?? null,
-            tips: frame?.tips ?? [],
+            overrides: paintOverrides(),
+            tips: (frame?.tips ?? []).map((tip) => (tip.follows ? linkedTip(tip, worldPointsRef.current) : tip)),
             selected: selectedIdsRef.current,
             viewport: viewportRef.current,
             camera: cameraRef.current
           })
         }
-        // The worlds move with the ink, in this same paint.
-        syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
+        if (fading) requestPaint({})
       }
       if (now) paint()
       else paintFrameRef.current = requestAnimationFrame(paint)
     },
-    [applyContentTransform, ghostInks, paintInks]
+    [applyContentTransform, fadeLinks, ghostInks, paintInks, paintOverrides]
   )
   // A cancelled frame must also clear its slot. React runs this cleanup and then
   // mounts again (StrictMode in dev, Fast Refresh): a slot left set says "a frame
@@ -544,6 +638,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (!board) return
     return bindWorldBoard(board, {
       paint: () => requestPaint({}),
+      points: followPoints,
       place: (id) => {
         const own = indexRef.current.byId.get(id)
         const node = own ?? ghostByIdRef.current.get(id)
@@ -552,7 +647,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return { node, x: box?.x ?? node.x, y: box?.y ?? node.y, override: playbackRef.current?.overrides.get(id) }
       }
     })
-  }, [requestPaint])
+  }, [followPoints, requestPaint])
 
   // ---------- Layout cache ----------
 
@@ -568,7 +663,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     addInkLayout(indexRef.current, layout)
     layoutRef.current = layout
     // Back on, from the new layout (an element's transform is relative to its layout box).
-    if (playing || playbackRef.current) applyPlaybackRef.current()
+    if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
   }, [requestPaint])
@@ -1383,7 +1478,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         learnerViewAt: learnerViewAtRef.current,
         inkColor: colorRef.current
       }),
-      animateTo: (target, ms = 420, held) => {
+      worldPoint: (world, point) => {
+        const p = pointNow(worldPointsRef.current, world, point)
+        return p ? [p[0], p[1]] : null
+      },
+      worldPoints: () => worldPointsRef.current,
+      animateTo: (target, ms = 420, held, follow) => {
         const token = ++glideRef.current
         const from = cameraRef.current
         let last = performance.now()
@@ -1394,8 +1494,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           if (!held?.()) elapsed += now - last
           last = now
           const t = Math.min(1, elapsed / Math.max(1, ms))
-          applyCamera(glideCamera(from, target, t))
-          if (t < 1) requestAnimationFrame(step)
+          const aim = follow?.() ?? null
+          applyCamera(glideCamera(from, aim ? { ...target, center: aim } : target, t))
+          if (t < 1 || aim) requestAnimationFrame(step)
         }
         requestAnimationFrame(step)
       },

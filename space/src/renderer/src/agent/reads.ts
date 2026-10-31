@@ -10,6 +10,7 @@ import { liveSummary } from '../live-pixels/registry'
 import { scenePlayer } from '../live/player'
 import { lookOf, storiesOf, storiesOfNode, versionOnBoard } from '../live/stories'
 import { parseStepRef, type BoardStory, type SceneStory } from '@shared/scene-story'
+import { followsText } from '@shared/world-links'
 import { coveredOf } from './covered'
 import { getNodeInfo } from './edits'
 import { isGroupId, type InkGroup } from './groups'
@@ -308,6 +309,9 @@ function unitLine(m: Model, unit: Unit, refs: { scene?: boolean; author?: boolea
   if (what) parts.push(what)
   if (refs.author) parts.push(unit.author === 'learner' ? 'learner' : 'yours')
   if (unit.parent !== ROOT) parts.push(`inside ${frameLabel(m, unit.parent)}`)
+  const linked = unit.node ?? (unit.group ? strokesOf(m, unit.group)[0] : undefined)
+  const follows = linked && isKnown(linked) ? linked.follows : undefined
+  if (follows) parts.push(`follows ${followsText(follows)}`)
   if (refs.scene && unit.scene) {
     const info = m.scenes.get(unit.scene)
     if (info) parts.push(`from ${sceneLabel(info)}`)

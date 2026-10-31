@@ -1,9 +1,10 @@
 import type { LiveNode } from '@shared/board-format'
 import { LIVE_ORIGIN } from '@shared/live-libs'
 import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldToPage } from '@shared/world-protocol'
+import type { WorldPoints } from '@shared/world-links'
 import type { NodeOverride } from '../../board/playback'
 import type { Camera, Point } from '../../board/types'
-import { WORLD_MARGIN, worldWorkerUrl } from './worker'
+import * as worker from './worker'
 
 /**
  * The world surface: one GPU canvas that draws every world of a board, between
@@ -40,6 +41,8 @@ export interface WorldBoard {
   paint(): void
   /** The place of a node, or null when it is not on the board. */
   place(id: string): WorldPlace | null
+  /** The points of the picture this paint adopts: linked items move with it. */
+  points(points: WorldPoints): void
 }
 
 /** One generation of a world on a surface (host.ts). */
@@ -54,6 +57,8 @@ export interface WorldMember {
 type Picture = Extract<WorldToPage, { type: 'picture' }>
 
 const IDENTITY: WorldPlacement['matrix'] = [1, 0, 0, 1, 0, 0]
+
+const margin = (): number => workerSide.WORLD_MARGIN
 
 const keyOf = (key: WorldKey): string => `${key.node}\u0000${key.generation}`
 
@@ -81,6 +86,12 @@ function placement(member: WorldMember, place: WorldPlace): WorldPlacement {
 }
 
 // ---------- Frame messages: one listener for every surface frame ----------
+
+// A hot reload of the worker stops here, so the page's modules keep their state in dev.
+let workerSide = worker
+if (import.meta.hot) import.meta.hot.accept('./worker', (next) => {
+  if (next) workerSide = next as unknown as typeof worker
+})
 
 const byWindow = new Map<Window, WorldSurface>()
 let listening = false
@@ -158,7 +169,7 @@ export class WorldSurface {
     const m = data as { type?: unknown; message?: unknown }
     if (m.type === 'ready' && this.channel) {
       const port = this.channel.port2
-      this.frame?.contentWindow?.postMessage({ type: 'start', url: worldWorkerUrl(), port, init: {} }, '*', [port])
+      this.frame?.contentWindow?.postMessage({ type: 'start', url: workerSide.worldWorkerUrl(), port, init: {} }, '*', [port])
     } else if (m.type === 'load-error') {
       const message = typeof m.message === 'string' && m.message ? m.message.replace(/^Uncaught /, '') : 'The world surface failed to load.'
       for (const member of [...this.members.values()]) member.failed(message)
@@ -255,13 +266,14 @@ export class WorldSurface {
     if (size === this.size) return
     const first = !this.size
     this.size = size
-    if (first) this.begin({ type: 'init', width: vw, height: vh, dpr, margin: WORLD_MARGIN })
+    if (first) this.begin({ type: 'init', width: vw, height: vh, dpr, margin: margin() })
     else this.post({ type: 'resize', width: vw, height: vh, dpr })
-    canvas.style.left = `${-WORLD_MARGIN}px`
-    canvas.style.top = `${-WORLD_MARGIN}px`
-    canvas.style.width = `${vw + WORLD_MARGIN * 2}px`
-    canvas.style.height = `${vh + WORLD_MARGIN * 2}px`
-    canvas.style.transformOrigin = `${WORLD_MARGIN}px ${WORLD_MARGIN}px`
+    const m = margin()
+    canvas.style.left = `${-m}px`
+    canvas.style.top = `${-m}px`
+    canvas.style.width = `${vw + m * 2}px`
+    canvas.style.height = `${vh + m * 2}px`
+    canvas.style.transformOrigin = `${m}px ${m}px`
   }
 
   private adopt(context: ImageBitmapRenderingContext): void {
@@ -276,6 +288,7 @@ export class WorldSurface {
     if (!picture) return
     context.transferFromImageBitmap(picture.bitmap)
     this.shownCamera = picture.camera
+    this.board?.points(picture.points)
     this.settle(picture)
   }
 
@@ -325,8 +338,10 @@ export class WorldSurface {
 
 // ---------- One surface per board ----------
 
-const surfaces = new WeakMap<HTMLElement, WorldSurface>()
-const sides = new WeakMap<HTMLElement, WorldBoard>()
+// One per board, also across a hot reload of this file in dev.
+const surfaces: WeakMap<HTMLElement, WorldSurface> = (import.meta.hot?.data.surfaces as WeakMap<HTMLElement, WorldSurface> | undefined) ?? new WeakMap()
+const sides: WeakMap<HTMLElement, WorldBoard> = (import.meta.hot?.data.sides as WeakMap<HTMLElement, WorldBoard> | undefined) ?? new WeakMap()
+if (import.meta.hot) Object.assign(import.meta.hot.data, { surfaces, sides })
 
 /** The surface of the board around `inside`. Its canvas is in the board's markup. */
 export function boardSurface(inside: HTMLElement): WorldSurface {

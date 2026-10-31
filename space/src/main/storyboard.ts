@@ -1,3 +1,4 @@
+import { linkedOverrides, linkedTip, type Linkable, type NodeFollows, type TipLink, type WorldPoints } from '@shared/world-links'
 import type { SnapshotRenderer } from './snapshot'
 
 /**
@@ -26,6 +27,8 @@ export interface StoryboardStill {
   id: string
   url: string | null
   tick: number | null
+  /** Worlds: the published points in this picture, from the nominal rect's top-left. */
+  points?: Record<string, [number, number, boolean]>
 }
 
 export interface StoryboardInput {
@@ -68,6 +71,19 @@ function labelNode(text: string, x: number, y: number, scale: number, index: num
     text: text.replace(/[*$]/g, ''),
     style: { fontSize: `${13 / scale}px`, color: 'var(--ls-muted)', whiteSpace: 'pre', lineHeight: '1.2' }
   }
+}
+
+/** A frame's look with its linked items placed from the points of that frame's stills. */
+function linkedPlayback(input: StoryboardInput, frame: StoryboardFrame, index: number): { overrides: Array<[string, unknown]>; tips: unknown[] } {
+  const nodes = input.nodes as Array<{ id: string; kind: string; x: number; y: number; follows?: NodeFollows }>
+  const points: WorldPoints = {}
+  for (const still of input.stills ?? []) {
+    if (still.frame !== index || !still.points) continue
+    const world = nodes.find((node) => node.id === still.id)
+    if (!world) continue
+    points[still.id] = Object.fromEntries(Object.entries(still.points).map(([name, p]) => [name, [p[0] + world.x, p[1] + world.y, p[2]]]))
+  }
+  return { overrides: linkedOverrides(nodes, frame.overrides as Array<[string, Linkable]>, points), tips: (frame.tips as Array<TipLink>).map((tip) => linkedTip(tip, points)) }
 }
 
 export async function renderStoryboard(
@@ -113,7 +129,7 @@ export async function renderStoryboard(
         top: Math.floor(index / columns) * (shotH + GAP),
         nodes: [...frame.inks, labelNode(`${index + 1}. ${frame.label}`, rect.x + 4 / scale, rect.y - labelBoard + 4 / scale, scale, index)],
         ...(stillsOf.has(index) ? { stills: stillsOf.get(index) } : {}),
-        playback: { overrides: frame.overrides, tips: frame.tips },
+        playback: linkedPlayback(input, frame, index),
         // Each frame marks the learner's view and its hidden parts at its own moment (the camera can move).
         marks: [
           { kind: 'view' as const, rect: frame.view, tag: "learner's view" },

@@ -24,6 +24,7 @@ import { sceneAt, type FramesLiveItem, type ScenePlace } from '../live/run'
 import { runEditTool } from './edits'
 import { trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
+import { linkedOverrides, linkedTip } from '@shared/world-links'
 import { measureSceneTexts } from '../live/measure'
 import { sceneHost } from '../live/host'
 import { sceneOf } from './placement'
@@ -337,13 +338,16 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
   const grid = params.grid ? ([100, 200, 500, 1000, 2000, 5000].find((pitch) => pitch * scale >= 40) ?? 10000) : 0
   // During a live scene: the moment the learner sees now (the scene's look of its nodes, ink that exists only now, ghosts).
   const live = scenePlayer.snapshot()
+  // Items that follow a point of a world show where they are now.
+  const linked = linkedOverrides(state.nodes.filter(isKnown), live ? [...live.frame.overrides] : [], board.worldPoints())
   return {
     kind: 'plan',
     board: path,
     nodes: (live ? [...state.nodes, ...live.frame.ghosts, ...(live.frame.inks ?? [])] : state.nodes) as unknown[],
+    ...(linked.length && !live ? { playback: { overrides: linked, tips: [] } } : {}),
     ...(live
       ? {
-          playback: { overrides: [...live.frame.overrides], tips: [...live.frame.tips] },
+          playback: { overrides: linked, tips: live.frame.tips.map((tip) => linkedTip(tip, board.worldPoints())) },
           playing: { scene: live.status.scene ?? '', name: live.status.name, t: live.status.t, duration: live.status.duration, step: live.status.step, paused: live.status.paused }
         }
       : {}),
@@ -391,7 +395,7 @@ async function liveStillsOf(params: AgentMethods['liveStills']['params']): Promi
   ])
   const board = onBoard.map(({ id, frame }) => {
     const still = now.get(id)
-    return { frame, id, url: still?.url ?? null, tick: still?.tick ?? null }
+    return { frame, id, url: still?.url ?? null, tick: still?.tick ?? null, ...(still?.points ? { points: still.points } : {}) }
   })
   return { stills: [...scene, ...board] }
 }

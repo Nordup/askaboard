@@ -54,7 +54,7 @@ const NO_SCENE: SceneView = { t: 0, playing: false, active: false, ended: true, 
  * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`.
  */
 async function withStepHost<T>(
-  node: Pick<LiveNode, 'mode' | 'code' | 'name' | 'params'>,
+  node: Pick<LiveNode, 'mode' | 'code' | 'name' | 'params'> & Partial<Pick<LiveNode, 'id' | 'data'>>,
   size: CanvasSize,
   from: number,
   timeline: LiveTimeline | null,
@@ -73,7 +73,7 @@ async function withStepHost<T>(
     }
     const host = createHost(
       node.mode,
-      { id: 'step', code: node.code, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
+      { id: node.id ?? 'step', code: node.code, data: node.data, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
       {
         onAlive: (_frames, tick) => progress(tick),
         onProgress: progress,
@@ -121,6 +121,8 @@ export interface LiveStill {
   url: string | null
   /** The tick the picture shows; null when there is none. */
   tick: number | null
+  /** Worlds: the published points in this picture, from the nominal rect's top-left. */
+  points?: Record<string, [number, number, boolean]>
 }
 
 /** Pictures of each item at its moments: one step host per item, from tick 0 forward. */
@@ -141,7 +143,7 @@ async function itemStills(item: LiveStillRequest, scale: number): Promise<LiveSt
   })
   return item.moments.map((moment) => {
     const frame = pictures.get(tickOf(moment.t))
-    return { frame: moment.frame, id: item.node.id, url: frame?.url ?? null, tick: frame ? frame.tick : null }
+    return { frame: moment.frame, id: item.node.id, url: frame?.url ?? null, tick: frame ? frame.tick : null, ...(frame?.points ? { points: frame.points } : {}) }
   })
 }
 

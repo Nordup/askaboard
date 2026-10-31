@@ -2,6 +2,7 @@ import { isContent, isInk, isLive, newItemId, type BoardNode, type ContentNode, 
 import type { MomentsFailure } from '@shared/frames'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneItem, SceneResult } from '@shared/live-scene'
 import { sceneSteps } from '@shared/live-scene'
+import { renamedFollows, type NodeFollows } from '@shared/world-links'
 import type { BoardHandle } from '../board/Board'
 import type { NodeOverride, PlaybackTip } from '../board/playback'
 import type { InkGroupTracker } from '../agent/groups'
@@ -917,11 +918,15 @@ function renameNodes(compiled: CompiledScene, map: ReadonlyMap<string, string>):
   const r = (id: string): string => map.get(id) ?? id
   const node = <T extends BoardNode>(entry: T): T => {
     const parent = (entry as { parent?: unknown }).parent
-    return { ...entry, id: r(entry.id), ...(typeof parent === 'string' ? { parent: r(parent) } : {}) }
+    const follows = (entry as { follows?: NodeFollows }).follows
+    return { ...entry, id: r(entry.id), ...(typeof parent === 'string' ? { parent: r(parent) } : {}), ...(follows ? { follows: renamedFollows(follows, r) } : {}) }
   }
+  const followed = <T extends { follows?: { world: number | string; point: string } }>(action: T): T => (typeof action.follows?.world === 'string' ? { ...action, follows: { ...action.follows, world: r(action.follows.world) } } : action)
   compiled.next = compiled.next.map(node)
   const play = compiled.play
   play.ghosts = play.ghosts.map(node)
+  play.camera = play.camera.map(followed)
+  play.pointer = play.pointer.map(followed)
   for (const object of play.objects) {
     object.targets = object.targets.map((target) => ({ ...target, nodeId: r(target.nodeId) }))
     if (object.records) object.records = object.records.map(r)
