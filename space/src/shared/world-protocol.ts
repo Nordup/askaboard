@@ -51,6 +51,38 @@ export interface WorldPlacement extends WorldKey {
   shown: boolean
 }
 
+/** A point kept on a part: `local` in the space of the part's object. It shows in a picture's points as `pin:<id>`. */
+export interface WorldPin {
+  id: string
+  part: string
+  local: [number, number, number]
+}
+
+/** A pointer event for a world. x and y are board points. */
+export interface WorldPointer {
+  kind: 'down' | 'move' | 'up' | 'cancel' | 'wheel' | 'enter' | 'leave'
+  x: number
+  y: number
+  /** As PointerEvent.buttons. */
+  buttons: number
+  /** 0..1. */
+  pressure: number
+  pointerType: string
+  /** Wheel only: as WheelEvent. */
+  deltaX?: number
+  deltaY?: number
+  shiftKey?: boolean
+  ctrlKey?: boolean
+  altKey?: boolean
+  metaKey?: boolean
+}
+
+/** A stroke of ink for a world. points: [x, y, pressure] in board points. */
+export interface WorldStroke {
+  id: string
+  points: Array<[number, number, number]>
+}
+
 export interface WorldStart extends WorldKey {
   code: string
   seed: number
@@ -66,6 +98,8 @@ export interface WorldStart extends WorldKey {
   colors: Record<string, string>
   /** A JSON value for the world's code: world.data. */
   data?: unknown
+  /** The world's pins at its start, so a replay keeps them. */
+  pins?: WorldPin[]
 }
 
 export type PageToWorld =
@@ -86,6 +120,15 @@ export type PageToWorld =
   | { type: 'advance'; key: WorldKey; to: number; capture: boolean; request: number }
   | { type: 'capture'; key: WorldKey; request: number }
   | { type: 'ping'; n: number }
+  /** A pointer event. Send it only while the world's last `subscribe` says pointer. */
+  | { type: 'pointer'; key: WorldKey; event: WorldPointer }
+  /** What is at a board point. The answer is `picked` with the same request. */
+  | { type: 'pick'; key: WorldKey; x: number; y: number; request: number }
+  | { type: 'pin'; key: WorldKey; pin: WorldPin }
+  | { type: 'unpin'; key: WorldKey; id: string }
+  /** A stroke, new or changed (the same id replaces it). Send it only while `subscribe` says ink. */
+  | { type: 'ink'; key: WorldKey; stroke: WorldStroke }
+  | { type: 'inkgone'; key: WorldKey; id: string }
 
 /** A still of one world, larger than its nominal rect when it needs to be. */
 export interface WorldStill {
@@ -130,3 +173,12 @@ export type WorldToPage =
   | { type: 'lost' }
   | { type: 'input'; key: WorldKey; mode: 'none' | 'enter' | 'direct' }
   | { type: 'report'; key: WorldKey; values: unknown }
+  /** The answer to `pick`. part: the nearest published ancestor. local: in the part's space. point: in world space. hit null: nothing there. */
+  | { type: 'picked'; key: WorldKey; request: number; hit: { part: string | null; local: [number, number, number]; point: [number, number, number] } | null }
+  /** Which input the world's code listens to now. Sent on a change. */
+  | { type: 'subscribe'; key: WorldKey; pointer: boolean; ink: boolean }
+  /**
+   * The world moved itself: board points from its placed rect, not saved. The worker already shows it in the next picture.
+   * Keep sending the placed rect in `view`: a placement holds no anchor. dx and dy move selection and follows only.
+   */
+  | { type: 'anchor'; key: WorldKey; dx: number; dy: number }

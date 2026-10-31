@@ -317,6 +317,15 @@ export const REALM = String.raw`
     set camera(c) { w.camera = c; },
     get time() { return w.tickMs / 1000; },
     get data() { return w.data; },
+    get strokes() { return w.strokes; },
+    /** The nearest hit at a board point: part, point, local, object, distance. Null when none. */
+    pick(x, y) { return pickAt(w, x, y); },
+    /** A board point on a plane, the floor by default. */
+    toWorld(x, y, plane) { return toWorld(w, x, y, plane); },
+    /** A world point on the board: x, y, visible. */
+    toBoard(point) { return toBoard(w, point); },
+    /** Move the whole world: its anchor to a board point. For long trips: nothing stretches, because the camera stays. */
+    anchor(x, y) { moveAnchor(w, x, y); },
     get look() { return w.look; },
     set look(v) { setLook(w, v); },
     get floor() { return w.floor; },
@@ -377,7 +386,8 @@ export const REALM = String.raw`
     const on = (type, fn) => {
       if (!w.events.has(type)) w.events.set(type, new Set());
       w.events.get(type).add(fn);
-      return () => w.events.get(type).delete(fn);
+      subscribe(w);
+      return () => { w.events.get(type).delete(fn); subscribe(w); };
     };
     const input = (mode) => {
       if (mode !== 'none' && mode !== 'enter' && mode !== 'direct') throw new Error('input(mode): mode is "none", "enter" or "direct"');
@@ -408,6 +418,11 @@ export const REALM = String.raw`
     announce(setting);
   };
 
+  const addPin = (w, pin) => {
+    w.pins.set(pin.id, { id: pin.id, part: pin.part, local: new THREE.Vector3().fromArray(pin.local), normal: null });
+    w.stale = true;
+  };
+
   const addWorld = (m) => {
     const id = idOf(m);
     if (worlds.has(id)) return;
@@ -423,12 +438,14 @@ export const REALM = String.raw`
       view: Object.assign({ t: 0, playing: false, active: false, ended: true, step: null }, m.scene),
       timeline: m.timeline || null,
       timers: new Map(), callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
+      pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
       placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false
     };
     if (w.view.step === undefined) w.view.step = null;
+    for (const pin of m.pins || []) addPin(w, pin);
     if (stepping) Object.assign(w.view, { t: from / hz, playing: true, active: true, ended: false });
     dressWorld(w);
     worlds.set(id, w);
@@ -448,7 +465,7 @@ export const REALM = String.raw`
     if (setting === w) setting = null;
     if (announced === w) announce(setting);
     if (w.reportTimer) nativeClearTimeout(w.reportTimer);
-    w.timers.clear(); w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear();
+    w.timers.clear(); w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear(); w.pins.clear(); w.strokes.length = 0;
     core = true;
     try { undressWorld(w); } finally { core = false; }
     surface.dirty = true;

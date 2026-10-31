@@ -82,7 +82,7 @@ export const VIEW = String.raw`
     for (let i = 0; i < probes.length; i += 3) box.expandByPoint(v.set(probes[i], probes[i + 1], probes[i + 2]));
     if (box.isEmpty()) { w.reach = null; return; }
     const floor = floorOn(w);
-    if (floor && !w.floorBuilt) buildFloor(w, box);
+    if (floor) fitFloor(w, box);
     nominalCamera(w);
     const c = w.camera, r = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity, full: false };
     let seen = true;
@@ -127,7 +127,7 @@ export const VIEW = String.raw`
     const k = Math.max(1e-4, Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])));
     const a = m[0] / k, b = m[1] / k, c = m[2] / k, d = m[3] / k;
     const plain = Math.abs(a - 1) < 1e-4 && Math.abs(d - 1) < 1e-4 && Math.abs(b) < 1e-4 && Math.abs(c) < 1e-4;
-    const bx = p.x + p.w / 2 + m[4], by = p.y + p.h / 2 + m[5];
+    const bx = p.x + p.w / 2 + m[4] + w.moved.x, by = p.y + p.h / 2 + m[5] + w.moved.y;
     let cx = ((bx - cam.x) * cam.zoom + surface.margin) * dpr;
     let cy = ((by - cam.y) * cam.zoom + surface.margin) * dpr;
     // A crop has whole pixels from the anchor, so a whole anchor keeps the output sharp in a pan.

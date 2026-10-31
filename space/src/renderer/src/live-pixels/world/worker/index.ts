@@ -4,6 +4,7 @@ import { TICK_HZ } from '../../clock'
 import { LOOK } from './look'
 import { REALM } from './realm'
 import { SURFACE } from './surface'
+import { TOUCH } from './touch'
 import { VIEW } from './view'
 
 /**
@@ -17,6 +18,7 @@ import { VIEW } from './view'
  * - realm.ts: time, Math.random and timers per world, the clock, the API that
  *   a world's code gets.
  * - view.ts: what a world really draws (reach), the crop, the render targets.
+ * - touch.ts: pick, pins, ink, the hand's events, the anchor.
  * - look.ts: the film look of one world into its private output.
  * - surface.ts: compositing, pictures, the frame loop, the messages.
  */
@@ -56,6 +58,7 @@ function source(): string {
   const compileBody = ${programBody.toString()};
 ${REALM}
 ${VIEW}
+${TOUCH}
 ${LOOK}
 ${SURFACE}
 })();

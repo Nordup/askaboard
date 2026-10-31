@@ -101,34 +101,48 @@ export const SURFACE = String.raw`
   };
 
   /**
-   * Where the published points of w are now, in nominal board points from the anchor, with a flag for each: shown or not.
+   * Where the published points and the pins of w are now, in nominal board points from the anchor, with a flag for each: shown or not.
    * A world code error here stops that world.
    */
   const measurePoints = (w) => {
     const list = [];
-    if (!w.parts.size) return list;
-    const c = w.camera, v = new THREE.Vector3();
+    if (!w.parts.size && !w.pins.size) return list;
+    const c = w.camera, v = new THREE.Vector3(), view = new THREE.Vector3();
     nominalCamera(w);
     w.scene.updateMatrixWorld();
-    for (const [name, part] of w.parts) {
-      const t = part.target;
-      if (t === null || t === undefined) continue;
-      let seen = true;
-      if (t.isObject3D) {
-        t.getWorldPosition(v);
-        for (let o = t; o; o = o.parent) if (!o.visible) seen = false;
-      } else if (t.isVector3) v.copy(t).applyMatrix4(w.root.matrixWorld);
-      else {
-        const at = inside(w, () => { try { return t(); } catch (e) { fail(w, e); return null; } });
-        if (!at) continue;
-        v.set(at[0], at[1], at[2]).applyMatrix4(w.root.matrixWorld);
-      }
-      const view = v.clone().applyMatrix4(c.matrixWorldInverse);
+    // v is a world point.
+    const add = (name, shown) => {
+      let seen = shown;
+      view.copy(v).applyMatrix4(c.matrixWorldInverse);
       if (c.isPerspectiveCamera && view.z > -c.near) seen = false;
       v.applyMatrix4(c.matrixWorldInverse).applyMatrix4(c.projectionMatrix);
       const x = (v.x * w.w) / 2, y = (-v.y * w.h) / 2, r = w.reach;
       if (!r || (!r.full && (x < r.l || x > r.r || y < r.t || y > r.b))) seen = false;
       list.push([name, x, y, seen]);
+    };
+    const chain = (t) => { for (let o = t; o; o = o.parent) if (!o.visible) return false; return true; };
+    for (const [name, part] of w.parts) {
+      const t = part.target;
+      if (t === null || t === undefined) continue;
+      if (t.isObject3D) { t.getWorldPosition(v); add(name, chain(t)); }
+      else if (t.isVector3) { v.copy(t).applyMatrix4(w.root.matrixWorld); add(name, true); }
+      else {
+        const at = inside(w, () => { try { return t(); } catch (e) { fail(w, e); return null; } });
+        if (!at) continue;
+        v.set(at[0], at[1], at[2]).applyMatrix4(w.root.matrixWorld);
+        add(name, true);
+      }
+    }
+    // A pin keeps its place on the part, and it hides when its surface faces away from the camera.
+    const normal = new THREE.Vector3(), eye = new THREE.Vector3();
+    for (const pin of w.pins.values()) {
+      const part = w.parts.get(pin.part), t = part && part.target;
+      if (!t || !t.isObject3D) continue;
+      v.copy(pin.local).applyMatrix4(t.matrixWorld);
+      normal.copy(pinNormal(pin, t)).transformDirection(t.matrixWorld);
+      if (c.isPerspectiveCamera) eye.setFromMatrixPosition(c.matrixWorld).sub(v);
+      else c.getWorldDirection(eye).negate();
+      add('pin:' + pin.id, chain(t) && normal.dot(eye) > 0);
     }
     return list;
   };
@@ -137,8 +151,8 @@ export const SURFACE = String.raw`
     const points = {};
     for (const w of worlds.values()) {
       const p = w.placement;
-      if (!p || !w.parts.size || w.failed || !(w.setUp || w.ran)) continue;
-      const m = p.matrix, cx = p.x + p.w / 2 + m[4], cy = p.y + p.h / 2 + m[5], own = {};
+      if (!p || (!w.parts.size && !w.pins.size) || w.failed || !(w.setUp || w.ran)) continue;
+      const m = p.matrix, cx = p.x + p.w / 2 + m[4] + w.moved.x, cy = p.y + p.h / 2 + m[5] + w.moved.y, own = {};
       // A world that waits for its turn shows its last output, so its points stay those of that output.
       for (const [name, x, y, seen] of w.drawn ? w.shownPoints : measurePoints(w)) own[name] = [cx + m[0] * x + m[2] * y, cy + m[1] * x + m[3] * y, seen && p.shown];
       points[w.key.node] = own;
@@ -378,6 +392,7 @@ export const SURFACE = String.raw`
       const w = m.key ? worlds.get(idOf(m.key)) : null;
       if (!w) {
         if (m.type === 'advance' || m.type === 'capture') post({ type: 'frame', key: m.key, request: m.request, tick: -1, still: { blob: null, x: 0, y: 0, w: 0, h: 0 } });
+        if (m.type === 'pick') post({ type: 'picked', key: m.key, request: m.request, hit: null });
         return;
       }
       if (m.type === 'clock') follow(w, m);
@@ -402,7 +417,13 @@ export const SURFACE = String.raw`
         w.w = m.w; w.h = m.h; w.stale = true;
         if (resized) emit(w, 'resize', { w: w.w, h: w.h, dpr: surface.dpr });
         if (held(w) && w.running) redraw(w);
-      } else if (m.type === 'advance') {
+      } else if (m.type === 'pointer') pointerEvent(w, m.event);
+      else if (m.type === 'pick') post({ type: 'picked', key: w.key, request: m.request, hit: w.failed ? null : pickedOf(pickAt(w, m.x, m.y)) });
+      else if (m.type === 'pin') addPin(w, m.pin);
+      else if (m.type === 'unpin') { w.pins.delete(m.id); w.stale = true; }
+      else if (m.type === 'ink') addStroke(w, m.stroke);
+      else if (m.type === 'inkgone') dropStroke(w, m.id);
+      else if (m.type === 'advance') {
         advance(w, m.request, m.to | 0, !!m.capture).catch((e) => fail(w, e));
       } else if (m.type === 'capture') {
         if (w.failed) { post({ type: 'frame', key: w.key, request: m.request, tick: w.tick, still: emptyStill(w) }); return; }

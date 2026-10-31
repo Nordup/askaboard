@@ -275,11 +275,22 @@ export const LOOK = String.raw`
   };
   const floorOn = (w) => !!w.floor;
 
-  /** Fit the floor and the key light to the world, as film.js does once. */
-  const buildFloor = (w, box) => {
+  /**
+   * Fit the floor and the key light to the world. film.js does this once. A world here can grow or travel after that,
+   * so the fit follows: it holds the height of the floor, and it never shrinks.
+   */
+  const fitFloor = (w, box) => {
+    if (!w.floorBuilt) return buildFloor(w, box);
+    const fit = w.floorFit, c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() * 0.5;
+    if (c.distanceTo(fit.c) + r <= fit.r) return;
+    const grown = box.clone().expandByPoint(fit.c.clone().addScalar(fit.r)).expandByPoint(fit.c.clone().subScalar(fit.r));
+    buildFloor(w, grown, w.floorY);
+  };
+  const buildFloor = (w, box, keepY) => {
     const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() * 0.5;
     const given = typeof w.floor === 'object' && typeof w.floor.y === 'number';
-    const y = given ? w.floor.y : box.min.y - (box.max.y - box.min.y) * 0.1;
+    const y = keepY !== undefined ? keepY : given ? w.floor.y : box.min.y - (box.max.y - box.min.y) * 0.1;
+    w.floorFit = { c, r };
     w.floorGroup.position.set(c.x, y, c.z);
     w.floorGroup.scale.setScalar(r * 1.6);
     w.keyLight.target.position.copy(c);
