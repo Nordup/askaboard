@@ -8,7 +8,8 @@
  * covers what the surface needs, it does not render that world.
  *
  * On demand. With nothing to tick and no change, nothing renders. The next
- * picture goes only after "presented", so a slow page gets fewer pictures.
+ * frame starts on "presented", when the GPU finished the last one, so a slow
+ * page gets fewer pictures, and a world never fills the GPU ahead of the page.
  */
 export const SURFACE = String.raw`
   let THREE = null, renderer = null, canvas = null, compositeMat = null, compositeScene = null, compositeCam = null;
@@ -259,7 +260,6 @@ export const SURFACE = String.raw`
       gpuBusy = false;
       gpu.ms = realNow() - start;
       steer(gpu.ms);
-      post({ type: 'cost', ms: gpu.ms, quality });
       kick();
     };
     nativeSetTimeout(poll, 1);

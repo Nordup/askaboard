@@ -12,6 +12,9 @@
  *   fades by its distance from the world, in world space.
  * - Shared passes take pixels and not shares of the target, so the size of a
  *   target never changes the picture.
+ * - Bloom is a pyramid and not UnrealBloomPass (measured: 37 ms to 12 ms per
+ *   picture for all changes together on a MacBook Air). Its radii are in board points.
+ * - The scene renders only the inner crop, and the rest of the crop holds only glow.
  * - The shadow on the floor has its own map (renderFloorShadow). Its blur grows
  *   with the height of what casts it, so the shadow is sharp at contact and soft
  *   far from it. The light's shadow map stays for objects on each other.
@@ -341,7 +344,9 @@ export const LOOK = String.raw`
       downMat.uniforms.px.value.set(1 / p.down[i - 1].width, 1 / p.down[i - 1].height);
       pass(downMat, p.down[i]);
     }
-    for (let i = top; i >= lo; i--) {
+    // Level 2 or lower at any zoom: one bilinear step up from a far level would show as steps in the glow.
+    const bottom = Math.min(lo, 2);
+    for (let i = top; i >= bottom; i--) {
       const u = upMat.uniforms;
       u.tD.value = p.down[i].texture;
       u.weight.value = weights[i];
@@ -349,7 +354,7 @@ export const LOOK = String.raw`
       if (i < top) { u.tU.value = p.up[i + 1].texture; u.px.value.set(1 / p.up[i + 1].width, 1 / p.up[i + 1].height); }
       pass(upMat, p.up[i]);
     }
-    return p.up[lo].texture;
+    return p.up[bottom].texture;
   };
 
   /** The floor's shadow: only casters, from under the floor. A world with no casters clears it. */

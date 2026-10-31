@@ -14,7 +14,7 @@
  * render target never changes the scale or the perspective.
  */
 export const VIEW = String.raw`
-  /** Steps of a crop and of a render target, in pixels. The last bloom mip is 1/32, so its texels stay fixed on the world too. */
+  /** Steps of a crop and of a render target, in pixels. Bloom levels to 1/64 stay fixed on the world too. */
   const GRID = 64;
   /** Room for glow in board points. */
   const GLOW_ROOM = 224;
