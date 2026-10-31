@@ -17,7 +17,7 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | Path | What | Status |
 | --- | --- | --- |
 | `space/` | Learning Space: Electron canvas app with no AI inside; agents connect over MCP | **Main product.** Docs in `docs/learning-space/` |
-| `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/learning-space-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension | Active, separate repo |
+| `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/learning-space-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension. Keep it a Codex plugin: no `plugin.json` or `mcp.json` at the plugin root (decision I30) | Active, separate repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
 | `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved |

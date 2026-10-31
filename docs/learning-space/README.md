@@ -21,7 +21,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | One editable document: ink, frames, text with math, SVG, images; HTML ⇄ nodes | Done |
 | Agent tools in Paper's style, ink groups, relative placement, agent ink, focus | Done |
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
-| Public plugin repo, stdio relay, plugin-first Connect popover | Done |
+| Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
 | One shared design system for menus | Done |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
@@ -41,6 +41,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Scene record and reading panel (2026-10-29): a history per board, reads by scene and step after a restart (B16 step 2, B20); the reading panel for one scene and the scene pill (B19), as a teleprompter with a simpler menu (B21) | Done, two Sol reviews: [`drafts/record-ui-2026-10-29/`](drafts/record-ui-2026-10-29/README.md) (screenshots local only). Replay after a restart re-runs the scene (step 3, B22, done 2026-10-29) |
 | Voice explainer experiment (2026-10-29/30): the ChatGPT voice conducts the steps (hold mode, I26), then one new thing per turn (I27) | Failed in the founder's tests and reverted; **parked** (I28). Voice asks, the agent makes a complete scene, the learner takes their time. The agent texts went back to `c9285e0`; the step controls (next, pause, replay from any step, cut) stay. What we learned and how to try again in a few months: [`voice-test-2026-10-29.md`](voice-test-2026-10-29.md) |
 | Competitor and strategy check (2026-10-29) | Clicky (heyclicky.com) launched real-time graphics for learning on the screen: [`competitors.md`](competitors.md). The plan stays (decision P15): the core loop is the agent's explanation with animations while the learner talks with it. Screen overlay, phone photos, a continuous tutor and other devices are later layers ([`strategy.md`](strategy.md), "After Clicky") |
+| Tool text reaches Codex whole (2026-10-31): the plugin stopped being an Agent Plugin, which Codex cut at 1,000 bytes (I30, plugin 0.1.2); unknown scene options are errors (B24); batch G closed with no change to the guide (T33) | Done. Tested through the plugin with the app's Codex binary. Not yet seen in a real voice session, and the board news hook in Codex is not confirmed |
 | One world on the board (P18) | Planned, step 1 next: [`one-world-plan.md`](one-world-plan.md). The goal is P16. Three steps: lift the ink steer, open the box, one surface with no frames. It replaces the scene library track (W12). Study and proof code: [`drafts/library-landscape-2026-10-31/`](drafts/library-landscape-2026-10-31/README.md). Saved results: [`design-images/2026-10-31-frameless-proofs/`](design-images/2026-10-31-frameless-proofs/) |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
