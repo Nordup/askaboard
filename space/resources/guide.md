@@ -4,7 +4,7 @@
 <!-- topic: model -->
 <!-- summary: The board model: item kinds, ids, ink groups, bounds and positions. -->
 
-- The board is a tree of items: frame (a box that holds children), text, svg, image<!-- code-items -->, live (program, shader and canvas items)<!-- /code-items --> and ink (pen strokes).
+- The board is a tree of items: frame (a box that holds children), text, svg, image<!-- code-items -->, world<!-- /code-items --> and ink (pen strokes).
 - Ink is the learner's handwriting (author "learner") or yours. Ink inside a frame moves with the frame.
 - Every item has a stable id. list_items returns ids, kinds, names and world bounds as "x,y w×h".
 - Ink groups: strokes come in groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever an item id does: board.node("g3") in a scene, the part of list_items and get_screenshot, and the id of get_item.
@@ -129,7 +129,7 @@ await draw(stage.wave)
 await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter waves
 ```
 
-**Objects** are invisible until an action shows them (draw, fillIn, fadeIn, tween draw). An object that no action shows appears when it is made. Every object has `.bounds` {x, y, width, height} and `.center` [x, y] (both at the current time), `.name` and `.kind`<!-- code-items -->; live items also have `.params`<!-- /code-items -->.
+**Objects** are invisible until an action shows them (draw, fillIn, fadeIn, tween draw). An object that no action shows appears when it is made. Every object has `.bounds` {x, y, width, height} and `.center` [x, y] (both at the current time), `.name` and `.kind`<!-- code-items -->; worlds also have `.point`, `.value` and `.part`<!-- /code-items -->.
 - `stroke(points, o)`: ink through [[x, y] or [x, y, pressure 0..1], …]; a list of such lists makes several strokes.
 - `line(x1, y1, x2, y2, o)`, `arrow(x1, y1, x2, y2, o)` (o.head: head length).
 - `circle(cx, cy, r, o)`, `ellipse(cx, cy, rx, ry, o)`, `rect(x, y, w, h, o)` (o.radius: corner radius), `polygon(points, o)` (o.closed: false for an open polyline), `path(d, o)` (any SVG path "d").
@@ -139,10 +139,7 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - `text(str, o)`: typeset text, as a text item, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
 - `label(target, text, o)`: text placed next to target, clear of the scene's objects, the board's items and the view's edge. target: an object, a point [x, y], or a segment [[x1, y1], [x2, y2]]. o.at: a point on an object ([x, y], or a share 0..1 along its outline), or a share along the segment (default 0.5). o.side: "auto" (default), "center", above, below, left, right, above-left, above-right, below-left, below-right. o.gap (default 10). The label is handwritten; o.tex: true typesets it as maths, o.text: true as text. Other options as write or tex. It follows its target as the target moves or changes.
 - `around(target, o)`: a hand-drawn ink mark around an object, a point [x, y] or a board rect {x, y, width, height}, such as a part of a picture. o.shape: "circle" (default), "box" or "underline"; o.pad (default 8 points plus 8% of the target's larger side; 20 points around a point).<!-- code-items -->
-- `shader(glsl, o)`, `canvas(src, o)`: live pixels, drawn by the board at the display's rate: a GLSL fragment shader, or a 2D canvas program. o.at (top-left) or o.center; o.size [w, h] in board points (default [320, 200]); o.params {name: number}, animated with `tween(obj, {params: {name: n}}, s)` or given as values. After the scene, the item keeps its final params. write_scene compiles every program before playback: a compile error is a program error at the line of the shader() or canvas() call, and the log counts lines inside your glsl or src.
-  - `glsl`: GLSL ES 3.0 in Shadertoy form, `void mainImage(out vec4 fragColor, in vec2 fragCoord)`; fragCoord is in device pixels from the bottom-left, and fragColor.a 0 is transparent. Declared for you: `uniform float iTime` (item time in seconds: the scene's time while a scene plays the item, so it holds on pause; after the scene it runs on from there), `uniform vec3 iResolution` (pixel width, height, 1), `uniform int iFrame`, one `uniform float <name>` per param (names that are GLSL identifiers), and the board colours `const vec3 ls_text, ls_muted, ls_accent, ls_good, ls_bad, ls_warn, ls_card, ls_card2, ls_border, ls_bg`. A shader with its own `void main()` and `out vec4` runs as it is.
-  - `src`: the body of `function (ctx, t, w, h, params, dt)`, called on each frame (no DOM, no network). ctx is a 2D context scaled to board points; t is item time in seconds (as iTime); w, h is the size in points; params holds the current params; dt is the item time since the last call (0 while the item is held). `this` is one object kept between frames, for state. The global `colors` holds the board colours as CSS strings: text, muted, accent, good, bad, warn, card, card2, border, bg. The canvas is not cleared between frames.
-- `program(src, o)`: a live item that runs your own JavaScript program with its canvas: 2D, WebGL 2, WebGPU, three.js, any library from a URL, the learner's pointer, the scene clock. Options as shader and canvas. Topic "scene-code" has its globals.<!-- /code-items -->
+- `world(src, o)`: anything you build with code: plain three.js that sits on the board with no frame and casts a soft shadow on it. It links to the board through `.point(name)`, `.value(name)` and `.part(name)`. Read topic "scene-world" before your first world.<!-- /code-items -->
 <!-- html -->- `html(markup, o)`: board material from HTML (topic "html"): frames with layout, text, lists, math, inline SVG and pictures, made of the same items as the rest of the board. It returns one item, its root item. o.at (top-left) or o.center; without them, an empty place (topic "placement"). o.into, o.index and o.mode put it into a frame or in place of an item (topic "placement"). o.name, o.opacity. `.bounds` is exact at once. `obj.parts` lists the root's children as objects, and `obj.part(index or layer-name)` returns one. A part can be drawn, faded, erased, edited, marked and labelled, and it moves with its material.
 <!-- /html -->- `image(src, o)`: a picture from an https:// or data: URL, or from a file path in the learning folder (topic "images").
 - `copy(item, o)`: a copy of any object or board item (with everything inside it), as an object of this scene. o.at (top-left), o.center, o.by ([dx, dy]); without them, an empty place beside the original (or near o.near). o.name. A copy of ink is ink, a copy of material is material, and a copy of a group is a group.
@@ -153,13 +150,13 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 **Options** (o) of shapes and ink: color (a colour name or token from topic "tokens", or any CSS colour; default text; a value that is not a colour draws in the text colour; "none" draws nothing, for fill and hatch too), width (default 3; a filled shape with width 0 or color "none" has no outline), opacity, dash (true or [8, 6]), fill (a colour, or a list of colours for a top-to-bottom gradient), fillOpacity, hatch (a colour: diagonal hatching), pen (true: the shape is drawn as a pen draws, slightly uneven; with a fill, the fill fades in once the outline is drawn), jitter (wobble of ink, 0..1), tool ("highlighter"), name (the item's name on the board and in board.node).
 
 **Actions** take a duration in seconds or {dur, ease}; ease is linear, in, out, inOut or smooth. Each returns something to `await`.
-- `draw(obj, s)`: a pen draws it: ink along its strokes, shapes along their outline and then their fill<!-- code-items -->, text and live items wipe in<!-- /code-items: , text wipes in --><!-- html -->; html material fades its root in, then shows its parts one after another, text wiping in and svg outlines drawn<!-- /html -->. Default: the speed of a hand.
+- `draw(obj, s)`: a pen draws it: ink along its strokes, shapes along their outline and then their fill<!-- code-items -->, text and worlds wipe in<!-- /code-items: , text wipes in --><!-- html -->; html material fades its root in, then shows its parts one after another, text wiping in and svg outlines drawn<!-- /html -->. Default: the speed of a hand.
 - `fillIn(obj, s)`: the fill appears (and the outline, if not drawn yet). Default 0.6.
 - `fadeIn(obj, s)`, `fadeOut(obj, s)`: default 0.5. An object faded out is removed from the board at the end.
 - `erase(obj, s)`: undraws it, then removes it from the board. On board.node(…) it removes a whole item or ink group (the learner's too) with everything inside it; `fadeOut(obj, 0)` removes one at once.
 - `move(obj, {to: an object or [x, y]} or {by: [dx, dy]}, s)`: to puts its centre there; a function here is read once, when the move starts. Default 0.8. `move(obj, {into: frame, index}, s)`: the item becomes a child of a frame (an item id or name, <!-- html -->board.node(…), or html material) and glides there: in a flex frame it joins the flow at index (default: last); in a free frame it keeps<!-- /html: or board.node(…)) and glides there: it keeps --> its place (or goes where to or by says).
 - `edit(item, {text, style}, s)`: changes an item's text (text items: markup with **bold**, *italic*, $math$; text() and tex() objects) and its style (a CSS object<!-- html --> as in html()<!-- /html -->, numbers are px; null removes a key) from now. Text changes at once; colours, sizes, opacity and other lengths glide over s (default 0.5 with style, 0 for text only). <!-- html -->On board items, html material and parts, every style key of the HTML subset works; on<!-- /html: On --> the scene's own shapes and ink, color and opacity (and fontSize for text()) change as tween changes them.
-- `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1),<!-- code-items --> params (live items),<!-- /code-items --> or any numeric option. `tween(value, n, s)` for values. Default 0.8.
+- `tween(obj, props, s)`: x, y (offset from where it was made), scale, rotate (degrees), opacity, color, draw (share drawn, 0..1),<!-- code-items --> params (worlds),<!-- /code-items --> or any numeric option. `tween(value, n, s)` for values. Default 0.8.
 - `camera({fit, to, zoom, pad}, s)`: glides the learner's view (topic "view"). Default 1.
 - `point(target, s)`: a pointer glides to an object's centre or a point [x, y] and rests there; given a function (() => bob), it follows what the function returns until the next point(); `point(null, s)` hides it. Default 0.6.
 - `say(text, o)`: a line of text that the app shows to the learner from now, at a reading pace, in a panel over the board that the learner can move; nothing is spoken. It lasts as long as reading it takes: 3.5 words per second plus 0.3 s, at least 1 s. `await say(…)` waits until it ends. Marks in the text, `[[name]]`, are not shown; each stands for the moment the reader reaches the word after it, at the same pace.
@@ -176,12 +173,12 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 **Playback and tools.**
 - Drafts: write_scene runs the program and keeps the result as a draft under its name, which the learner does not see. play_scene `start` puts the draft on the board. To change a scene on the board, write it again under its name and start it: it is replaced in place, as one undo step. The new version does not need to erase the items of the old version or of later scenes.
 - Queue: play_scene `start` with `when: "queue"` (default) starts after the scenes that play or wait, back to back with no gap and no jump between them; `"now"` starts at once. It returns at once, with `starts_in_s` and `ends_in_s`.
-- preview_scene returns one image of a draft or of a scene on the board: at the end (default), at the end of a step, at a time, at a list of moments, or at every step (`at: "steps"`); framed on the scene, the learner's view, a region, or a close-up of items<!-- code-items -->; shader, canvas and program() items show as they are at that moment, and the same preview gives the same picture when the program uses no network, input or real time<!-- /code-items -->. It draws nothing and leaves the stage as it was.
+- preview_scene returns one image of a draft or of a scene on the board: at the end (default), at the end of a step, at a time, at a list of moments, or at every step (`at: "steps"`); framed on the scene, the learner's view, a region, or a close-up of items<!-- code-items -->; worlds show as they are at that moment, and the same preview gives the same picture when a world uses no network, input or real time<!-- /code-items -->. It draws nothing and leaves the stage as it was.
 - An unknown option is ignored.
 - Errors: a program error leaves the stage as it was before the program. An error returns at once, also from a function that runs in parallel or that moves an object. A program that waits on something that never happens fails with an error. A program has no time limit: one that never ends runs until play_scene `cancel`, and its call then returns "Cancelled" with nothing drawn.
 - play_scene actions: start (a draft, by name); status; pause; resume; next (jump to the next step and play on); stop (jump to the end state); clear_queue (drop the waiting scenes, their items and their programs); cancel (end programs that are still running; stop and clear_queue do too); replay (a scene that has played, or from a step: its items show as they were then and play forward); cut (the playing scene, after a step or now: the rest is not drawn, and the board and the stage keep its state at the cut); reset (a new, empty stage). start, cut and clear_queue are each one undo step for the learner.
 
-`console.log(…)` goes to the result's log. <!-- code-items -->Text and live items keep<!-- /code-items: Text keeps --> no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale only while the scene plays.<!-- code-items -->
+`console.log(…)` goes to the result's log. <!-- code-items -->Text and worlds keep<!-- /code-items: Text keeps --> no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale only while the scene plays.<!-- code-items -->
 
 ## Scene files and libraries
 <!-- topic: scene-files -->
@@ -196,7 +193,7 @@ A scene program can be a file in `boards/scenes/` of the learning folder, and fi
 
 **Modules.**
 - A file uses JavaScript module syntax: `export` functions, objects and values, and `import` them from other files: `import { pendulum } from "lib/pendulum.js"` (from the root of `boards/scenes/`) or `import { arrow } from "./arrows.js"` (from the file's own folder). Inline code can import files too.
-- Imports name files in `boards/scenes/` only: no packages and no URLs (a program() item loads libraries itself, topic "scene-code"). `import()` takes a literal path.
+- Imports name files in `boards/scenes/` only: no packages and no URLs (a world loads libraries itself, topic "scene-world"). `import()` takes a literal path.
 - The scene globals (draw, write, value, stage, board, …) work in every module, as in inline code. A component is a function that makes objects and acts on them, such as `export async function pendulum(at, length) { … }`. Top-level `await` works in the file that write_scene runs.
 
 **When the app reads the files.** Only at write_scene. A later edit of a file changes nothing on the board until you call write_scene again.
@@ -205,36 +202,59 @@ A scene program can be a file in `boards/scenes/` of the learning folder, and fi
 
 **Errors** name the file and the line, such as `lib/pendulum.js line 12: …`.
 
-## Program items (program())
-<!-- topic: scene-code -->
-<!-- summary: program(src, o): a live item that runs your own JavaScript and keeps running: three-dimensional worlds, fields, simulations, particles, and things the learner turns, drags or slides. Canvas, WebGL 2, WebGPU, three.js and any library; scene clock, params, steps, learner input, report(). -->
+## Worlds (world())
+<!-- topic: scene-world -->
+<!-- summary: world(src, o): everything you build with code: three-dimensional models, fields, simulations, and things the learner can touch. Plain three.js that sits on the board with no frame and links to labels, arrows and ink. Read it before your first world. -->
 
-A live item holds whatever code can make: a lit three-dimensional world, a field, a simulation, something the learner turns or drags. Its transparent pixels show the board, so what it shows can sit on the board with no visible frame. Anything outside its box is cut off, so give glows, reflections and labels room inside it.
+Creates a world: plain three.js that lives on the board itself. A world is how you build anything that needs code: a model with real light and material, a field, a fluid, particles, a simulation, a shader, a picture drawn by code, or something the learner turns or drags. Everything you know about three.js applies here, and any library works.
 
-`program(src, o)` in a scene makes a live item whose pixels come from your own program. Options as `canvas()`: o.at (top-left) or o.center, o.size [w, h] in board points (default [320, 200]), o.params {name: number}.
+A world has no frame. It sits on the board, casts a soft shadow on it, and can reach anywhere. You write only what is specific to the idea, because the app provides the renderer, the render loop, the camera, the light and the floor. Do not create a renderer or a canvas.
 
-**How it runs.** `src` is JavaScript that runs once when the item appears on the board and keeps running while the item exists. It owns its loop: `requestAnimationFrame(fn)` calls fn on the next display frame. Items of a scene that plays or waits run from the scene's start, in view or not; any other item runs only in the learner's view, stops 15 s after it leaves the view, and starts again from its current time when it returns. Top-level `await`, `import` lines and `import()` work. The worker has the browser's worker APIs (OffscreenCanvas, typed arrays, fetch, WebAssembly, Worker for more threads, `navigator.gpu` for WebGPU) and no DOM. The network is open: fetch and import work from any URL. The program cannot reach the app, the other items or the learning folder's files.
+```js
+const atom = world(`
+  const nucleus = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), world.look.glow("#ffb56b"))
+  world.add(nucleus)
+  publish("nucleus", nucleus)
+  world.frame(t => { nucleus.position.y = params.height * Math.sin(t) })
+`, { center: [0, 0], params: { height: 1 } })
 
-**Imports.** Served by the app, with no network: `three` (three.js 0.186.1), `three/webgpu`, `three/tsl`, `three/addons/…` (the same files as `three/examples/jsm/…`), and `ls/interact` (ready-made input code, topic "scene-interact"). Any other bare name loads from esm.sh (`import * as d3 from "d3"` loads https://esm.sh/d3); a full URL loads as it is.
+await draw(atom, 1.5)
+await label(atom.point("nucleus"), "the nucleus")
+await tween(atom.value("height"), 2, 3)
+```
 
-**Globals.**
-- `canvas`: the item's OffscreenCanvas: `canvas.getContext("2d" | "webgl2" | "webgpu")`. Its width and height are device pixels; the board sets them at the start and when the item's size on screen changes, then sends a "resize" event. canvas also has clientWidth and clientHeight (board points), getBoundingClientRect, style.cursor (the cursor over the item), setPointerCapture and addEventListener, so code written for a DOM canvas (three.js renderers and controls) takes canvas as its element. With three.js: `new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })`, `renderer.setClearColor(0x000000, 0)`, then `renderer.setPixelRatio(item.dpr)` and `renderer.setSize(item.w, item.h, false)`.
-- Transparency: the item's canvas starts transparent, and transparent pixels show the board under the item. A WebGL or three.js context stays transparent with `alpha: true` and a clear alpha of 0 (three.js: the setClearColor above, and no `scene.background`). A context made without alpha (three.js's default), a clear alpha of 1, a `scene.background` or a painted background covers the board in the item's whole box.
-- `item`: w and h (the size in board points), dpr (device pixels per board point), t (item time in seconds: scene.t while a scene plays the item, then running on in real time).
-- `params`: the item's params, one live object: its own values, or the values a scene's tween gives them at this moment.
-- `scene`: the clock of the scene that plays the item (the latest scene that made or changed it). `scene.t`: scene seconds; it stops while playback is paused and jumps when the scene seeks or restarts, so it stays in step with the scene's say() lines and steps. `scene.playing`, `scene.step` (the name of the last step() reached, or null), `scene.active` (a scene plays the item now), `scene.ended`. After the scene, t stays at its end, step at its last step, and ended is true. The board keeps the params' final values. While a scene plays the item, item.t, the frame loop, performance.now() and timers hold on a pause, and a seek back in time starts the program again.
-- `colors`: the board colours as CSS strings, as in canvas() (topic "scene").
-- `on(type, fn)`: the same as canvas.addEventListener; it returns a function that removes the listener. Types: "step" (e.name, e.previous; when scene.step changes, also by a seek), "resize" (e.w, e.h, e.dpr), "enter" and "leave" (input "enter"), and the input events below.
-- `input(mode)`: how the item takes the learner's pointer. "none" (the default): the pen draws on the item, and that ink becomes the item's child. "enter": the learner double-clicks the item (select tool) to give it the pointer, wheel and keys; Escape or a press outside the item gives them back to the board; a thin accent outline shows it meanwhile. "direct": the item always gets the pointer and the wheel over it; the pen does not draw there and the board does not pan there.
-- Input events, dispatched on canvas: pointerdown, pointermove, pointerup, pointercancel, pointerenter, pointerleave, click, dblclick, contextmenu, wheel, keydown, keyup. Their fields: type, offsetX, offsetY (board points inside the item), clientX, clientY, movementX, movementY, button, buttons, pointerId, pointerType, isPrimary, pressure, tiltX, tiltY, width, height, shiftKey, ctrlKey, altKey, metaKey, deltaX, deltaY, deltaZ, deltaMode, key, code, repeat, detail. The board does nothing with events the item gets.
-- `report(values)`: plain data (at most 4000 characters as JSON) that get_item shows as `report`; the latest call wins.
+**Usage:**
+- `src` runs once, when the world appears. `THREE` is already there, and `import` lines work: `three/addons/…` and `ls/interact` come from the app, and any other name comes from esm.sh, as in `import * as d3 from "d3"`. `fetch`, WebAssembly and `Worker` work too.
+- Options: `at` (top-left) or `center`; `size`, [w, h] in board points, default [480, 360]; `params`, numbers that the scene can change; `data`, any JSON value, read as `world.data`. `size` sets the scale of the view at the camera's target. It is not a limit on what the world can draw.
+- Put what changes over time in `world.frame(fn)`, not in a loop of your own. fn gets (t, dt) in scene time, so the world holds on a pause and stays in step with the story. A seek back runs your code again from the start, so build the world at the top level, and work out motion from t where you can. A simulation that adds up its steps replays as well, as long as it uses no real time, input or network.
+- Use `world.add(...objects)` to add objects, and `world.camera`, `world.scene` and `world.root` as you would in three.js. Call `world.redraw()` after a change that happens outside a frame, such as a texture that has loaded.
+- The app measures how far a world reaches, so that nothing is cut off. When a shader moves vertices, the app cannot see that: tell it with `world.reach(r)`, in board points, or `world.reach("full")`.
 
-**Errors.** write_scene runs each program for a moment before the scene plays: a syntax error, a failed import or an error in its first frames is a program error at the line of the program() call, with the line inside src. A later error stops the program: the item shows a quiet error note, and get_item gives state "error" with the message and its line.
+**How a world looks.** A world starts with a film look: soft image-based light, tone mapping, soft shadows and a gentle glow, and a floor that catches the shadow and a fading reflection. This is what makes an object feel real on the board, so keep it unless the idea asks for something else.
+- `world.look.gloss(c)`, `.metal(c)`, `.glass(c)`, `.glow(c)` and `.skin(c)` make materials that suit it. Any three.js material works too.
+- Change one part with `world.look.bloom = 0`. For flat work, where colours must stay exact, use `world.look = "plain"`.
+- `world.floor = false` removes the floor, and `world.floor = { y }` sets its height.
+
+**Link a world to the board.** A world and the board are one space, so use the links: they are what make a world part of the explanation and not a picture beside it. In the world, `publish(name, target)` names something: an Object3D, a Vector3, or a function that gives [x, y, z]. In the scene:
+- `atom.point(name)` is a point that goes wherever a scene takes a point: `label`, the ends of `arrow` and `line`, `point`, `camera({to})` and `around`. The item follows the point as it moves, also after the scene ends, and it fades while the point is hidden.
+- `atom.value(name)` is a value bound to `params[name]`, so `tween` and `.get()` work on it.
+- `atom.part(name)` lets `draw`, `fadeIn`, `fadeOut` and `erase` act on one part, so a model can grow piece by piece. `world.part(name, { reveal: v => … })` in the world changes how a part appears; v goes from 0 to 1.
+
+**Let the learner touch it.** Turning a model, dragging a part or changing a value with their own hand often teaches more than watching.
+- `input("direct")`: a press on an object goes to the world, and a press beside it goes to the board. Use it for something that is there to be handled. `input("enter")`: the learner double-clicks to go in, and Escape leaves. Use it when the pen should still draw over the world. The default is `input("none")`: the pen draws, and a mark on a part stays on that part as it turns. You are told which part the learner marked.
+- `on("pointerdown" | "pointermove" | "pointerup" | "wheel", fn)` gives events from the whole board: e.x and e.y in board points, e.hit (the nearest object and its part), e.ground (the point on the floor) and e.ray. `ls/interact` has ready-made orbit, drag and slider code (topic "scene-interact").
+- `world.pick(x, y)`, `world.toWorld(x, y)` and `world.toBoard(point)` convert between the board and the world.
+- `world.anchor(x, y)` moves the whole world to a board point. Use it for an object that travels far across the board, because it does not stretch the view.
+- `on("ink", fn)` gets each stroke that the learner draws, as stroke.points on the board and stroke.world on the floor, so a drawn line can become a track, a wall or a path. `world.strokes` lists them. A scene can pass in ink that is already there with `board.node("g3").points` and `data`.
+
+**Anything else code can draw.** A world is not only for three dimensions. For a picture drawn by code, draw on an `OffscreenCanvas` and show it as a `THREE.CanvasTexture` on a plane. For a shader, use a `THREE.ShaderMaterial`. For both, `world.look = "plain"` keeps the colours exact.
+
+**Errors.** A syntax error or an error in the first frames is a program error at the line of the world() call. A later error stops that world only: it shows a quiet note, and get_item gives the message and the line.
 
 ## Ready-made input code (ls/interact)
 <!-- topic: scene-interact -->
-<!-- summary: The full source of ls/interact: orbit (three.js camera), panZoom (2D), draggable points, slider, hover/pick3d, for program() items to import or copy. -->
+<!-- summary: The full source of ls/interact: orbit, draggable, slider and hover, for a world to import or copy. -->
 
-A program() item can `import { orbit, panZoom, draggable, slider, hover, pick3d } from "ls/interact"`. Nothing in it runs unless a program imports it, and the item gets pointer events only after `input("enter")` or `input("direct")`. Below is its whole source; a program can also copy any part of it and change it.
+A world can `import { orbit, draggable, slider, hover } from "ls/interact"`. Set up orbit last, because a helper that takes a press stops it from reaching orbit. Below is the whole source, so you can see how it works, or copy a part and change it.
 
 <!-- include: live/interact.js --><!-- /code-items -->

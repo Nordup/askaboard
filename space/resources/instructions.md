@@ -8,6 +8,6 @@ Looking at the board:
 
 Writing on the board:
 - Everything you put on the board goes through a scene (write_scene): a JavaScript program that draws, writes and changes items in front of the learner once play_scene "start" plays it. Write the program as a file in boards/scenes/ of the learning folder: a change then costs only the change, and later scenes can import its parts. preview_scene shows you a scene before the learner sees it, and play_scene also controls playback.
-- The reference is get_guide. Read its topic "scene" before your first scene; its description lists the other topics: <!-- code-items -->code items and interaction, <!-- /code-items -->the board model, <!-- html -->the HTML subset and styles, <!-- /html -->maths, <!-- html -->SVG, <!-- /html -->images, colour tokens, placement, ink and the view.
+- The reference is get_guide. Read its topic "scene" before your first scene; its description lists the other topics: <!-- code-items -->worlds and interaction, <!-- /code-items -->the board model, <!-- html -->the HTML subset and styles, <!-- /html -->maths, <!-- html -->SVG, <!-- /html -->images, colour tokens, placement, ink and the view.
 - Each scene is one undo step for the learner, and everything on the board is editable by both of you.
 - Coordinates are board points: origin at the centre, +x right, +y down.
