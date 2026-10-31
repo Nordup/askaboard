@@ -301,7 +301,10 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   message (`src/shared/stage-protocol.ts`). The worker removes every global
   that is not ECMAScript before the sandbox API runs. The sandbox API is
   `src/stage/live-prelude.js` (creators, actions, values, `say`, `stage`,
-  …); `Date` reads the scene clock and `Math.random` is seeded. The
+  …); `Date` reads the scene clock and `Math.random` is seeded. Its
+  `OPTION_NAMES` table lists the options of each scene global: a new option
+  goes there. Only the program that `write_scene` drafts is checked (B24);
+  a replay or a rebuild is not. The
   program returns a description (objects and a timeline,
   `src/shared/live-scene.ts`); it cannot reach the app, files or network.
   After the prelude has run, the stage is locked (decision T14): every

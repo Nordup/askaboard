@@ -604,7 +604,9 @@ export class SceneStage {
    * of a scene (mcp.ts placeAt). While place.entry is in the log (a draft),
    * the program runs on the stage as it was before that program; a restage
    * took it out of the log, so there the end is that place. The board
-   * answers the program's requests at the place (place.board).
+   * answers the program's requests at the place (place.board). checkOptions:
+   * an unknown option of a scene global is an error (a program that write_scene
+   * drafts now, never a program that runs again).
    */
   async run(
     source: SceneSource,
@@ -617,6 +619,7 @@ export class SceneStage {
       signal?: AbortSignal
       answers?: Map<string, string>
       place?: { entry: StageEntry; board: unknown } | null
+      checkOptions?: boolean
     }
   ): Promise<StageRun> {
     const { signal } = options
@@ -637,13 +640,15 @@ export class SceneStage {
       })
       // Its stage ids start after the programs before its place (the empty ids of a marked one included).
       const first = this.firstId(before ? this.log.indexOf(before) : this.log.length)
-      const ctxText = JSON.stringify({ ...context, ...(context.stage ? { stage: { ...context.stage, first } } : {}), seed, cutAt: options.cutAt ?? null })
+      const saved = { ...context, ...(context.stage ? { stage: { ...context.stage, first } } : {}), seed, cutAt: options.cutAt ?? null }
+      // The entry keeps ctxText without checkOptions: a run of this entry from its record gets no check.
+      const ctxText = JSON.stringify(saved)
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
       const record = new Map<string, string>()
       this.answers = { record, given: options.answers ?? null, place: options.place?.board }
       const job = this.nextId++
-      const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText, mode: options.mode })
+      const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText: options.checkOptions ? JSON.stringify({ ...saved, checkOptions: true }) : ctxText, mode: options.mode })
       // A sweep can still ask the board: its record closes the answers.
       if (!(reply.ok && reply.sweeping)) this.answers = { record: new Map(), given: null }
       const tDone = Date.now()

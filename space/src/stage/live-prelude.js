@@ -10,7 +10,7 @@
  * samples of changing objects go) and __host. This file takes them and
  * deletes them, then gives its host functions to __host(fns) and locks the
  * realm (T14). For each program the worker calls fns.begin(ctxText) (JSON:
- * {nodes, names, view, viewport, seed, stage, cutAt}), runs the program,
+ * {nodes, names, view, viewport, seed, stage, cutAt, checkOptions}), runs the program,
  * drives the clock (it lets every pending job run, then calls fns.advance()
  * until it returns false; a program that fails, or fns.failed(), ends it at
  * once), calls fns.end(), and then, not for a rebuild, fns.seeds(), reads
@@ -171,9 +171,57 @@
       return String(value)
     }
   }
+  // The options each scene global reads. say() (its marks are names of the program's own) and tween() on an object (any numeric
+  // option of its creator, which optionValue checks) are free. The options of an action's timing are TIMING_OPTIONS.
+  const INK_OPTIONS = ['color', 'width', 'opacity', 'jitter', 'tool', 'name']
+  const SHAPE_OPTIONS = ['color', 'width', 'opacity', 'fill', 'fillOpacity', 'hatch', 'dash', 'pen', 'jitter', 'tool', 'name']
+  const WRITE_OPTIONS = ['at', 'center', 'size', 'slant', ...INK_OPTIONS]
+  const TEXT_OPTIONS = ['at', 'center', 'size', 'color', 'opacity', 'name']
+  const LIVE_OPTIONS = ['at', 'center', 'size', 'params', 'opacity', 'name']
+  const MATERIAL_OPTIONS = ['at', 'center', 'near', 'into', 'index', 'mode', 'opacity', 'name']
+  const TIMING_OPTIONS = ['dur', 'ease']
+  const OPTION_NAMES = {
+    stroke: INK_OPTIONS,
+    line: SHAPE_OPTIONS,
+    arrow: ['head', ...SHAPE_OPTIONS],
+    circle: SHAPE_OPTIONS,
+    ellipse: SHAPE_OPTIONS,
+    rect: ['radius', ...SHAPE_OPTIONS],
+    polygon: ['closed', ...SHAPE_OPTIONS],
+    path: SHAPE_OPTIONS,
+    trace: SHAPE_OPTIONS,
+    plot: ['x', 't', 'y', 'at', 'unit', 'samples', ...SHAPE_OPTIONS],
+    write: WRITE_OPTIONS,
+    tex: TEXT_OPTIONS,
+    text: TEXT_OPTIONS,
+    label: ['side', 'gap', 'tex', 'text', ...WRITE_OPTIONS],
+    around: ['shape', 'pad', ...INK_OPTIONS],
+    shader: LIVE_OPTIONS,
+    canvas: LIVE_OPTIONS,
+    program: LIVE_OPTIONS,
+    html: MATERIAL_OPTIONS,
+    image: ['size', ...MATERIAL_OPTIONS],
+    copy: ['at', 'center', 'by', 'near', 'name'],
+    space: ['near', 'inView'],
+    group: ['name'],
+    edit: ['text', 'style', ...TIMING_OPTIONS],
+    move: ['to', 'by', 'into', 'index', ...TIMING_OPTIONS],
+    camera: ['fit', 'to', 'zoom', 'pad'],
+    step: ['pause']
+  }
+  /** The program that write_scene drafts now (CTX.checkOptions): only it gets the check, so a recorded program that ran once runs again. */
+  let checkOptions = false
+  /** While a recipe of an earlier program runs again (it reads a value this program changes). */
+  let earlierRecipe = false
+  function knownOptions(value, api, names) {
+    if (!checkOptions || earlierRecipe) return
+    for (const key of Object.keys(value)) if (!names.includes(key)) fail(`${api}() has no option "${key}". Its options: ${names.join(', ')}`)
+  }
   function options(value, what) {
     if (value === undefined || value === null) return {}
     if (typeof value !== 'object' || Array.isArray(value)) fail(`${what} must be an options object like {color: "accent"}, got ${describe(value)}`)
+    const api = what.split(' ')[0]
+    if (OPTION_NAMES[api]) knownOptions(value, api, OPTION_NAMES[api])
     return value
   }
 
@@ -662,6 +710,8 @@
   function evaluate(recipe) {
     building++
     rng = seeded(recipe.seed)
+    const outer = earlierRecipe
+    earlierRecipe = outer || recipe.scene !== sceneNo
     try {
       let args = recipe.args.map((x, i) => (recipe.skip.includes(i) ? x : resolveArg(x, 5)))
       if (recipe.overrides) {
@@ -677,6 +727,7 @@
       return recipe.impl(...args)
     } finally {
       building--
+      earlierRecipe = outer
     }
   }
 
@@ -724,7 +775,7 @@
   function creator(api, impl, { optIndex, skip = [], always = false } = {}) {
     return (...args) => {
       const dynamic = always || args.some((a, i) => !skip.includes(i) && isDynamicArg(a, 5))
-      const recipe = { impl, args, seed: nextSeed++, optIndex, skip, overrides: null }
+      const recipe = { impl, args, seed: nextSeed++, scene: sceneNo, optIndex, skip, overrides: null }
       const before = reads
       const outer = pointNotes
       pointNotes = []
@@ -1351,7 +1402,7 @@
 
   function group(...members) {
     let opts = {}
-    if (members.length && plain(members[members.length - 1])) opts = members.pop()
+    if (members.length && plain(members[members.length - 1])) opts = options(members.pop(), 'group options')
     if (members.length === 1 && Array.isArray(members[0])) members = members[0]
     if (!members.length) fail('group(...objects) needs at least one object')
     const entries = members.map((m, k) => entryOf(m, `group member ${k}`))
@@ -2008,7 +2059,7 @@
     const make1 = (pos) => {
       rng = seeded(labelSeed)
       const o = { ...rest, at: pos }
-      return asTex ? textObject('tex', str, o, true) : asText ? textObject('text', str, o, false) : write(str, o)
+      return asTex ? textObject('tex', str, options(o, 'tex options'), true) : asText ? textObject('text', str, options(o, 'text options'), false) : write(str, o)
     }
     const labelSeed = Math.floor(rng() * 1e9)
     const probe = make1([0, 0])
@@ -2177,6 +2228,7 @@
     let ease
     if (typeof value === 'number') dur = value
     else if (value && typeof value === 'object') {
+      knownOptions(value, what, TIMING_OPTIONS)
       if (value.dur !== undefined) dur = num(value.dur, `${what} dur`)
       if (value.ease !== undefined) {
         if (!EASES[value.ease]) fail(`${what} ease must be one of ${Object.keys(EASES).join(', ')}`)
@@ -2379,6 +2431,7 @@
     if (target instanceof SceneValue) {
       let to = props
       if (plain(props)) {
+        knownOptions(props, 'tween', ['to', ...TIMING_OPTIONS])
         if (timing === undefined && (props.dur !== undefined || props.ease !== undefined)) timing = { dur: props.dur, ease: props.ease }
         to = props.to
       }
@@ -3245,6 +3298,7 @@
     sceneNo++
     programStream = mulberry32(CTX.seed || 1)
     cutAt = typeof CTX.cutAt === 'number' ? CTX.cutAt : null
+    checkOptions = CTX.checkOptions === true
     T = 0
     endTime = 0
     actions.length = 0
