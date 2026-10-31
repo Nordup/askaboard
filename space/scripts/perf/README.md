@@ -89,7 +89,7 @@ Other options of `run.mjs`: `--built` (runs `out/`; run `npm run build` first), 
 `CODEX_HOME` at `/private/tmp/claude-501/ls-lab/codex-home-perf` (the login is a symlink).
 `--dev` (the default) measures the current source; `--built` measures whatever `out/` holds.
 
-A run folder holds `prompt.md`, the agent output (`work-claude.json` or `work-codex.jsonl`),
+A run folder holds `prompt.md`, the agent output (`work-claude.jsonl` (one event per line, so a silent agent shows) or `work-codex.jsonl`),
 `reply.md`, `calls.json` (with each call's app `spans`), `trace/` (the app trace, its images and the scene
 events), the agent's transcript (`transcript-claude.jsonl`: the session from `~/.claude/projects/`;
 `rollout-codex.jsonl`: the Codex rollout), `metrics.json`, `timeline.md`, and

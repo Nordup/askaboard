@@ -160,7 +160,13 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   if (mcpPort === FOUNDER_PORT) throw new Error(`Port ${FOUNDER_PORT} is the founder's app. Pick another.`)
   const inst = instance(name)
   const running = readState(name)
-  if (running && running.pids.some(alive)) throw new Error(`The lab "${name}" is already running (PIDs ${running.pids.join(', ')}). Stop it first.`)
+  if (running?.owner && running.owner !== process.pid && alive(running.owner)) throw new Error(`The lab "${name}" is in use by PID ${running.owner}. Stop it first.`)
+  // A run that died left its app: it must not block the next run.
+  if (running) {
+    const pids = await stopInstance(name)
+    if (pids.length) console.error(`lab: stopped the app of a dead run (PIDs ${pids.join(', ')})`)
+  }
+  for (const port of [mcpPort, debugPort]) await stopOrphan(port, inst)
   for (const port of [mcpPort, debugPort]) if (await portInUse(port)) throw new Error(`Port ${port} is in use by another process. Pick free ports with --mcp-port / --debug-port.`)
   if (!built && !existsSync(join(SPACE, 'node_modules/.bin/electron-vite'))) throw new Error('No node_modules in space/. Run npm install there.')
   if (built && !existsSync(join(SPACE, 'out/main/index.js'))) throw new Error('No built app in out/. Run `npm run build` in space/ first.')
@@ -180,7 +186,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   }
   closeSync(logFd)
   child.unref()
-  const state = { name, mode: built ? 'built' : 'dev', mcpPort, debugPort, pids: [child.pid], launcher: child.pid, started: new Date().toISOString(), ...inst }
+  const state = { name, mode: built ? 'built' : 'dev', mcpPort, debugPort, pids: [child.pid], launcher: child.pid, owner: process.pid, started: new Date().toISOString(), ...inst }
   writeFileSync(inst.stateFile, JSON.stringify(state, null, 2))
   try {
     const deadline = Date.now() + 120_000
@@ -206,6 +212,99 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
     throw error
   }
   return state
+}
+
+/** An app of this instance that holds a port with no state file: found by its user-data-dir, so it is never another app. */
+async function stopOrphan(port, inst) {
+  let holders = []
+  try {
+    holders = execFileSync('lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').map(Number).filter(Boolean)
+  } catch {
+    return
+  }
+  const command = (pid) => {
+    try {
+      return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+    } catch {
+      return ''
+    }
+  }
+  const parent = (pid) => {
+    try {
+      return Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }))
+    } catch {
+      return 0
+    }
+  }
+  for (const pid of holders) {
+    if (!command(pid).includes(inst.userData)) continue
+    const launcher = parent(pid)
+    const pids = [pid, ...(launcher > 1 && command(launcher).includes(inst.userData) ? [launcher] : [])]
+    console.error(`lab: stopped an orphan app on port ${port} (PIDs ${(await stopPids(pids)).join(', ')})`)
+  }
+}
+
+/**
+ * A run that ends in any way stops its app, and an end that is not the normal one
+ * says so and exits 1: a promise that never settles, a signal, an uncaught error.
+ * Returns done(), to call when the run is over.
+ */
+export function guardRun(name, label) {
+  let over = false
+  const end = async (why) => {
+    if (over) return
+    over = true
+    console.error(`${label}: ${why}; stopping the app`)
+    await stopInstance(name).catch((error) => console.error(`${label}: stop failed: ${error.message}`))
+    process.exit(1)
+  }
+  process.on('beforeExit', () => void end('the event loop ran out before the run ended'))
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => void end(`${signal}`))
+  return () => {
+    over = true
+  }
+}
+
+/** The lid is closed and that puts this Mac to sleep: a run measures nothing then. */
+export function lidSleeps() {
+  try {
+    const out = execFileSync('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '1'], { encoding: 'utf8' })
+    return /"AppleClamshellState" = Yes/.test(out) && /"AppleClamshellCausesSleep" = Yes/.test(out)
+  } catch {
+    return false
+  }
+}
+
+/** Keep the Mac from idle sleep while this process lives. A closed lid still sleeps: sleptSeconds tells. */
+export function stayAwake() {
+  try {
+    spawn('caffeinate', ['-i', '-m', '-s', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref()
+  } catch {
+    // Not a Mac.
+  }
+}
+
+/** Seconds the machine was asleep or in dark wake between two times (ms), from the power log; null when unknown. */
+export function sleptSeconds(from, to) {
+  let log
+  try {
+    log = execFileSync('pmset', ['-g', 'log'], { encoding: 'utf8', maxBuffer: 1 << 28 })
+  } catch {
+    return null
+  }
+  const events = []
+  for (const line of log.split('\n')) {
+    const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}) (Sleep|Wake|DarkWake)\s\s+/.exec(line)
+    if (m) events.push({ t: Date.parse(m[1].replace(' ', 'T').replace(' ', '')), state: m[2] })
+  }
+  let slept = 0
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].state === 'Wake') continue
+    const lo = Math.max(events[i].t, from)
+    const hi = Math.min(events[i + 1]?.t ?? to, to)
+    if (hi > lo) slept += hi - lo
+  }
+  return Math.round(slept / 1000)
 }
 
 /** Stop the exact PIDs in the instance's state file (and the dev child, if it changed). */
@@ -258,6 +357,12 @@ export async function cdpConnect(port) {
   let nextId = 0
   const pending = new Map()
   const listeners = new Set()
+  // A call on a dead socket must fail. A promise that never settles lets node exit with code 0, and no finally runs.
+  const failAll = (why) => {
+    for (const entry of pending.values()) entry.reject(new Error(`${entry.method}: ${why}`))
+    pending.clear()
+  }
+  socket.onclose = () => failAll('the debug socket closed')
   socket.onmessage = (message) => {
     const data = JSON.parse(message.data)
     if (data.id === undefined) {
@@ -272,6 +377,10 @@ export async function cdpConnect(port) {
   }
   const send = (method, params = {}) =>
     new Promise((ok, fail) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        fail(new Error(`${method}: the debug socket is closed`))
+        return
+      }
       const id = ++nextId
       pending.set(id, { resolve: ok, reject: fail, method })
       socket.send(JSON.stringify({ id, method, params }))
@@ -574,20 +683,30 @@ export async function claudeTurn(agent, state, dir, prompt, phase, resume = null
   // As in the desktop app with permissions bypassed: every built-in tool (Bash too), no permission prompts, only the
   // Learning Space server (no MCP servers or plugins of the founder's own setup). --no-web takes the web tools away.
   // The prompt goes before --disallowedTools: that flag takes every word after it.
-  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'json', '--permission-mode', 'bypassPermissions', ...(agent.web ? [] : ['--disallowedTools', 'WebSearch', 'WebFetch'])]
-  const stdoutFile = join(dir, `${phase}-claude.json`)
+  const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions', ...(agent.web ? [] : ['--disallowedTools', 'WebSearch', 'WebFetch'])]
+  const stdoutFile = join(dir, `${phase}-claude.jsonl`)
   const code = await runProcess(agent, 'claude', argv, { cwd: state.folder, env: process.env, stdoutFile, stderrFile: join(dir, `${phase}-stderr.txt`) })
+  // One event per line. A crash or a timeout has no result, but its session and its last words are there.
   let parsed = null
-  try {
-    parsed = JSON.parse(readFileSync(stdoutFile, 'utf8'))
-  } catch {
-    // A crash or a timeout: keep the raw text.
+  let session = resume
+  let lastText = ''
+  for (const line of readFileSync(stdoutFile, 'utf8').split('\n')) {
+    let event
+    try {
+      event = JSON.parse(line)
+    } catch {
+      continue
+    }
+    session = event.session_id ?? session
+    // Each turn of a session gives a result (a background task's end starts a turn): add up what is per turn.
+    if (event.type === 'result') parsed = { ...event, duration_ms: (parsed?.duration_ms ?? 0) + (event.duration_ms ?? 0), num_turns: (parsed?.num_turns ?? 0) + (event.num_turns ?? 0) }
+    if (event.type === 'assistant') lastText = (event.message?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n') || lastText
   }
   return {
     exit_code: code,
-    reply: parsed?.result ?? readFileSync(stdoutFile, 'utf8'),
+    reply: parsed?.result ?? lastText,
     is_error: parsed ? Boolean(parsed.is_error) : true,
-    session: parsed?.session_id ?? resume,
+    session,
     cost_usd: parsed?.total_cost_usd ?? null,
     num_turns: parsed?.num_turns ?? null,
     raw: parsed

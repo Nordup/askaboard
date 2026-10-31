@@ -27,19 +27,23 @@ import {
   args,
   canvasRect,
   cdpConnect,
+  guardRun,
   claudeTranscript,
   claudeTurn,
   codexRollout,
   codexTurn,
   cropFilter,
+  lidSleeps,
   log,
   prepareCodexHome,
   runFolder,
   scenePlaySpans,
   sceneHook,
   sleep,
+  sleptSeconds,
   startInstance,
   startRecording,
+  stayAwake,
   stopInstance,
   traceCalls,
   traceLabels,
@@ -178,6 +182,8 @@ async function oneRun(task, index) {
       firstVisible = after.length ? round(after[0] / 1000, 2) : null
       lastVisible = changes.last_change_ms !== null ? round(changes.last_change_ms / 1000, 2) : null
     }
+    // A sleeping machine stops the model and the app alike: such a run measures nothing.
+    const slept = sleptSeconds(t0, tEnd) || 0
     // Model time from the client.
     const raw = work.raw ?? null
     let model = null
@@ -201,8 +207,9 @@ async function oneRun(task, index) {
       mode: state.mode,
       code: identity,
       dir,
-      ok: work.exit_code === 0 && !work.is_error,
-      error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,
+      ok: work.exit_code === 0 && !work.is_error && !slept,
+      error: slept ? `the machine slept ${slept} s of this run` : work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,
+      slept_s: slept,
       session: work.session,
       transcript,
       time: { ...m.time, first_visible: firstVisible, last_visible: lastVisible, idle_after_agent: round((tIdle - t1) / 1000, 2), model_s: model?.api_s ?? null, model_source: model?.source ?? null, client_duration_s: model?.duration_s ?? null },
@@ -219,6 +226,7 @@ async function oneRun(task, index) {
       agent_pids: pids,
       recorded_s: round((tEnd - t0) / 1000, 1)
     }
+    if (slept) say(`this run does not count: the machine slept ${slept} s of it`)
     // The transcript into the run folder, the timeline (turns, own calls, partition, scene events) and timeline.md.
     metrics = addTimeline(dir, metrics, JSON.parse(readFileSync(join(dir, 'calls.json'), 'utf8')))
     writeFileSync(join(dir, 'metrics.json'), JSON.stringify(metrics, null, 2))
@@ -243,7 +251,11 @@ async function oneRun(task, index) {
 
 async function main() {
   const task = getTask(opts.task)
+  if (lidSleeps()) throw new Error('The lid is closed, so this Mac sleeps: open it, or connect a display, power and a keyboard.')
+  stayAwake()
+  const done = guardRun(NAME, 'perf')
   for (let i = 0; i < opts.repeat; i++) await oneRun(task, i)
+  done()
   say('done; compare with: node scripts/perf/report.mjs')
 }
 
