@@ -1,3 +1,4 @@
+import type { WorldPin } from '@shared/world-protocol'
 import type { ItemClock, LiveTimeline, SceneView } from './clock'
 
 /**
@@ -52,6 +53,8 @@ export interface HostStart {
   seed: number
   /** Worlds: world.data. */
   data?: unknown
+  /** Worlds: the marks kept on parts. */
+  pins?: WorldPin[]
   size: CanvasSize
   params: Record<string, number>
   /** live: follow the item clock in real time (board items). step: run ticks only on advance (previews, stills, checks). */

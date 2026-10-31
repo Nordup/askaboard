@@ -231,6 +231,8 @@ export interface LearnerNews {
   erasedWhere: string | null
   /** Every other learner change: moves, resizes, edits, items added or deleted. */
   items: NewsItem[]
+  /** Parts of worlds that the learner marked: `marked part "receptor" of world wave`. */
+  marks?: string[]
   /** Live scenes that paused because the learner started drawing. */
   scenePauses?: Array<{ scene: string; name: string | null; step: string | null; t: number; duration: number }>
 }

@@ -195,6 +195,8 @@ export interface LiveNode extends NodeBase {
   params: Record<string, number>
   /** Worlds: a JSON value for the code (world.data). */
   data?: unknown
+  /** Worlds: marks kept on parts. An item with the same id follows the point `pin:<id>`. */
+  pins?: Array<{ id: string; part: string; local: [number, number, number] }>
   w: number
   h: number
   /** Other look (opacity, border radius…). Its width and height are ignored: `w`, `h` set the size. */

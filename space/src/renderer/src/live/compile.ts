@@ -679,6 +679,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         code: live.code,
         params: { ...live.params },
         ...(live.data === undefined ? {} : { data: live.data }),
+        // A world that stays keeps the marks on it.
+        ...(prior && (s.index.byId.get(prior[0]) as LiveNode | undefined)?.pins ? { pins: (s.index.byId.get(prior[0]) as LiveNode).pins } : {}),
         x: r1(x),
         y: r1(y),
         w: r1(live.width * scale),

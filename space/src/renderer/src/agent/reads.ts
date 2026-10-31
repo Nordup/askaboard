@@ -10,7 +10,7 @@ import { liveSummary } from '../live-pixels/registry'
 import { scenePlayer } from '../live/player'
 import { lookOf, storiesOf, storiesOfNode, versionOnBoard } from '../live/stories'
 import { parseStepRef, type BoardStory, type SceneStory } from '@shared/scene-story'
-import { followsText } from '@shared/world-links'
+import { followsText, markText, worldOf } from '@shared/world-links'
 import { coveredOf } from './covered'
 import { getNodeInfo } from './edits'
 import { isGroupId, type InkGroup } from './groups'
@@ -1285,6 +1285,10 @@ export function changeReport(ctx: ReadContext, params: { from: number; to: numbe
     if (!own.length && !removed.length) continue
     lines.push(actor === 'learner' ? 'Learner:' : 'You:')
     lines.push(...actorLines(m, own, removed, actor, params.all))
+  }
+  for (const entry of real) {
+    const mark = isKnown(entry.node) ? markText(entry.node.follows, worldOf(state.nodes, entry.node.follows)) : null
+    if (mark) lines.push(`${(entry.by ?? 'learner') === 'learner' ? 'Learner' : 'You'}: ${mark}.`)
   }
   const later = interval.changed.filter((entry) => entry.after).length
   if (later) lines.push(`${plural(later, 'item')} changed again after c${to}: the lines above show them as they are now.`)

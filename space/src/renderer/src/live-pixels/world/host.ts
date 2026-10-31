@@ -1,4 +1,4 @@
-import type { WorldKey, WorldToPage } from '@shared/world-protocol'
+import type { WorldKey, WorldPin, WorldPointer, WorldToPage } from '@shared/world-protocol'
 import type { ItemClock, SceneView } from '../clock'
 import { blobUrl, type CanvasSize, type HostEvents, type HostStart, type LiveFrame, type LiveHost } from '../host'
 import { boardColors } from '../sandbox'
@@ -19,10 +19,18 @@ import { boardSurface, WorldSurface, type WorldMember } from './surface'
 
 let nextGeneration = 1
 
+export type WorldHit = NonNullable<Extract<WorldToPage, { type: 'picked' }>['hit']>
+
 export class WorldHost implements LiveHost, WorldMember {
   readonly element = null
   readonly key: WorldKey
   shown = false
+  /** What the world's code listens to now. */
+  wants = { pointer: false, ink: false }
+  /** Its code has run no frame yet: a long setup is no hang. */
+  settingUp = true
+  /** The names of its published points, from the last picture. */
+  parts: string[] = []
   private readonly surface: WorldSurface
   private readonly step: boolean
   /** It shows at its first frame; a stepping generation shows when it goes live. */
@@ -31,6 +39,10 @@ export class WorldHost implements LiveHost, WorldMember {
   private h: number
   private waits = new Map<number, (frame: LiveFrame | null) => void>()
   private nextRequest = 1
+  private picks = new Map<number, (hit: WorldHit | null) => void>()
+  /** The strokes the world has, by id: each node as it was sent. */
+  private strokes = new Map<string, unknown>()
+  private pins: WorldPin[]
   private stopped = false
 
   constructor(
@@ -41,6 +53,7 @@ export class WorldHost implements LiveHost, WorldMember {
     this.key = { node: start.id, generation: nextGeneration++ }
     this.w = start.size.w
     this.h = start.size.h
+    this.pins = start.pins ?? []
     this.step = !container
     this.startsLive = start.mode === 'live'
     this.surface = container ? boardSurface(container) : new WorldSurface(null, null, { width: start.size.w, height: start.size.h, dpr: start.size.pw / start.size.w })
@@ -51,6 +64,7 @@ export class WorldHost implements LiveHost, WorldMember {
         code: start.code,
         seed: start.seed,
         ...(start.data === undefined ? {} : { data: start.data }),
+        ...(this.pins.length ? { pins: this.pins } : {}),
         w: start.size.w,
         h: start.size.h,
         params: start.params,
@@ -69,11 +83,25 @@ export class WorldHost implements LiveHost, WorldMember {
   receive(m: Extract<WorldToPage, { key: WorldKey }>): void {
     switch (m.type) {
       case 'alive':
+        if (m.frames > 0) this.settingUp = false
         if (m.frames > 0 && !this.shown && this.startsLive && !this.stopped) this.show()
         this.events.onAlive(m.frames, m.tick)
         break
       case 'progress':
+        this.settingUp = false
         this.events.onProgress?.(m.tick)
+        break
+      case 'picked':
+        this.picks.get(m.request)?.(m.hit)
+        this.picks.delete(m.request)
+        break
+      case 'subscribe':
+        this.wants = { pointer: m.pointer, ink: m.ink }
+        if (!m.ink) this.strokes.clear()
+        this.surface.wantsChanged()
+        break
+      case 'anchor':
+        this.surface.anchor(this.key.node, m.dx, m.dy)
         break
       case 'at':
         this.settle(m.request, { url: null, tick: m.tick })
@@ -98,7 +126,57 @@ export class WorldHost implements LiveHost, WorldMember {
 
   private show(): void {
     this.shown = true
+    this.surface.anchor(this.key.node, 0, 0)
     this.surface.changed()
+  }
+
+  /** The points of the picture on the surface. */
+  showPoints(points: Record<string, [number, number, boolean]> | undefined): void {
+    if (points) this.parts = Object.keys(points).filter((name) => !name.startsWith('pin:'))
+  }
+
+  /** What is at a board point: null for nothing, or after `ms`. */
+  pick(x: number, y: number, ms: number): Promise<WorldHit | null> {
+    if (this.stopped) return Promise.resolve(null)
+    const request = this.nextRequest++
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        this.picks.delete(request)
+        resolve(null)
+      }, ms)
+      this.picks.set(request, (hit) => {
+        clearTimeout(timer)
+        resolve(hit)
+      })
+      this.surface.send({ type: 'pick', key: this.key, x, y, request })
+    })
+  }
+
+  pointer(event: WorldPointer): void {
+    if (!this.stopped) this.surface.send({ type: 'pointer', key: this.key, event })
+  }
+
+  /** The board's ink now: new and changed strokes go to the world, and it hears which are gone. */
+  sendInk(inks: ReadonlyArray<{ id: string; node: unknown; points: () => Array<[number, number, number]> }>): void {
+    const present = new Set<string>()
+    for (const ink of inks) {
+      present.add(ink.id)
+      if (this.strokes.get(ink.id) === ink.node) continue
+      this.strokes.set(ink.id, ink.node)
+      this.surface.send({ type: 'ink', key: this.key, stroke: { id: ink.id, points: ink.points() } })
+    }
+    for (const id of [...this.strokes.keys()]) {
+      if (present.has(id)) continue
+      this.strokes.delete(id)
+      this.surface.send({ type: 'inkgone', key: this.key, id })
+    }
+  }
+
+  /** The marks kept on parts changed. */
+  setPins(pins: WorldPin[]): void {
+    for (const pin of pins) if (!this.pins.some((entry) => entry.id === pin.id)) this.surface.send({ type: 'pin', key: this.key, pin })
+    for (const pin of this.pins) if (!pins.some((entry) => entry.id === pin.id)) this.surface.send({ type: 'unpin', key: this.key, id: pin.id })
+    this.pins = pins
   }
 
   /** It takes no part in a new worker: it failed or left. */
@@ -131,6 +209,8 @@ export class WorldHost implements LiveHost, WorldMember {
   private closeWaits(): void {
     for (const resolve of this.waits.values()) resolve(null)
     this.waits.clear()
+    for (const resolve of this.picks.values()) resolve(null)
+    this.picks.clear()
   }
 
   private request(message: (request: number) => Parameters<WorldSurface['send']>[0], ms?: number): Promise<LiveFrame | null> {
@@ -178,8 +258,10 @@ export class WorldHost implements LiveHost, WorldMember {
     return this.request((request) => ({ type: 'capture', key: this.key, request }), 1500)
   }
 
-  /** Worlds take no pointer input in this slice. */
-  setEntered(): void {}
+  /** The learner's input goes to the world, or leaves it. */
+  setEntered(on: boolean): void {
+    if (this.wants.pointer) this.pointer({ kind: on ? 'enter' : 'leave', x: 0, y: 0, buttons: 0, pressure: 0, pointerType: 'mouse' })
+  }
 
   /** It runs no more ticks. Its last picture stays on the surface until `dispose`. */
   stop(): void {

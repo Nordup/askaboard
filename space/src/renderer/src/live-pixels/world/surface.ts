@@ -35,6 +35,8 @@ import * as worker from './worker'
 /** How often the surface asks the worker for an answer, and how long it waits for one. */
 const PING_MS = 500
 const HANG_MS = 2000
+/** A world's setup can take this long: a molecule or a model is a lot of work. */
+const SETUP_MS = 20000
 
 /** How a world stands on the board now, from the board's state. */
 export interface WorldPlace {
@@ -53,6 +55,10 @@ export interface WorldBoard {
   place(id: string): WorldPlace | null
   /** The points of the picture this paint adopts: linked items move with it. */
   points(points: WorldPoints): void
+  /** A world moved itself, by this much from its placed rect. */
+  anchor(id: string, dx: number, dy: number): void
+  /** What a world listens to changed. */
+  wants(): void
 }
 
 /** One generation of a world on a surface (host.ts). */
@@ -61,6 +67,9 @@ export interface WorldMember {
   readonly shown: boolean
   /** It failed or left: a new worker does not take it. */
   readonly ended: boolean
+  /** Its code has run no frame yet. */
+  readonly settingUp: boolean
+  showPoints(points: Record<string, [number, number, boolean]> | undefined): void
   receive(message: Extract<WorldToPage, { key: WorldKey }>): void
   failed(message: string): void
   lost(): void
@@ -195,7 +204,7 @@ export class WorldSurface {
     this.checkedAt = now
     if (!this.answeredAt || this.outbox) return
     if (late || document.visibilityState === 'hidden' || !this.members.size) this.answeredAt = now
-    else if (now - this.answeredAt > HANG_MS) {
+    else if (now - this.answeredAt > (this.running && this.members.get(keyOf(this.running))?.settingUp ? SETUP_MS : HANG_MS)) {
       this.recover(this.running)
       return
     }
@@ -307,6 +316,14 @@ export class WorldSurface {
     this.post(message)
   }
 
+  anchor(id: string, dx: number, dy: number): void {
+    this.board?.anchor(id, dx, dy)
+  }
+
+  wantsChanged(): void {
+    this.board?.wants()
+  }
+
   /** A member's placement changed: the next paint sends it. */
   changed(): void {
     this.board?.paint()
@@ -362,6 +379,7 @@ export class WorldSurface {
     if (!picture) return
     context.transferFromImageBitmap(picture.bitmap)
     this.shownCamera = picture.camera
+    for (const member of this.members.values()) member.showPoints(picture.points[member.key.node])
     this.board?.points(picture.points)
     this.settle(picture)
   }

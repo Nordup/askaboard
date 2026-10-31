@@ -24,7 +24,7 @@ import { sceneAt, type FramesLiveItem, type ScenePlace } from '../live/run'
 import { runEditTool } from './edits'
 import { trackerFor, type InkGroup } from './groups'
 import { scenePlayer } from '../live/player'
-import { linkedOverrides, linkedTip } from '@shared/world-links'
+import { linkedOverrides, linkedTip, markText, worldOf } from '@shared/world-links'
 import { measureSceneTexts } from '../live/measure'
 import { sceneHost } from '../live/host'
 import { sceneOf } from './placement'
@@ -184,6 +184,7 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
   for (const group of groups) for (const stroke of group.strokes) groupOf.set(stroke, group)
 
   const added: NewsStroke[] = []
+  const marks: string[] = []
   const items: NewsItem[] = []
   // New items that are not ink, with their parent: a new item inside a new frame goes with the frame.
   const placed: Array<{ item: NewsItem; parent?: string }> = []
@@ -197,6 +198,10 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
     const prior = log?.stateAt(node.id, since) ?? { kind: 'unknown' as const }
     const { change, offset } = describeChange(node, prior)
     if (change === 'unchanged') continue
+    // A mark changes the pins of its world: the news names the mark, not the world.
+    if (isLive(node) && prior.kind === 'was' && JSON.stringify({ ...node, pins: 0, seq: 0 }) === JSON.stringify({ ...prior.node, pins: 0, seq: 0 })) continue
+    const mark = isKnown(node) && change === 'added' ? markText(node.follows, worldOf(state.nodes, node.follows)) : null
+    if (mark) marks.push(mark)
     const group = isInk(node) ? groupOf.get(node.id) : undefined
     // A stroke that is new, or whose state before is not known, counts as drawn.
     if (isInk(node) && (change === 'added' || prior.kind === 'unknown')) {
@@ -254,6 +259,7 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
   const scenePauses = scenePlayer.takeNotes()
   return {
     ...(scenePauses.length ? { scenePauses } : {}),
+    ...(marks.length ? { marks } : {}),
     board: path,
     boardName: boardName(path),
     cursor: seenCursor(state),

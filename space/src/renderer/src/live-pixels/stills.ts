@@ -54,7 +54,7 @@ const NO_SCENE: SceneView = { t: 0, playing: false, active: false, ended: true, 
  * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`.
  */
 async function withStepHost<T>(
-  node: Pick<LiveNode, 'mode' | 'code' | 'name' | 'params'> & Partial<Pick<LiveNode, 'id' | 'data'>>,
+  node: Pick<LiveNode, 'mode' | 'code' | 'name' | 'params'> & Partial<Pick<LiveNode, 'id' | 'data' | 'pins'>>,
   size: CanvasSize,
   from: number,
   timeline: LiveTimeline | null,
@@ -73,7 +73,7 @@ async function withStepHost<T>(
     }
     const host = createHost(
       node.mode,
-      { id: node.id ?? 'step', code: node.code, data: node.data, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
+      { id: node.id ?? 'step', code: node.code, data: node.data, pins: node.pins, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
       {
         onAlive: (_frames, tick) => progress(tick),
         onProgress: progress,

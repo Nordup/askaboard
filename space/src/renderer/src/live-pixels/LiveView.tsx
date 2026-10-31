@@ -60,7 +60,8 @@ function LiveRunner({ node, style, common }: Props) {
         ? { title: 'Waiting', detail: 'Too many live items run at once.' }
         : null
   const stalled = status.state === 'stalled'
-  const input = entered ? ' node-live--entered' : status.input === 'direct' && !note ? ' node-live--direct' : ''
+  // A world has no box to mark: entering it shows nothing.
+  const input = node.mode === 'world' ? '' : entered ? ' node-live--entered' : status.input === 'direct' && !note ? ' node-live--direct' : ''
 
   return (
     <div

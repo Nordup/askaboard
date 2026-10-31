@@ -1,5 +1,6 @@
 import { isKnown, type BoardNode } from '@shared/board-format'
 import { followsText } from '@shared/world-links'
+import { liveParts } from '../live-pixels/registry'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
@@ -97,7 +98,8 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
         state: status ? status.state : 'not shown',
         ...(status?.error ? { error: status.error } : {}),
         ...(node.mode === 'program' || node.mode === 'world' ? { input: status?.input ?? 'none' } : {}),
-        ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {})
+        ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {}),
+        ...(node.mode === 'world' ? { parts: liveParts(node.id) ?? [], pins: (node.pins ?? []).map((pin) => ({ id: pin.id, part: pin.part })) } : {})
       })
     }
     if (node.kind === 'svg') {

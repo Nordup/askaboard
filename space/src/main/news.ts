@@ -173,12 +173,14 @@ export function formatNews(news: LearnerNews, since: number, now: number): strin
   const times = [...news.added, ...news.erased, ...news.items].map((change) => change.at ?? 0).filter((at) => at > 0)
   const last = times.length ? Math.max(...times) : null
   // A live scene that paused because the learner started drawing.
+  const marks = (news.marks ?? []).map((mark) => `The learner ${mark}.`)
   const pauses = (news.scenePauses ?? []).map(
     (pause) =>
       `Your scene ${pause.name ? `"${pause.name}"` : pause.scene} paused${pause.step ? ` at step "${pause.step}"` : ''} (${pause.t} s of ${Math.round(pause.duration * 10) / 10} s) because the learner started drawing; play_scene({action: "resume"}) continues it.`
   )
   return [
     clauses.length ? `Board news for "${news.boardName}", since your last look or news ${ago(since, now)}: the learner ${clauses.join(', and ')}.` : `Board news for "${news.boardName}":`,
+    ...marks,
     ...pauses,
     last ? `The last change was ${ago(last, now)}.` : null,
     summarised ? 'get_changes() lists each change.' : null

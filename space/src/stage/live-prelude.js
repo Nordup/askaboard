@@ -436,6 +436,15 @@
     get name() {
       return objects[this.id].name
     }
+    /** Ink: its strokes as lists of [x, y, pressure], in board points. */
+    get points() {
+      const entry = objects[this.id]
+      if (entry.kind === 'ink') return entry.lines.map((line) => line.map((p) => [p[0], p[1], p[2] ?? 0.5]))
+      if (entry.kind !== 'node') fail(`points: ${entry.api} ${this.id} is not ink`)
+      const got = ask({ kind: 'item', ref: entry.ref }, 'points')
+      if (got.kind !== 'ink') fail(`points: board item "${entry.ref}" is not ink`)
+      return got.strokes.map((stroke) => stroke.points)
+    }
     /** html objects: their parts (the root's children), each an object of its own. */
     get parts() {
       const entry = objects[this.id]

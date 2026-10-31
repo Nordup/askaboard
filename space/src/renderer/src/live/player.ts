@@ -1290,6 +1290,10 @@ export class ScenePlayer {
     const logged = [...this.playLog].reverse().find((entry) => entry.scene === scene.play.id && entry.end === null)
     if (logged) logged.end = Math.round(performance.timeOrigin + at)
     report('end', scene.play, 'played', performance.timeOrigin + at)
+    // A mark that a scene put around a part of a world stays on that part.
+    for (const object of scene.play.objects) {
+      if (scene.play.timeline.object(object.id).api === 'around') for (const target of object.targets) this.board?.pinMark(target.nodeId, 'agent')
+    }
   }
 
   /** The learner started drawing: each playing scene pauses at its next step, or now when none is left. */

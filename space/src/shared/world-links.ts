@@ -198,6 +198,18 @@ export function renamedFollows(follows: NodeFollows, rename: (id: string) => str
   return { ...follows, ends: [end(follows.ends[0]), end(follows.ends[1])] }
 }
 
+/** The world that a link follows, from a list of nodes. */
+export function worldOf<T extends { id: string }>(nodes: readonly T[], follows: NodeFollows | undefined): (T & { name?: string; pins?: Array<{ id: string; part: string }> }) | undefined {
+  return follows && !isPathFollows(follows) ? nodes.find((node) => node.id === follows.world) : undefined
+}
+
+/** The words of a mark on a part, for agents: `marked part "receptor" of world wave`; null when the node is no mark. */
+export function markText(follows: NodeFollows | undefined, world: { id: string; name?: string; pins?: Array<{ id: string; part: string }> } | undefined): string | null {
+  if (!follows || isPathFollows(follows) || !follows.point.startsWith('pin:') || !world) return null
+  const pin = world.pins?.find((entry) => `pin:${entry.id}` === follows.point)
+  return pin ? `marked part "${pin.part}" of world ${world.name ?? world.id}` : null
+}
+
 /** A one-line text of a link, for agents: "n_ab.charge". */
 export function followsText(follows: NodeFollows): string {
   const text = (end: PointLink): string => `${end.world}.${end.point}`

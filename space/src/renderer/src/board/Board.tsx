@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
@@ -21,8 +21,9 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
-import { enterLive, enteredLive, liveInput, nearWorlds, setLivePlayback } from '../live-pixels/registry'
+import { enteredWorld, enterLive, enteredLive, enterWorlds, liveInput, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
 import { bindWorldBoard, syncWorlds } from '../live-pixels/world/surface'
+import type { WorldPointer } from '@shared/world-protocol'
 import { linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
@@ -95,6 +96,8 @@ export interface BoardHandle {
   worldPoint(world: string, point: string): Point | null
   /** The points of the last picture shown. */
   worldPoints(): WorldPoints
+  /** A mark at this item's centre stays on the part of a world under it, if there is one. */
+  pinMark(id: string, by: Author): void
   /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
   applyColor(color: string): boolean
   /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
@@ -184,6 +187,10 @@ export const HIGHLIGHTER_SCALE = 4
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
 const GRID_PITCH = 24
+/** A press waits this long for a world's answer: long enough for a pick, too short to feel. */
+const PICK_HOLD_MS = 30
+/** A mark waits this long for a world's answer: nothing waits on it. */
+const PICK_MARK_MS = 300
 /** A linked item fades out over this long when its point is hidden. */
 const LINK_FADE_MS = 200
 /** How long the "an agent looked here" outline shows. */
@@ -310,6 +317,13 @@ function resizedBox(box: Region, handle: Handle, delta: Point, keepAspect: boole
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
+/** A pin goes with its mark: an erased or undone mark leaves no pin. */
+function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
+  if (!nodes.some((node) => isLive(node) && node.pins?.length)) return nodes
+  const ids = new Set(nodes.map((node) => node.id))
+  return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
+}
+
 export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, onSelectionChange, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
@@ -364,6 +378,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const linkedNodesRef = useRef<{ index: SceneIndex | null; list: LinkedNode[] }>({ index: null, list: [] })
   const worldPointsRef = useRef<WorldPoints>({})
   const fadeAtRef = useRef(0)
+  /** What worlds moved themselves by: only selection and links read it. */
+  const anchorsRef = useRef(new Map<string, Point>())
+  /** A press waits here for the worlds' answer, with what came after it. */
+  const holdRef = useRef<{ pointerId: number; events: Array<['move' | 'up' | 'cancel', React.PointerEvent<HTMLDivElement>]> } | null>(null)
+  /** The press that goes to a world. */
+  const streamRef = useRef<{ id: string; pointerId: number } | null>(null)
+  /** The pointer's last move, for the worlds that listen: it goes once per paint. */
+  const moveRef = useRef<WorldPointer | null>(null)
   /** Pen tips and changing ink in the last frame (the ink canvas paints again when they go). */
   const inkMomentRef = useRef({ tips: 0, inks: 0 })
   const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
@@ -525,7 +547,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const placeLinks = useCallback(() => {
     const rest = restLayoutRef.current
     const links = linksRef.current
-    if (!links.size) {
+    const anchors = anchorsRef.current
+    if (!links.size && !anchors.size) {
       layoutRef.current = rest
       return
     }
@@ -533,6 +556,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     for (const [id, link] of links) {
       const box = rest.get(id)
       if (box) live.set(id, linkedBox(box, link.look))
+    }
+    for (const [id, [dx, dy]] of anchors) {
+      const box = rest.get(id)
+      if (box) live.set(id, { ...box, x: box.x + dx, y: box.y + dy })
     }
     layoutRef.current = live
   }, [])
@@ -633,6 +660,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         // First the worlds: a new picture moves the items linked to it, and they paint in this same paint.
         syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
         placeWorlds()
+        if (moveRef.current) {
+          moveWorlds(moveRef.current, streamRef.current?.id ?? null)
+          moveRef.current = null
+        }
         const fading = fadeLinks()
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
@@ -677,9 +708,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     return bindWorldBoard(board, {
       paint: () => requestPaint({}),
       points: followPoints,
-      place: worldPlace
+      place: worldPlace,
+      anchor: (id, dx, dy) => {
+        if (dx || dy) anchorsRef.current.set(id, [dx, dy])
+        else if (!anchorsRef.current.delete(id)) return
+        placeLinks()
+        if (selectedIdsRef.current.includes(id)) setLayoutVersion((version) => version + 1)
+      },
+      wants: () => sendWorldInk(paintInks())
     })
-  }, [followPoints, requestPaint, worldPlace])
+  }, [followPoints, paintInks, placeLinks, requestPaint, worldPlace])
 
   // ---------- Layout cache ----------
 
@@ -698,11 +736,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const linked = new Set(linkedNodes().map((node) => node.id))
     for (const id of linksRef.current.keys()) if (!linked.has(id)) linksRef.current.delete(id)
     placeLinks()
+    sendWorldInk(paintInks())
     // Back on, from the new layout (an element's transform is relative to its layout box).
     if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
-  }, [linkedNodes, placeLinks, requestPaint])
+  }, [linkedNodes, paintInks, placeLinks, requestPaint])
 
   /** Measure on the next frame (images, fonts and math settle late). */
   const requestMeasure = useCallback(() => {
@@ -841,7 +880,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   /** Commit an edit: record undo, stamp seq on new or changed nodes, notify. */
   const commitNodes = useCallback(
-    (next: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner', record = true) => {
+    (changedNodes: BoardNode[], snapshot: BoardNode[] = nodesRef.current, by: Author = 'learner', record = true) => {
+      const next = withoutLostPins(changedNodes)
       if (next.length === snapshot.length && next.every((node, i) => node === snapshot[i])) {
         if (nodesRef.current !== snapshot) setNodes(snapshot)
         return false
@@ -865,6 +905,34 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       return true
     },
     [emit, history, setNodes]
+  )
+
+  /**
+   * A mark stays on a part of a world: pick at its centre; on a hit, the world
+   * keeps a pin and the mark follows it. No undo step of its own: the undo of
+   * the stroke takes the pin too. No hit: it stays ordinary ink.
+   */
+  const pinMark = useCallback(
+    async (id: string, by: Author) => {
+      const box = layoutRef.current.get(id)
+      const worlds = markWorlds()
+      if (!box || !worlds.length) return
+      const center: Point = [box.x + box.width / 2, box.y + box.height / 2]
+      const found = await pickWorlds(worlds, center[0], center[1], PICK_MARK_MS)
+      const part = found?.hit.part
+      if (!found || !part) return
+      const nodes = nodesRef.current
+      const mark = nodes.find((node) => node.id === id)
+      if (!mark || !isKnown(mark) || mark.follows) return
+      const pin = { id, part, local: found.hit.local }
+      const next = nodes.map((node) => {
+        if (node.id === id) return { ...node, follows: { world: found.id, point: `pin:${id}`, offset: [-center[0], -center[1]] } } as BoardNode
+        if (node.id === found.id) return { ...node, pins: [...((node as LiveNode).pins ?? []), pin] } as BoardNode
+        return node
+      })
+      commitNodes(next, nodes, by, false)
+    },
+    [commitNodes]
   )
 
   /** Undo or redo: the restored nodes count as changed, so they get a new seq. */
@@ -1074,9 +1142,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     cursor.style.transform = `translate(${screen[0] - ERASE_RADIUS}px, ${screen[1] - ERASE_RADIUS}px)`
   }
 
-  const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-    // The text editor handles its own pointer input.
-    if (event.target instanceof HTMLTextAreaElement) return
+  /** The board's own handling of a press. */
+  const boardPress = (event: React.PointerEvent<HTMLDivElement>): void => {
     // A press on the board (outside the entered item's frame) leaves the item.
     if (enteredLive()) enterLive(null)
     const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
@@ -1143,7 +1210,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     } else kind = 'ink'
 
     try {
-      event.currentTarget.setPointerCapture(event.pointerId)
+      host.setPointerCapture(event.pointerId)
     } catch {
       // Pointer capture may be unavailable.
     }
@@ -1229,7 +1296,34 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
   }
 
+  const worldPointer = (kind: WorldPointer['kind'], event: React.PointerEvent<HTMLDivElement>): WorldPointer => {
+    const host = hostRef.current as HTMLDivElement
+    const [x, y] = screenToBoard(cssPoint(event, host.getBoundingClientRect()), viewportRef.current, cameraRef.current)
+    return { kind, x, y, buttons: event.buttons, pressure: event.pressure, pointerType: event.pointerType, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey }
+  }
+
+  /** A press that waits or that goes to a world takes its pointer's events. True: the board does nothing. */
+  const relayPointer = (kind: 'move' | 'up' | 'cancel', event: React.PointerEvent<HTMLDivElement>): boolean => {
+    const hold = holdRef.current
+    if (hold?.pointerId === event.pointerId) {
+      hold.events.push([kind, event])
+      return true
+    }
+    const stream = streamRef.current
+    if (stream?.pointerId === event.pointerId) {
+      sendWorldPointer(stream.id, worldPointer(kind, event))
+      if (kind !== 'move') streamRef.current = null
+      return true
+    }
+    if (kind === 'move' && wantsPointerMoves()) {
+      moveRef.current = worldPointer('move', event)
+      requestPaint({})
+    }
+    return false
+  }
+
   const pointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (relayPointer('move', event)) return
     const host = hostRef.current
     if (!host) return
     const rect = host.getBoundingClientRect()
@@ -1304,9 +1398,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     }
     lastStrokeAtRef.current = Date.now()
     commitNodes([...nodesRef.current, node])
+    void pinMark(node.id, 'learner')
   }
 
   const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (relayPointer('up', event)) return
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     dragRef.current = null
@@ -1366,6 +1462,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   }
 
   const pointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (relayPointer('cancel', event)) return
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     cancelDrag()
@@ -1386,12 +1483,53 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     requestPaint({ active: true })
   }
 
+  /**
+   * A press. A world that takes input has no box, so only the world can say
+   * what is under the pointer: the press waits for its answer, at most
+   * PICK_HOLD_MS. A hit: the stream goes to the world. A miss: the board
+   * handles the press and what came after it, as if it had just happened.
+   */
+  const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    // The text editor handles its own pointer input.
+    if (event.target instanceof HTMLTextAreaElement) return
+    const host = hostRef.current
+    const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
+    const worlds = host && event.button === 0 && !spaceRef.current && !penEraser && tool !== 'eraser' && !holdRef.current && !streamRef.current ? pressWorlds() : []
+    if (!host || !worlds.length) {
+      boardPress(event)
+      return
+    }
+    event.preventDefault()
+    const hold: NonNullable<typeof holdRef.current> = { pointerId: event.pointerId, events: [] }
+    holdRef.current = hold
+    try {
+      host.setPointerCapture(event.pointerId)
+    } catch {
+      // Pointer capture may be unavailable.
+    }
+    const start = worldPointer('down', event)
+    void pickWorlds(worlds, start.x, start.y, PICK_HOLD_MS).then((found) => {
+      holdRef.current = null
+      if (found) {
+        streamRef.current = { id: found.id, pointerId: event.pointerId }
+        sendWorldPointer(found.id, start)
+        for (const [kind, later] of hold.events) relayPointer(kind, later)
+        return
+      }
+      boardPress(event)
+      for (const [kind, later] of hold.events) (kind === 'move' ? pointerMove : kind === 'up' ? pointerUp : pointerCancel)(later)
+    })
+  }
+
   /** Double-click: drill into a frame (Figma style); on text, edit it. */
   const doubleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
     if (tool !== 'select' || event.target instanceof HTMLTextAreaElement) return
     const host = hostRef.current
     if (!host) return
     const point = screenToBoard(cssPoint(event, host.getBoundingClientRect()), viewportRef.current, cameraRef.current)
+    // A world that takes input on entering: on something in it.
+    const worlds = enterWorlds()
+    if (worlds.length) void pickWorlds(worlds, point[0], point[1], PICK_MARK_MS).then((found) => found && enterLive(found.id))
     const index = indexRef.current
     if (inkAt(index, layoutRef.current, point, TAP_SIZE / cameraRef.current.zoom, shown)) return
     const hit = contentAt(index, layoutRef.current, point, shown)
@@ -1405,7 +1543,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     else {
       setSelectedIds([target.id])
       // A program item that takes input on entering gets the pointer and keys until Escape or a press outside.
-      if (target.kind === 'live' && liveInput(target.id) === 'enter') enterLive(target.id)
+      if (target.kind === 'live' && target.mode !== 'world' && liveInput(target.id) === 'enter') enterLive(target.id)
     }
   }
 
@@ -1415,6 +1553,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const host = hostRef.current
     if (!host) return
     const wheel = (event: WheelEvent): void => {
+      // The world the learner entered takes the wheel.
+      const entered = enteredWorld()
+      if (entered) {
+        event.preventDefault()
+        const rect = host.getBoundingClientRect()
+        const [x, y] = screenToBoard([event.clientX - rect.left, event.clientY - rect.top], viewportRef.current, cameraRef.current)
+        sendWorldPointer(entered, { kind: 'wheel', x, y, buttons: event.buttons, pressure: 0, pointerType: 'mouse', deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })
+        return
+      }
       // An open text editor that can scroll this way scrolls; everything else on the board pans or zooms.
       if (!event.ctrlKey && !event.metaKey && canScroll(event.target, event.deltaX, event.deltaY)) return
       event.preventDefault()
@@ -1520,6 +1667,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return p ? [p[0], p[1]] : null
       },
       worldPoints: () => worldPointsRef.current,
+      pinMark: (id, by) => void pinMark(id, by),
       animateTo: (target, ms = 420, held, follow) => {
         const token = ++glideRef.current
         const from = cameraRef.current

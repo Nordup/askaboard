@@ -1,10 +1,12 @@
 import type { LiveNode } from '@shared/board-format'
+import type { WorldPointer } from '@shared/world-protocol'
 import { scenePlayer } from '../live/player'
 import { absNow, itemTime, sceneTimelineOf, seedOf, tickOf, TICK_HZ, type ItemClock, type LiveTimeline, type SceneClock, type SceneView } from './clock'
 import type { CanvasSize, HostEvents, LiveFrame, LiveHost, LiveInput } from './host'
 import { canvasSyntaxError } from './sandbox'
 import { shaderEngine, shaderError, ShaderHost } from './shader'
 import { boardSlots, type SlotOwner } from './slots'
+import { WorldHost, type WorldHit } from './world/host'
 import { createHost, programError, stillAt } from './stills'
 
 /**
@@ -334,6 +336,7 @@ export class LiveItem implements SlotOwner {
         id: this.id,
         code: this.node.code,
         data: this.node.data,
+        pins: this.node.pins,
         seed: this.seed,
         size: this.size,
         // Stepping: the item's own params under the timeline's, as in a preview.
@@ -542,6 +545,7 @@ export class LiveItem implements SlotOwner {
       this.ensureHost()
       return
     }
+    if (node.pins !== before.pins) this.world?.setPins(node.pins ?? [])
     if (node.w !== before.w || node.h !== before.h) this.measure()
     if (node.params !== before.params) {
       this.paramsChanged()
@@ -599,6 +603,11 @@ export class LiveItem implements SlotOwner {
   /** One display frame for a shader item: true while it wants more. */
   shaderFrame(): boolean {
     return this.host instanceof ShaderHost ? this.host.frame() : false
+  }
+
+  /** The world's host, when this item is a running world. */
+  get world(): WorldHost | null {
+    return this.host instanceof WorldHost && this.status.state !== 'error' ? this.host : null
   }
 
   /** The current pixels and their tick (agent screenshots); a step host makes them when the item has no host. Null when there is no picture. */
@@ -697,6 +706,76 @@ export function nearWorlds(view: { x: number; y: number; width: number; height: 
     const near = rect.x < view.x + view.width * 2 && rect.x + rect.w > view.x - view.width && rect.y < view.y + view.height * 2 && rect.y + rect.h > view.y - view.height
     item.setVisible(near, rect.w * rect.h)
   }
+}
+
+// ---------- Touch: the board's side of a world's input ----------
+
+/** The running worlds, the top one first. */
+function worldItems(): LiveItem[] {
+  return [...items.values()].filter((item) => item.world && item.isVisible).sort((a, b) => b.node.z - a.node.z)
+}
+
+/** The worlds that a press can reach: input "direct", or the world the learner entered. */
+export function pressWorlds(): string[] {
+  return worldItems()
+    .filter((item) => item.status.input === 'direct' || enteredLive() === item.id)
+    .map((item) => item.id)
+}
+
+/** The worlds that take a double-click (input "enter"). */
+export function enterWorlds(): string[] {
+  return worldItems()
+    .filter((item) => item.status.input === 'enter')
+    .map((item) => item.id)
+}
+
+/** The worlds that keep marks: those that take no input. */
+export function markWorlds(): string[] {
+  return worldItems()
+    .filter((item) => (item.status.input ?? 'none') === 'none')
+    .map((item) => item.id)
+}
+
+/** The top world with something at a board point, within `ms`; null: none. */
+export async function pickWorlds(ids: readonly string[], x: number, y: number, ms: number): Promise<{ id: string; hit: WorldHit } | null> {
+  const hits = await Promise.all(ids.map((id) => items.get(id)?.world?.pick(x, y, ms) ?? Promise.resolve(null)))
+  const at = hits.findIndex(Boolean)
+  return at < 0 ? null : { id: ids[at], hit: hits[at] as WorldHit }
+}
+
+/** A pointer event for one world, while it listens. */
+export function sendWorldPointer(id: string, event: WorldPointer): void {
+  const world = items.get(id)?.world
+  if (world?.wants.pointer) world.pointer(event)
+}
+
+export function wantsPointerMoves(): boolean {
+  return [...items.values()].some((item) => item.world?.wants.pointer)
+}
+
+/** A board-wide move for every world that listens. */
+export function moveWorlds(event: WorldPointer, except: string | null): void {
+  for (const item of items.values()) if (item.world?.wants.pointer && item.id !== except) item.world.pointer(event)
+}
+
+/** The world the learner entered, while it takes the pointer. */
+export function enteredWorld(): string | null {
+  return entered && items.get(entered)?.world ? entered : null
+}
+
+/** The board's ink for every world that listens. */
+export function sendWorldInk(inks: ReadonlyArray<{ node: { id: string; points: ReadonlyArray<readonly number[]> }; offset: readonly [number, number] }>): void {
+  const list = inks.map(({ node, offset }) => ({
+    id: node.id,
+    node,
+    points: () => node.points.map((p): [number, number, number] => [p[0] + offset[0], p[1] + offset[1], p[2] ?? 0.5])
+  }))
+  for (const item of items.values()) if (item.world?.wants.ink) item.world.sendInk(list)
+}
+
+/** The names of a world's published parts, from its last picture. */
+export function liveParts(id: string): string[] | null {
+  return items.get(id)?.world?.parts ?? null
 }
 
 export function unobserve(element: HTMLElement): void {
