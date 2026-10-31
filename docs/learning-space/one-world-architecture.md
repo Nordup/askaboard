@@ -1,6 +1,9 @@
 # One world: the architecture
 
-> **Status (2026-10-31):** the build plan for
+> **Status (2026-10-31):** built on branch `one-world`, slices 1 to 4, and reviewed
+> twice by GPT-6.1 Sol. The text of slice 5 is a draft
+> ([compare](drafts/one-world-text-2026-10-31/compare.html)). `shader`, `canvas` and
+> `program` stay until worlds replace them. This file is the plan for
 > [`one-world-design.md`](one-world-design.md), on branch `one-world`. Terms:
 > a **world** is a live node with mode `world`. The **surface** is the one GPU
 > canvas that draws all worlds. The contract between the page and the worker is
