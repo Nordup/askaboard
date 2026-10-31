@@ -379,7 +379,13 @@ async function withLiveStills(plan: ScreenshotPlan): Promise<ScreenshotPlan> {
   if (plan.kind !== 'plan') return plan
   const nodes = plan.nodes as BoardNode[]
   if (!nodes.some(isLive)) return plan
-  const withStills = await Promise.all(nodes.map(async (node) => (isLive(node) ? { ...node, still: (await liveStill(node.id))?.url ?? undefined } : node)))
+  const withStills = await Promise.all(
+    nodes.map(async (node) => {
+      if (!isLive(node)) return node
+      const still = await liveStill(node.id)
+      return { ...node, still: still?.url ?? undefined, ...(still?.box ? { stillBox: still.box } : {}) }
+    })
+  )
   return { ...plan, nodes: withStills }
 }
 
@@ -395,7 +401,7 @@ async function liveStillsOf(params: AgentMethods['liveStills']['params']): Promi
   ])
   const board = onBoard.map(({ id, frame }) => {
     const still = now.get(id)
-    return { frame, id, url: still?.url ?? null, tick: still?.tick ?? null, ...(still?.points ? { points: still.points } : {}) }
+    return { frame, id, url: still?.url ?? null, tick: still?.tick ?? null, ...(still?.points ? { points: still.points } : {}), ...(still?.box ? { box: still.box } : {}) }
   })
   return { stills: [...scene, ...board] }
 }

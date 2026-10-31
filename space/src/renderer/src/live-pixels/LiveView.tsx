@@ -99,6 +99,8 @@ function LiveRunner({ node, style, common }: Props) {
 function LiveStill({ node, style, common }: Props) {
   const given = (node as unknown as { still?: unknown }).still
   const url = typeof given === 'string' && given.startsWith('data:image/') ? given : null
+  // A world's picture can pass its rect: the snapshot frame shows it in the world layer, and this box stays an anchor.
+  if (url && node.mode === 'world') return <div {...common} className="node node-live" style={style} />
   if (!url) {
     return (
       <div {...common} className="node node-live node-live--note" style={style}>

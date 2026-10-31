@@ -258,12 +258,7 @@ export class LiveItem implements SlotOwner {
 
   /** The host runs frames while the window shows and the item wants a host. */
   private runs(): boolean {
-    return this.wantsTicks() && document.visibilityState !== 'hidden'
-  }
-
-  /** A world can reach past its element, so a world with a host runs off screen too. */
-  private wantsTicks(): boolean {
-    return this.wantsHost() || this.node.mode === 'world'
+    return this.wantsHost() && document.visibilityState !== 'hidden'
   }
 
   /** Wanted with no host: start one (canvas and program items need a slot first). */
@@ -485,7 +480,8 @@ export class LiveItem implements SlotOwner {
       const starts = !this.scene.active
       this.scene = { t: clock.t, playing: clock.playing, active: true, ended: false, step: clock.step }
       if ((jump || starts) && this.stopped) this.retry()
-      else if (jump && this.host && this.node.mode !== 'shader') this.restart()
+      // A failed world stays stopped: a hung world would hang every world again.
+      else if (jump && this.host && this.node.mode !== 'shader' && !(this.node.mode === 'world' && this.status.state === 'error')) this.restart()
       else this.followClock()
       // Its scene plays or waits: the host starts now, on screen or not, and stays until the scene settles.
       if (starts) this.wantChanged()
@@ -572,7 +568,7 @@ export class LiveItem implements SlotOwner {
 
   /** The window was hidden or shown: hosts run only while it shows. */
   windowShown(shown: boolean): void {
-    this.host?.run(shown && this.wantsTicks())
+    this.host?.run(shown && this.wantsHost())
     this.aliveAt = performance.now()
     if (shown && this.node.mode === 'shader') ensureLoop()
   }
@@ -676,6 +672,8 @@ let observer: IntersectionObserver | null = null
 const byElement = new WeakMap<Element, LiveItem>()
 
 export function observe(element: HTMLElement, item: LiveItem): void {
+  // A world reaches past its rect, and the board clips its elements: the board's paint places worlds (nearWorlds).
+  if (item.node.mode === 'world') return
   observer ??= new IntersectionObserver(
     (entries) => {
       for (const entry of entries) byElement.get(entry.target)?.setVisible(entry.isIntersecting, entry.intersectionRect.width * entry.intersectionRect.height)
@@ -685,6 +683,20 @@ export function observe(element: HTMLElement, item: LiveItem): void {
   )
   byElement.set(element, item)
   observer.observe(element)
+}
+
+/**
+ * In the board's paint: each world is wanted while its rect is within one
+ * screen of the view, so what it reaches is there when it comes into view.
+ */
+export function nearWorlds(view: { x: number; y: number; width: number; height: number }, rectOf: (id: string) => { x: number; y: number; w: number; h: number } | null): void {
+  for (const item of items.values()) {
+    if (item.node.mode !== 'world') continue
+    const rect = rectOf(item.id)
+    if (!rect) continue
+    const near = rect.x < view.x + view.width * 2 && rect.x + rect.w > view.x - view.width && rect.y < view.y + view.height * 2 && rect.y + rect.h > view.y - view.height
+    item.setVisible(near, rect.w * rect.h)
+  }
 }
 
 export function unobserve(element: HTMLElement): void {

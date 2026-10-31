@@ -41,6 +41,8 @@ export interface LiveFrame {
   tick: number
   /** Worlds: the published points in this picture, from the nominal rect's top-left. */
   points?: Record<string, [number, number, boolean]>
+  /** Worlds: where the picture sits in board points, from the nominal rect's top-left. It can pass the rect. */
+  box?: { x: number; y: number; w: number; h: number }
 }
 
 export interface HostStart {

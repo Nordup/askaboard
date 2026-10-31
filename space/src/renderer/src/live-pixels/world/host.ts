@@ -1,4 +1,4 @@
-import type { WorldKey, WorldStill, WorldToPage } from '@shared/world-protocol'
+import type { WorldKey, WorldToPage } from '@shared/world-protocol'
 import type { ItemClock, SceneView } from '../clock'
 import { blobUrl, type CanvasSize, type HostEvents, type HostStart, type LiveFrame, type LiveHost } from '../host'
 import { boardColors } from '../sandbox'
@@ -13,23 +13,11 @@ import { boardSurface, WorldSurface, type WorldMember } from './surface'
  * paint. A generation shows when it goes live, or at its first frame when it
  * starts live.
  *
- * A step host has a private surface (previews, stills, checks). A still can
- * reach past the nominal rect; in this slice the picture is cropped to it.
+ * A step host has a private surface (previews, stills, checks). A still shows
+ * all that the world reaches, so it can pass the nominal rect: its box says where.
  */
 
 let nextGeneration = 1
-
-/** The still as a picture of the nominal rect, as a data URL. */
-async function stillUrl(still: WorldStill, w: number, h: number): Promise<string | null> {
-  if (!still.blob) return null
-  if (still.x === 0 && still.y === 0 && still.w === w && still.h === h) return blobUrl(still.blob)
-  const bitmap = await createImageBitmap(still.blob)
-  const scale = bitmap.width / Math.max(1e-3, still.w)
-  const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)))
-  canvas.getContext('2d')?.drawImage(bitmap, still.x * scale, still.y * scale)
-  bitmap.close()
-  return blobUrl(await canvas.convertToBlob({ type: 'image/png' }))
-}
 
 export class WorldHost implements LiveHost, WorldMember {
   readonly element = null
@@ -92,8 +80,8 @@ export class WorldHost implements LiveHost, WorldMember {
         break
       case 'frame': {
         const { request, tick } = m
-        const { points } = m.still
-        void stillUrl(m.still, this.w, this.h).then((url) => this.settle(request, { url, tick, ...(points ? { points } : {}) }))
+        const { blob, x, y, w, h, points } = m.still
+        void blobUrl(blob).then((url) => this.settle(request, { url, tick, box: { x, y, w, h }, ...(points ? { points } : {}) }))
         break
       }
       case 'error':
@@ -113,6 +101,11 @@ export class WorldHost implements LiveHost, WorldMember {
     this.surface.changed()
   }
 
+  /** It takes no part in a new worker: it failed or left. */
+  get ended(): boolean {
+    return this.stopped
+  }
+
   failed(message: string): void {
     this.shown = false
     this.surface.changed()
@@ -121,7 +114,10 @@ export class WorldHost implements LiveHost, WorldMember {
     this.events.onError(message)
   }
 
+  /** Its worker ended: the item starts a new generation. */
   lost(): void {
+    this.stopped = true
+    this.closeWaits()
     this.events.onLost()
   }
 

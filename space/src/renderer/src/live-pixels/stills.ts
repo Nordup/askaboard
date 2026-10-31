@@ -123,6 +123,8 @@ export interface LiveStill {
   tick: number | null
   /** Worlds: the published points in this picture, from the nominal rect's top-left. */
   points?: Record<string, [number, number, boolean]>
+  /** Worlds: where the picture sits, from the nominal rect's top-left. */
+  box?: { x: number; y: number; w: number; h: number }
 }
 
 /** Pictures of each item at its moments: one step host per item, from tick 0 forward. */
@@ -143,7 +145,7 @@ async function itemStills(item: LiveStillRequest, scale: number): Promise<LiveSt
   })
   return item.moments.map((moment) => {
     const frame = pictures.get(tickOf(moment.t))
-    return { frame: moment.frame, id: item.node.id, url: frame?.url ?? null, tick: frame ? frame.tick : null, ...(frame?.points ? { points: frame.points } : {}) }
+    return { frame: moment.frame, id: item.node.id, url: frame?.url ?? null, tick: frame ? frame.tick : null, ...(frame?.points ? { points: frame.points } : {}), ...(frame?.box ? { box: frame.box } : {}) }
   })
 }
 

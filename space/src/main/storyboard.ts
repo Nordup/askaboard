@@ -1,4 +1,5 @@
 import { linkedOverrides, linkedTip, type Linkable, type NodeFollows, type TipLink, type WorldPoints } from '@shared/world-links'
+import type { SnapshotCellBoxes } from '@shared/space-api'
 import type { SnapshotRenderer } from './snapshot'
 
 /**
@@ -29,6 +30,8 @@ export interface StoryboardStill {
   tick: number | null
   /** Worlds: the published points in this picture, from the nominal rect's top-left. */
   points?: Record<string, [number, number, boolean]>
+  /** Worlds: where the picture sits, from the nominal rect's top-left. */
+  box?: { x: number; y: number; w: number; h: number }
 }
 
 export interface StoryboardInput {
@@ -100,10 +103,14 @@ export async function renderStoryboard(
   const shotRect = { x: rect.x, y: rect.y - labelBoard, width: rect.width, height: rect.height + labelBoard }
   const shotH = cellH + LABEL
   const stillsOf = new Map<number, Record<string, string>>()
+  const boxesOf = new Map<number, NonNullable<SnapshotCellBoxes>>()
   for (const still of input.stills ?? []) {
     if (!still.url) continue
     if (!stillsOf.has(still.frame)) stillsOf.set(still.frame, {})
     stillsOf.get(still.frame)![still.id] = still.url
+    if (!still.box) continue
+    if (!boxesOf.has(still.frame)) boxesOf.set(still.frame, {})
+    boxesOf.get(still.frame)![still.id] = still.box
   }
   const count = Math.max(1, input.frames.length)
   const columns = Math.min(MAX_COLUMNS, count)
@@ -129,6 +136,7 @@ export async function renderStoryboard(
         top: Math.floor(index / columns) * (shotH + GAP),
         nodes: [...frame.inks, labelNode(`${index + 1}. ${frame.label}`, rect.x + 4 / scale, rect.y - labelBoard + 4 / scale, scale, index)],
         ...(stillsOf.has(index) ? { stills: stillsOf.get(index) } : {}),
+        ...(boxesOf.has(index) ? { stillBoxes: boxesOf.get(index) } : {}),
         playback: linkedPlayback(input, frame, index),
         // Each frame marks the learner's view and its hidden parts at its own moment (the camera can move).
         marks: [

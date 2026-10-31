@@ -24,7 +24,17 @@ import * as worker from './worker'
  *
  * A step host (previews, stills) has a private surface with no canvas: its
  * pictures end at once, and only its captures reach the page.
+ *
+ * Recovery. The worker runs all worlds in one thread, so an endless loop in one
+ * stops all. A worker that gives no answer for HANG_MS, or that lost its GPU
+ * context, ends. A new worker takes every world again; each item starts a new
+ * generation from its node. The world that ran last at a hang stays stopped with
+ * the usual note. The last picture stays until the new worker shows a world.
  */
+
+/** How often the surface asks the worker for an answer, and how long it waits for one. */
+const PING_MS = 500
+const HANG_MS = 2000
 
 /** How a world stands on the board now, from the board's state. */
 export interface WorldPlace {
@@ -49,6 +59,8 @@ export interface WorldBoard {
 export interface WorldMember {
   readonly key: WorldKey
   readonly shown: boolean
+  /** It failed or left: a new worker does not take it. */
+  readonly ended: boolean
   receive(message: Extract<WorldToPage, { key: WorldKey }>): void
   failed(message: string): void
   lost(): void
@@ -125,6 +137,15 @@ export class WorldSurface {
   private transform = ''
   private lastView = ''
   private seq = 0
+  private watchdog = 0
+  private checkedAt = 0
+  /** When the worker last gave any message; 0 until it is ready. */
+  private answeredAt = 0
+  private pings = 0
+  /** The world that runs now in the worker, as it last said. */
+  private running: WorldKey | null = null
+  /** After a recovery: the view with the first world shown. Pictures before it do not show. */
+  private recovering: { seq: number } | null = null
 
   /** canvas null: a private surface of the given size, with no board to follow. */
   constructor(
@@ -161,6 +182,56 @@ export class WorldSurface {
     if (frame.contentWindow) byWindow.set(frame.contentWindow, this)
     this.channel = new MessageChannel()
     this.channel.port1.onmessage = (event) => this.receive(event.data as WorldToPage)
+    if (this.canvas && !this.watchdog) {
+      this.checkedAt = performance.now()
+      this.watchdog = window.setInterval(() => this.check(), PING_MS)
+    }
+  }
+
+  /** Ask the worker for an answer. A window that was hidden or a machine that slept proves nothing. */
+  private check(): void {
+    const now = performance.now()
+    const late = now - this.checkedAt > PING_MS * 3
+    this.checkedAt = now
+    if (!this.answeredAt || this.outbox) return
+    if (late || document.visibilityState === 'hidden' || !this.members.size) this.answeredAt = now
+    else if (now - this.answeredAt > HANG_MS) {
+      this.recover(this.running)
+      return
+    }
+    this.channel?.port1.postMessage({ type: 'ping', n: ++this.pings } satisfies PageToWorld)
+  }
+
+  /** End the worker and start again. `fault`: the world that stays stopped. */
+  private recover(fault: WorldKey | null): void {
+    const members = [...this.members.values()]
+    this.endWorker()
+    this.members.clear()
+    this.removals = []
+    this.outbox = []
+    this.opened = false
+    this.size = ''
+    this.lastView = ''
+    this.running = null
+    if (this.waiting) this.waiting.bitmap.close()
+    this.waiting = null
+    this.recovering = { seq: Number.POSITIVE_INFINITY }
+    for (const member of members) {
+      if (member.ended) continue
+      if (fault && keyOf(fault) === keyOf(member.key)) member.failed('This world stopped answering.')
+      else member.lost()
+    }
+  }
+
+  private endWorker(): void {
+    this.frame?.contentWindow?.postMessage({ type: 'stop' }, '*')
+    this.channel?.port1.close()
+    for (const [win, surface] of byWindow) if (surface === this) byWindow.delete(win)
+    this.box?.remove()
+    this.frame = null
+    this.box = null
+    this.channel = null
+    this.answeredAt = 0
   }
 
   /** A message from the frame: it is ready, or the worker failed to load. */
@@ -197,17 +268,20 @@ export class WorldSurface {
 
   private receive(m: WorldToPage): void {
     if (this.disposed) return
+    this.answeredAt = performance.now()
     if (m.type === 'picture') this.picture(m)
-    else if (m.type === 'lost') for (const member of [...this.members.values()]) member.lost()
+    else if (m.type === 'running') this.running = m.running
+    else if (m.type === 'lost') this.recover(null)
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }
 
   private picture(m: Picture): void {
-    if (!this.context) {
+    if (!this.context || (this.recovering && m.seq < this.recovering.seq)) {
       m.bitmap.close()
       this.post({ type: 'presented', n: m.n })
       return
     }
+    this.recovering = null
     this.waiting?.bitmap.close()
     this.waiting = m
     this.board?.paint()
@@ -318,6 +392,7 @@ export class WorldSurface {
     if (text !== this.lastView) {
       this.lastView = text
       this.post({ type: 'view', seq: ++this.seq, camera: view, placements })
+      if (this.recovering && placements.some((placement) => placement.shown)) this.recovering.seq = Math.min(this.recovering.seq, this.seq)
     }
     for (const key of this.removals) this.post({ type: 'remove', key })
     this.removals = []
@@ -328,10 +403,8 @@ export class WorldSurface {
     this.disposed = true
     this.waiting?.bitmap.close()
     this.waiting = null
-    this.frame?.contentWindow?.postMessage({ type: 'stop' }, '*')
-    this.channel?.port1.close()
-    for (const [win, surface] of byWindow) if (surface === this) byWindow.delete(win)
-    this.box?.remove()
+    clearInterval(this.watchdog)
+    this.endWorker()
     this.context?.transferFromImageBitmap(null)
   }
 }

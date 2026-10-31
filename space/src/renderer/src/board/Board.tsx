@@ -21,9 +21,9 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
-import { enterLive, enteredLive, liveInput, setLivePlayback } from '../live-pixels/registry'
+import { enterLive, enteredLive, liveInput, nearWorlds, setLivePlayback } from '../live-pixels/registry'
 import { bindWorldBoard, syncWorlds } from '../live-pixels/world/surface'
-import { linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
+import { linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -321,6 +321,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const nodesRef = useRef<BoardNode[]>(doc.nodes)
   const indexRef = useRef<SceneIndex>(buildIndex(doc.nodes))
   const layoutRef = useRef<LayoutMap>(new Map())
+  /** The layout as measured: linked items at their resting place. `layoutRef` shows them where they are now. */
+  const restLayoutRef = useRef<LayoutMap>(layoutRef.current)
   const elementsRef = useRef(new Map<string, HTMLElement>())
   const nextSeqRef = useRef(doc.nextSeq)
   /** The step key of the last undo step when an agent commit with a key made it (agentCommit), else null. */
@@ -347,7 +349,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
   const playbackRef = useRef<PlaybackFrame | null>(null)
   /** What the learner sees now: every learner input that picks or changes items asks it (scene.ts shownNow). */
-  const shown = useCallback<Shown>((node) => shownNow(node, indexRef.current.byId, playbackRef.current?.overrides ?? null), [])
+  const shown = useCallback<Shown>((node) => shownNow(node, indexRef.current.byId, playbackRef.current?.overrides ?? null) && linksRef.current.get(node.id)?.alpha !== 0, [])
   const ghostRootRef = useRef<HTMLDivElement>(null)
   const ghostElementsRef = useRef(new Map<string, HTMLElement>())
   const ghostNodesRef = useRef<readonly BoardNode[]>([])
@@ -405,7 +407,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const paintInksRef = useRef<{ index: SceneIndex | null; layout: LayoutMap | null; list: readonly PaintInk[] }>({ index: null, layout: null, list: [] })
   const paintInks = useCallback((): readonly PaintInk[] => {
     const memo = paintInksRef.current
-    const layout = layoutRef.current
+    const layout = restLayoutRef.current
     const index = indexRef.current
     if (memo.index !== index || memo.layout !== layout) {
       const list: PaintInk[] = inkPaintOrder(index).map((node) => {
@@ -473,7 +475,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         applied.delete(id)
         return
       }
-      const box = mine ? layoutRef.current.get(id) : null
+      const box = mine ? restLayoutRef.current.get(id) : null
       const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
       const opacity = Number((node as ContentNode).style?.opacity ?? '1')
       applyElementOverride(element, override, origin, Number.isFinite(opacity) ? opacity : 1)
@@ -519,6 +521,22 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     [applyPlaybackToDom]
   )
 
+  /** Hit tests, selection boxes and agent bounds read linked items where they show now. */
+  const placeLinks = useCallback(() => {
+    const rest = restLayoutRef.current
+    const links = linksRef.current
+    if (!links.size) {
+      layoutRef.current = rest
+      return
+    }
+    const live = new Map(rest)
+    for (const [id, link] of links) {
+      const box = rest.get(id)
+      if (box) live.set(id, linkedBox(box, link.look))
+    }
+    layoutRef.current = live
+  }, [])
+
   /**
    * The points of the picture this paint adopts: linked items move to them.
    * An item whose world has no point now stays at its last place.
@@ -538,17 +556,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         links.set(node.id, { look, alpha: was?.alpha ?? (look.visible ? 1 : 0) })
         changed.add(node.id)
       }
-      if (links.size > nodes.length || nodes.length === 0) {
-        const kept = new Set(nodes.map((node) => node.id))
-        for (const id of links.keys()) {
-          if (kept.has(id)) continue
-          links.delete(id)
-          changed.add(id)
-        }
-      }
       showLinks(changed)
+      if (changed.size) {
+        placeLinks()
+        if (selectedIdsRef.current.some((id) => changed.has(id))) setLayoutVersion((version) => version + 1)
+      }
     },
-    [linkedNodes, showLinks]
+    [linkedNodes, placeLinks, showLinks]
   )
 
   /** One step of the fades of links: true while one goes on. */
@@ -575,6 +589,28 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     return out
   }, [])
 
+  /** Where a world's rect stands now, from its node and the layout, with no scene's look. */
+  const worldPlace = useCallback((id: string) => {
+    const own = indexRef.current.byId.get(id)
+    const node = own ?? ghostByIdRef.current.get(id)
+    if (!node || !isLive(node)) return null
+    const box = own ? restLayoutRef.current.get(id) : undefined
+    return { node, x: box?.x ?? node.x, y: box?.y ?? node.y, override: playbackRef.current?.overrides.get(id) }
+  }, [])
+
+  /** Worlds within one screen of the view are wanted. */
+  const placeWorlds = useCallback(() => {
+    const [vw, vh] = viewportRef.current
+    if (vw < 2 || vh < 2) return
+    const camera = cameraRef.current
+    const width = vw / camera.zoom
+    const height = vh / camera.zoom
+    nearWorlds({ x: camera.center[0] - width / 2, y: camera.center[1] - height / 2, width, height }, (id) => {
+      const place = worldPlace(id)
+      return place && { x: place.x, y: place.y, w: place.node.w, h: place.node.h }
+    })
+  }, [worldPlace])
+
   /**
    * Paint the dirty ink layers: in the next animation frame, or with `now`
    * at once (a playback frame: its overrides are in the DOM already, so its
@@ -596,6 +632,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         paintFrameRef.current = null
         // First the worlds: a new picture moves the items linked to it, and they paint in this same paint.
         syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
+        placeWorlds()
         const fading = fadeLinks()
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
@@ -620,7 +657,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (now) paint()
       else paintFrameRef.current = requestAnimationFrame(paint)
     },
-    [applyContentTransform, fadeLinks, ghostInks, paintInks, paintOverrides]
+    [applyContentTransform, fadeLinks, ghostInks, paintInks, paintOverrides, placeWorlds]
   )
   // A cancelled frame must also clear its slot. React runs this cleanup and then
   // mounts again (StrictMode in dev, Fast Refresh): a slot left set says "a frame
@@ -640,15 +677,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     return bindWorldBoard(board, {
       paint: () => requestPaint({}),
       points: followPoints,
-      place: (id) => {
-        const own = indexRef.current.byId.get(id)
-        const node = own ?? ghostByIdRef.current.get(id)
-        if (!node || !isLive(node)) return null
-        const box = own ? layoutRef.current.get(id) : undefined
-        return { node, x: box?.x ?? node.x, y: box?.y ?? node.y, override: playbackRef.current?.overrides.get(id) }
-      }
+      place: worldPlace
     })
-  }, [followPoints, requestPaint])
+  }, [followPoints, requestPaint, worldPlace])
 
   // ---------- Layout cache ----------
 
@@ -662,12 +693,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     applied.clear()
     const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
     addInkLayout(indexRef.current, layout)
-    layoutRef.current = layout
+    restLayoutRef.current = layout
+    // An item that lost its link or left the board shows no link any more.
+    const linked = new Set(linkedNodes().map((node) => node.id))
+    for (const id of linksRef.current.keys()) if (!linked.has(id)) linksRef.current.delete(id)
+    placeLinks()
     // Back on, from the new layout (an element's transform is relative to its layout box).
     if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
-  }, [requestPaint])
+  }, [linkedNodes, placeLinks, requestPaint])
 
   /** Measure on the next frame (images, fonts and math settle late). */
   const requestMeasure = useCallback(() => {
@@ -710,14 +745,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const nextIndex = buildIndex(next)
       indexRef.current = nextIndex
       // Ink layout now, so hit tests right after an edit are right; content is measured after render.
-      const layout = new Map(layoutRef.current)
+      const layout = new Map(restLayoutRef.current)
       for (const id of layout.keys()) if (!nextIndex.byId.has(id)) layout.delete(id)
       addInkLayout(nextIndex, layout)
-      layoutRef.current = layout
+      restLayoutRef.current = layout
+      placeLinks()
       setIndex(nextIndex)
       requestPaint({ committed: true })
     },
-    [requestPaint]
+    [placeLinks, requestPaint]
   )
 
   // ---------- Camera ----------

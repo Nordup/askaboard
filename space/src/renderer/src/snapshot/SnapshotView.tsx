@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { BoardNode } from '@shared/board-format'
+import { isLive, type BoardNode } from '@shared/board-format'
 import type { SnapshotMark, SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
 import { applyElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
 import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
+import type { LayoutBox } from '../board/types'
 import '../board/board.css'
 import './snapshot.css'
 
@@ -178,9 +179,38 @@ function cellsOf(req: SnapshotRequest): CellPlan[] {
   const { width, height, markTop = 0 } = req.cells
   return req.cells.list.map((cell) => {
     const stills = cell.stills
-    const shared = stills ? (req.nodes as BoardNode[]).map((node) => (stills[node.id] ? ({ ...node, still: stills[node.id] } as BoardNode) : node)) : (req.nodes as BoardNode[])
+    const boxes = cell.stillBoxes
+    const shared = stills ? (req.nodes as BoardNode[]).map((node) => (stills[node.id] ? ({ ...node, still: stills[node.id], ...(boxes?.[node.id] ? { stillBox: boxes[node.id] } : {}) } as BoardNode) : node)) : (req.nodes as BoardNode[])
     return { left: cell.left, top: cell.top, width, height, index: buildIndex([...shared, ...(cell.nodes as BoardNode[])]), playback: cell.playback, marks: cell.marks ?? [], markTop }
   })
+}
+
+/**
+ * The world stills of a frame, as on the board: above the content, below the
+ * ink, in board order, with no clip at the world's rect.
+ */
+async function showWorlds(layer: HTMLDivElement | null, root: HTMLElement, index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, overrides: ReadonlyMap<string, NodeOverride>): Promise<void> {
+  if (!layer) return
+  layer.style.transform = root.style.transform
+  const worlds = [...index.byId.values()].filter(isLive).filter((node) => node.mode === 'world').sort((a, b) => a.z - b.z)
+  for (const node of worlds) {
+    const { still, stillBox: place } = node as unknown as { still?: unknown; stillBox?: { x: number; y: number; w: number; h: number } }
+    const box = layout.get(node.id)
+    if (typeof still !== 'string' || !still || !place || !box) continue
+    const image = new Image()
+    image.className = 'snapshot__world'
+    image.src = still
+    image.style.left = `${box.x + place.x}px`
+    image.style.top = `${box.y + place.y}px`
+    image.style.width = `${place.w}px`
+    image.style.height = `${place.h}px`
+    const opacity = Number(node.style?.opacity ?? '1') || 1
+    image.style.opacity = String(opacity)
+    layer.appendChild(image)
+    await image.decode().catch(() => undefined)
+    const override = overrides.get(node.id)
+    if (override) applyElementOverride(image, override, [box.x + place.x, box.y + place.y], opacity)
+  }
 }
 
 /**
@@ -191,6 +221,7 @@ function cellsOf(req: SnapshotRequest): CellPlan[] {
 function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: CellPlan; onDone: (result: number | Error) => void }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLImageElement>(null)
+  const worldsRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const elements = useRef(new Map<string, HTMLElement>())
   const ctx = useRef<ContentContext>(null as unknown as ContentContext)
@@ -229,6 +260,7 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
         const node = cell.index.byId.get(id) as { style?: { opacity?: string } } | undefined
         applyElementOverride(element, override, [box.x, box.y], Number(node?.style?.opacity ?? '1') || 1)
       }
+      await showWorlds(worldsRef.current, root, cell.index, layout, overrides)
       const inks = inkPaintOrder(cell.index).map((node) => {
         const box = layout.get(node.id)
         return { node, offset: (box ? [box.ox, box.oy] : inkOffset(node, cell.index.byId, layout)) as [number, number] }
@@ -261,6 +293,7 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
   return (
     <div className="snapshot__frame" style={{ left: cell.left, top: cell.top, width: cell.width, height: cell.height, background: req.background }}>
       <ContentLayer index={cell.index} editingId={null} ctx={ctx} rootRef={rootRef} />
+      <div className="snapshot__worlds" ref={worldsRef} />
       <img className="snapshot__ink" ref={inkRef} alt="" />
       {req.overlays && <Overlays req={req} overlays={req.overlays} />}
       {req.outlines.map((outline, i) => (

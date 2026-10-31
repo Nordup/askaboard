@@ -309,6 +309,9 @@ export type ScreenshotPlan =
       playing?: { scene: string; name: string | null; t: number | null; duration: number | null; step: string | null; paused: boolean }
     }
 
+/** Where the pictures of worlds sit in a frame, by node id. */
+export type SnapshotCellBoxes = Record<string, { x: number; y: number; w: number; h: number }>
+
 /** Main → snapshot window: draw this, then answer snapshotReady. */
 export interface SnapshotRequest {
   requestId: number
@@ -363,6 +366,8 @@ export interface SnapshotCell {
   nodes: unknown[]
   /** Pictures of live items in this frame, by node id (image URLs). */
   stills?: Record<string, string>
+  /** Worlds: where each picture sits, from the nominal rect's top-left, by node id. */
+  stillBoxes?: SnapshotCellBoxes
   playback?: SnapshotPlayback
   /** The marks of this frame (its own view and covered parts). */
   marks?: SnapshotMark[]
@@ -451,7 +456,7 @@ export interface AgentMethods {
    */
   liveStills: {
     params: { items: LiveStillsItem[]; scale: number }
-    result: { stills: Array<{ frame: number; id: string; url: string | null; tick: number | null; points?: Record<string, [number, number, boolean]> }> }
+    result: { stills: Array<{ frame: number; id: string; url: string | null; tick: number | null; points?: Record<string, [number, number, boolean]>; box?: { x: number; y: number; w: number; h: number } }> }
   }
   /** The rendered size (board points) of scene text nodes (tex: math; text: markup), as the board lays them out. */
   measureText: { params: { items: Array<{ math: boolean; text: string; size: number }> }; result: { sizes: Array<[number, number]> } }

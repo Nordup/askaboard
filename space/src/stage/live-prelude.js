@@ -389,6 +389,9 @@
     constructor(entry, name) {
       this.entry = entry
       this.name = name
+      // The anchor stands still, so a changing object never moves with the world: the link moves it, once.
+      const b = worldBounds(entry, T)
+      this.at = [b.x + b.width / 2, b.y + b.height / 2]
     }
     toString() {
       return `[point "${this.name}" of ${this.entry.api} ${this.entry.id}]`
@@ -1549,8 +1552,7 @@
     value = resolveArg(value, 2)
     if (value instanceof ScenePoint) {
       // The stage has no place for it: the world's anchor stands in, and the link moves the item.
-      const b = worldBounds(value.entry, T)
-      const at = [b.x + b.width / 2, b.y + b.height / 2]
+      const at = value.at
       if (pointNotes) pointNotes.push({ handle: value, at })
       return { box: { x: at[0], y: at[1], width: 0, height: 0 }, point: true }
     }
@@ -3110,13 +3112,6 @@
     sweep.runs.forEach(keepSeeds)
   }
 
-  /** An object's link as it leaves the stage. A changing object rests where the world's anchor is at the end. */
-  function followsOut(e) {
-    if (e.follows.ends || !e.dynamic) return e.follows
-    const b = worldBounds(objects[e.follows.world], endTime)
-    return { ...e.follows, at: [b.x + b.width / 2, b.y + b.height / 2] }
-  }
-
   /** The scene's description (JSON): its objects at their end seeds, and its timeline. Nothing changes it after this. */
   const result = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
@@ -3147,7 +3142,7 @@
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
       if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}), ...(e.data === undefined ? {} : { data: e.data }) })
-      if (e.follows) o.follows = followsOut(e)
+      if (e.follows) o.follows = e.follows
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
       if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}) })

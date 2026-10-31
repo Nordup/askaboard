@@ -41,6 +41,8 @@ export interface LinkLook {
   matrix?: LinkMatrix
   /** Svg paths: the path now. */
   d?: string
+  /** Svg paths: the ends now, in board points. */
+  ends?: [LinkPoint, LinkPoint]
   /** False while a point it follows is not visible. */
   visible: boolean
 }
@@ -121,10 +123,31 @@ export function linkLook(node: LinkedNode, points: WorldPoints): LinkLook | null
     return svg ? [x - moved[0], y - moved[1]] : [x, y]
   }) as [LinkPoint, LinkPoint]
   if (!known) return null
-  if (svg) return { d: pathOf(ends[0], ends[1], follows.head), visible }
+  if (svg) return { d: pathOf(ends[0], ends[1], follows.head), ends: [[ends[0][0] + moved[0], ends[0][1] + moved[1]], [ends[1][0] + moved[0], ends[1][1] + moved[1]]], visible }
   const a: LinkPoint = [follows.at[0][0] + moved[0], follows.at[0][1] + moved[1]]
   const b: LinkPoint = [follows.at[1][0] + moved[0], follows.at[1][1] + moved[1]]
   return { matrix: segmentMatrix(a, b, ends[0], ends[1]), visible }
+}
+
+/** The room around a linked path, for its box. */
+const PATH_PAD = 4
+
+/** A layout box at the place a link shows it. A plain shift moves its child origin too, so hit tests find its ink there. */
+export function linkedBox<T extends { x: number; y: number; width: number; height: number; ox: number; oy: number }>(box: T, look: LinkLook): T {
+  if (look.ends) {
+    const [a, b] = look.ends
+    const x = Math.min(a[0], b[0]) - PATH_PAD
+    const y = Math.min(a[1], b[1]) - PATH_PAD
+    return { ...box, x, y, width: Math.abs(a[0] - b[0]) + PATH_PAD * 2, height: Math.abs(a[1] - b[1]) + PATH_PAD * 2 }
+  }
+  const m = look.matrix
+  if (!m) return box
+  const xs = [box.x, box.x + box.width].flatMap((x) => [m[0] * x + m[2] * box.y + m[4], m[0] * x + m[2] * (box.y + box.height) + m[4]])
+  const ys = [box.x, box.x + box.width].flatMap((x) => [m[1] * x + m[3] * box.y + m[5], m[1] * x + m[3] * (box.y + box.height) + m[5]])
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  const shift = m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1
+  return { ...box, x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y, ...(shift ? { ox: box.ox + m[4], oy: box.oy + m[5] } : {}) }
 }
 
 function multiply(a: LinkMatrix, b: LinkMatrix): LinkMatrix {
