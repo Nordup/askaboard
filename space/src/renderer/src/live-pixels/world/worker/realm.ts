@@ -237,7 +237,7 @@ export const REALM = String.raw`
 
   // The drawing of a tick: the frame callbacks, then the captures of this tick.
   const drawTick = (w, dt) => {
-    if (dt > 0) w.moving = true;
+    if (dt > 0) w.timeMoved = true;
     syncParts(w);
     inside(w, () => {
       const list = [...w.callbacks.values()];
@@ -245,8 +245,9 @@ export const REALM = String.raw`
       const t = w.tickMs / 1000;
       for (const cb of list) { try { cb(w.tickMs); } catch (e) { fail(w, e); return; } }
       for (const fn of [...w.frames]) { try { fn(t, dt); } catch (e) { fail(w, e); return; } }
+      // A tick asks for a check, not for a render: most worlds at rest change nothing (picture.ts).
       if (list.length || w.frames.length) {
-        w.stale = true;
+        w.ticked = true;
         w.count++;
         if (w.count === 1) post({ type: 'alive', key: w.key, frames: w.count, tick: w.tick });
       }
@@ -259,7 +260,7 @@ export const REALM = String.raw`
     w.ran = true;
     w.tickMs = ms;
     w.tick = tickOf(ms / 1000);
-    if (w.timers.size && inside(w, () => fireTimers(w, ms))) { w.stale = true; await nextTask(); }
+    if (w.timers.size && inside(w, () => fireTimers(w, ms))) { w.ticked = true; await nextTask(); }
     if (!w.failed) drawTick(w, dt);
   };
   // Step mode: tick k of the grid, with the timeline's inputs of that tick.
@@ -481,7 +482,7 @@ export const REALM = String.raw`
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
-      cursorNow: '', placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
+      cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false
     };
     if (w.view.step === undefined) w.view.step = null;

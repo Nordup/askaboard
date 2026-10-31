@@ -187,6 +187,14 @@ export const SURFACE = String.raw`
       for (const w of worlds.values()) {
         const p = w.placement;
         if (!p || !p.shown || w.failed || !(w.setUp || w.ran)) continue;
+        if (w.ticked) {
+          w.ticked = false;
+          const changed = pictureChanged(w);
+          if (changed) w.stale = true;
+          w.moving = changed && w.timeMoved;
+          w.timeMoved = false;
+        }
+        // At rest a world goes sharp once, and then nothing renders.
         if (!w.moving && w.drawn && w.drawn.res < 1) w.stale = true;
         if (!w.stale && w.drawn && w.reach && !cropMoved(w)) continue;
         try { const plan = planWorld(w); if (plan) plans.push(plan); } catch (e) { fail(w, e); }

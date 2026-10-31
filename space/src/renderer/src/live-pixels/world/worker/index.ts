@@ -2,6 +2,7 @@ import { BLEND_GAP, paramsAtTime } from '../../../live/params'
 import { LOCAL_LIBRARIES, programBody, resolveLiveSpecifier } from '@shared/live-libs'
 import { WORLD_TICK_HZ } from '@shared/world-protocol'
 import { LOOK } from './look'
+import { PICTURE } from './picture'
 import { REALM } from './realm'
 import { SURFACE } from './surface'
 import { TOUCH } from './touch'
@@ -19,6 +20,7 @@ import { VIEW } from './view'
  *   a world's code gets.
  * - view.ts: what a world really draws (reach), the crop, the render targets.
  * - touch.ts: pick, pins, ink, the hand's events, the anchor.
+ * - picture.ts: whether a tick changed what a render would show.
  * - look.ts: the film look of one world into its private output.
  * - surface.ts: compositing, pictures, the frame loop, the messages.
  */
@@ -59,6 +61,7 @@ function source(): string {
 ${REALM}
 ${VIEW}
 ${TOUCH}
+${PICTURE}
 ${LOOK}
 ${SURFACE}
 })();

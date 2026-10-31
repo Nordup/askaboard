@@ -285,6 +285,7 @@ export const LOOK = String.raw`
    */
   const fitFloor = (w, box) => {
     if (!w.floorBuilt) return buildFloor(w, box);
+    if (typeof w.floor === 'object' && typeof w.floor.y === 'number' && w.floor.y !== w.floorY) return buildFloor(w, box);
     const fit = w.floorFit, c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() * 0.5;
     if (c.distanceTo(fit.c) + r <= fit.r) return;
     const grown = box.clone().expandByPoint(fit.c.clone().addScalar(fit.r)).expandByPoint(fit.c.clone().subScalar(fit.r));
