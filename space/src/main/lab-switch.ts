@@ -5,7 +5,7 @@ import { resourcePath } from './resources'
  * from the environment when the app starts. All are off by default, and off
  * they change nothing.
  *
- * LS_LAB_NO_CODE=1: code items do not exist for agents. Scene programs have
+ * LS_LAB_NO_CODE=1: worlds do not exist for agents. Scene programs have
  * no world() (live-prelude.js), and every agent text
  * leaves out what points to them.
  *
@@ -35,7 +35,7 @@ export function briefPath(): string {
   return BRIEF_FILE ?? resourcePath('brief.md')
 }
 
-/** A clause of an agent text in code (a tool description): the text, or `without` when code items are off. */
+/** A clause of an agent text in code (a tool description): the text, or `without` when worlds are off. */
 export function codeItems(text: string, without = ''): string {
   return NO_CODE_ITEMS ? without : text
 }
@@ -75,7 +75,7 @@ function spans(text: string, name: string, tag: string, on: boolean): string {
   }
 }
 
-/** A markdown resource with the switches' spans applied (code items first, then HTML material). */
+/** A markdown resource with the switches' spans applied (worlds first, then HTML material). */
 export function labText(text: string, name: string): string {
   return spans(spans(text, name, 'code-items', NO_CODE_ITEMS), name, 'html', NO_HTML)
 }

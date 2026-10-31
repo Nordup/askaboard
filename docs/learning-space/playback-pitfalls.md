@@ -33,8 +33,8 @@
 | 2 | **Gaps between kept samples.** The stage drops a sample equal to the one before (`space/src/stage/live-prelude.js`, the sweep). If the gap grows past `BLEND_GAP`, the player holds instead of blending. | An object stops for one step at a turning point, while another moves. | `live-prelude.js` sampling; `player.ts` `BLEND_GAP`. | Fixed 2026-10-27 (42b16e8): the last sample of each run of equal samples is kept. |
 | 3 | **Ink and shapes painted in different frames.** Shapes are DOM/SVG updates; ink is painted on a canvas. | A pen line about one display frame behind a shape (about 6 px at speed). | `space/src/renderer/src/board/Board.tsx` (`requestPaint`), the cached ink layers of B11 (`board/paint.ts`). | Fixed 2026-10-27 (4db961e): a playback frame paints its ink at once. Watch it if the ink layers change again. |
 | 4 | **A shape's path changes structure between samples** (different commands or count). | The shape holds for one step instead of blending. | `player.ts` shape blending. | Open (rare). Same idea as class 1 would fix it. |
-| 5 | **Live item params one frame late.** Params of shader, canvas and program items go through React state. | A live item lags the scene by one frame. | `space/src/renderer/src/live-pixels/` (`registry.ts`), `live/params.ts`. | Open. |
-| 6 | **Preview and playback time grids differ.** Previews snap to a 60 Hz tick grid (B10); a pause can stop 2–4 ms before the reported time. | A preview and a paused frame of a stateful live item differ slightly. | `live-pixels/clock.ts`, `runtime.ts`. | Known limit (B10). |
+| 5 | **World params one frame late.** Params of a world that does not step go from the board's paint through the registry to the worker. | A world lags the scene by one frame. | `space/src/renderer/src/live-pixels/` (`registry.ts`), `live/params.ts`. | Open. |
+| 6 | **Preview and playback time grids differ.** Previews snap to a 60 Hz tick grid (B10); a pause can stop 2–4 ms before the reported time. | A preview and a paused frame of a stateful world differ slightly. | `live-pixels/clock.ts`, `live-pixels/world/worker/realm.ts`. | Known limit (B10). |
 | 7 | **The script panel covers the board's top-right corner (and the tool palette its bottom).** Agents do not know it is there and place material under it. | Labels and parts of drawings hidden in all four check runs of 2026-10-27. | The view in `list_items` and the view checks; `components/ScriptPanel.tsx`. | Fixed 2026-10-27: `list_items` and `board.view` list as `covered` the panel's full-height area (also before the first scene; the bar only while minimised; `ScriptPanel.tsx` `scriptPanelArea()`) and the bottom tool palette (`ToolPalette.tsx` `toolPaletteArea()`), via `agent/covered.ts`. `space()` and the auto side of `label()` keep clear of it, and `preview_scene` images hatch it. Material at explicit coordinates is the agent's choice. |
 | 8 | **Recipes with side effects.** The sweep evaluates an object's recipe at every sample, moment by moment (T27), and seeds and previews add calls. A recipe that changes state sees that order; a rebuild skips sampling. | A scene that depends on counting its own calls can differ after a rebuild. | `live-prelude.js` sampling and rebuild. | Accepted: agents are not limited; the order is fixed. |
 
@@ -75,13 +75,13 @@ you add a new fix here, check if a change can remove the seam instead.
      120 Hz screen, each sample shows for two display frames.
    - Measure it with `scripts/perf/replay.mjs` on the pendulum and the EM
      wave: the write time, and the motion in `video.mp4` frame by frame.
-2. **One clock for every user of a sample.** Previews, playback and live
-   items take the same sample for the same time. Previews pick frames from
-   the sample grid (class 6). A live item gets its params in the same tick
+2. **One clock for every user of a sample.** Previews, playback and worlds
+   take the same sample for the same time. Previews pick frames from
+   the sample grid (class 6). A world gets its params in the same tick
    as the frame, or gets the whole param track once and reads it at its own
-   clock (class 5). `paramsAtTime` already runs inside the item worker
-   (`live-pixels/runtime.ts`).
-3. **One paint step per frame for all kinds.** Shapes, ink and live items
+   clock (class 5). `paramsAtTime` already runs inside the world worker
+   (`live-pixels/world/worker/realm.ts`).
+3. **One paint step per frame for all kinds.** Shapes, ink and worlds
    change from one sample in one paint step. The fix of class 3 does this
    for ink; keep it as a rule for every new kind.
 

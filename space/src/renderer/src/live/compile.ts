@@ -1100,8 +1100,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   // Ink saved from a replaced item: it now belongs to the new material.
   const kept = new Set(next.map((node) => node.id))
   next = [...next, ...created, ...[...rescued].filter((id) => !kept.has(id)).map((id) => changed.get(id) as BoardNode)]
-  // Program items keep the scene clock they rest at when the scene has ended, so a reopened board
-  // shows them as the learner last saw them (program.ts: scene.t, scene.step, scene.ended).
+  // Worlds keep the scene clock they rest at when the scene has ended, so a reopened board
+  // shows them as the learner last saw them (world/worker/realm.ts: scene.t, scene.step, scene.ended).
   const played = new Set(objects.flatMap((object) => object.targets.map((target) => target.nodeId)))
   // The program's own steps (not the story's lead step): what a world reads as scene.step.
   const programSteps = ownSteps(desc.steps)

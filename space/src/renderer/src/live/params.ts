@@ -19,8 +19,8 @@ export type ParamSample = [number, Record<string, number>]
  * without samples (the item's own params show). A held sample gives its own
  * object, so an unchanged result is the same object.
  *
- * The function is self-contained (no outer names): runtime.ts puts its source
- * into the worker script. Give `gap` as BLEND_GAP.
+ * The function is self-contained (no outer names): world/worker/index.ts puts its
+ * source into the worker script. Give `gap` as BLEND_GAP.
  */
 export function paramsAtTime(samples: readonly ParamSample[], t: number, gap: number): Record<string, number> | null {
   if (!samples.length) return null

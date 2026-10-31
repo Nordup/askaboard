@@ -5,7 +5,7 @@ shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner.
 
-**Status (2026-10-31):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), and the voice explainer is parked (I28). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, program items, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
+**Status (2026-10-31):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), and the voice explainer is parked (I28). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -44,7 +44,7 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
 - **Live scenes.** An agent writes a JavaScript program (`write_scene`) that
-  draws ink, handwriting, shapes, typeset text and program items and says how
+  draws ink, handwriting, shapes, typeset text and worlds and says how
   they unfold in time; the board plays it, and the result stays as ordinary
   items. Programs on a board share one sandbox (the stage), queue back to
   back, can pause at steps, and pause when the learner starts drawing. A
@@ -53,10 +53,10 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   fades after the scene and hides into the scene pill in the top bar, which
   lists the board's scenes and shows the scene and step of a selected item. The app does not
   speak.
-- **Program items.** A scene can place a whole program of its own on the
-  board (Canvas 2D, WebGL 2, WebGPU, three.js bundled, any library from the
-  internet) that keeps running, follows the scene's clock and values, and
-  writes its own interaction. It runs in its own sandboxed origin.
+- **Worlds.** A scene can place a world on the board: plain three.js with no
+  frame, and any library from the internet. A world keeps running, follows the
+  scene's clock and values, links to labels and arrows, and writes its own
+  interaction. It runs in a sandboxed origin.
 
 ## Connect agents
 
@@ -103,7 +103,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `open_board` | `board`, `create` | Opens a board by path or unique name, or makes a new one |
 | `move_board` | `path`, `to` | Renames a board, or moves it to the system Trash (`to: "trash"`) |
 | `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
-| `get_guide` | `topic` | One topic of the board reference (scene, scene-files, scene-code, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
+| `get_guide` | `topic` | One topic of the board reference (scene, scene-files, scene-world, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
 | `write_scene` | `name`, `code` or `file` | Runs a scene program (inline, or a file in `boards/scenes/`) and keeps the result as a draft by name; the learner sees nothing. Returns steps and items, or the program error with its line. |
 | `preview_scene` | `name`, `at`, `part`, `version` | Read-only: one image of a draft or of a scene on the board, at chosen moments (end, a step, a time, a list, every step), framed on the scene, the view, a region or items. |
 | `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, replay, cut, reset), `name`, `when`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place; returns at once) and controls playback and the stage. |

@@ -259,18 +259,8 @@ item pill).
     450 ms). Opening from the pill grows it out of the pill. A scene that
     starts after nothing played shows it again.
 
-- **Stopped item pill** (option A "corner pill", 2026-10-27,
-  `reference/stopped-pill-2026-10-27.png`, local only). A live item that
-  stopped responding keeps its last picture, fully visible: no outline, no
-  strip, no dimming. A `.pill--item` sits inside the item, 8 px from its
-  left and bottom edges: 24 px high, padding 0 4 0 9 px, gap 6 px,
-  `--bg-elevated`, a 1 px `--border-subtle` border, `--radius-pill`. It
-  holds a small error status dot (3 px ring), the label "Not responding"
-  (12 px, secondary, UI font) and a 20 px round Restart button (12 px
-  rotate-ccw icon, primary). The button and a double-click on the item both
-  start it again. A press on the pill draws no ink. The pill follows the
-  board's zoom, as the item does. Failed and waiting items keep the quiet
-  note.
+- **Stopped world.** A world that fails or stops answering shows a quiet note
+  at its place (`.node-live__note`).
 
 ## Words
 

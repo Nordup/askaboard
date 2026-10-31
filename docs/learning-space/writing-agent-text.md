@@ -146,7 +146,7 @@ voice, and the founder brought the old text back (I25).
 
 | Intent | Where it lives |
 | --- | --- |
-| Every medium is an equal choice (I30, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-code` and `html`. Not in a tool description. |
+| Every medium is an equal choice (I30, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-world` and `html`. Not in a tool description. |
 | The picture carries the meaning (I30) | The brief, "Let the picture do the explaining" and the calibration list. |
 | Check a scene before the person sees it (I22, I25) | The brief, "Take the time it needs, and check your work"; the write_scene pointer to preview_scene; the preview_scene opening. |
 | Explain fully, then check (I21) | The brief only. |
@@ -188,7 +188,7 @@ voice, and the founder brought the old text back (I25).
 - **Length.** A tool description loaded up front is cut at 4,096 characters
   in Claude Code. Measure the description with the lab switches on and off.
   play_scene is at about 3,930 characters, so it has very little room.
-- **Lab switches.** Text about code items goes in `codeItems(…)`, and text
+- **Lab switches.** Text about worlds goes in `codeItems(…)`, and text
   about HTML in `htmlMaterial(…)` (`space/src/main/lab-switch.ts`). In the
   markdown files, the markers are `<!-- code-items -->` and `<!-- html -->`.
   Read the text in each mode.
@@ -233,11 +233,11 @@ voice, and the founder brought the old text back (I25).
   `node scripts/perf/report.mjs --task <task> --runs`.
 - **Tasks:**
   - `orbit`: small.
-  - `em-wave`: pulls toward a 3D code item.
+  - `em-wave`: pulls toward a 3D world.
   - `stddev` (council, `scripts/lab/council.mjs`): pulls toward formulas and text.
 - **What to read in each run folder** (`space/.lab/perf/runs/…`):
   - `calls.json`: the call order, the get_guide topics, and the errors.
-  - The code of each write_scene call: `program(`, `shader(`, `canvas(` or `html(`, or ink and shapes only.
+  - The code of each write_scene call: `world(` or `html(`, or ink and shapes only.
   - A preview before each play.
   - The share of repeated characters.
   - `reply.md`, and the images in `trace/`.

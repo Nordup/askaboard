@@ -103,7 +103,7 @@ const opts = {
   waitMedia: flag('--wait-media'),
   // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
   briefOnly: flag('--brief-only'),
-  // The lab switch LS_LAB_NO_CODE: code items do not exist for the agent.
+  // The lab switch LS_LAB_NO_CODE: worlds do not exist for the agent.
   noCode: flag('--no-code'),
   // The lab switch LS_LAB_NO_HTML: HTML material does not exist for the agent.
   noHtml: flag('--no-html'),
@@ -163,7 +163,7 @@ async function main() {
   const tasks = JSON.parse(readFileSync(join(LAB, 'council/tasks.json'), 'utf8'))
   const known = tasks[opts.task]
   const task = known ? { id: opts.task, ...known } : { id: 'custom', title: opts.task.slice(0, 60), text: opts.task }
-  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no code items' : ''}${opts.noHtml ? ' — no HTML' : ''}${opts.brief ? ` — brief ${basename(opts.brief)}` : ''}`
+  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no worlds' : ''}${opts.noHtml ? ' — no HTML' : ''}${opts.brief ? ` — brief ${basename(opts.brief)}` : ''}`
   const purpose = stripComments(readFileSync(join(LAB, 'council/purpose.md'), 'utf8'))
   const interview = stripComments(readFileSync(join(LAB, 'council/interview.md'), 'utf8'))
   const prompt = opts.briefOnly ? task.text : `${purpose}\n\n## The task\n\n${task.text}`

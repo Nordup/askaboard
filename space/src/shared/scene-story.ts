@@ -47,7 +47,7 @@ export function stepLines(name: string | null, steps: readonly SceneStep[], line
   return out
 }
 
-/** The steps a scene program wrote (without the lead step), for what reads step() calls only (code items). */
+/** The steps a scene program wrote (without the lead step), for what reads step() calls only (worlds). */
 export const ownSteps = (steps: readonly SceneStep[]): SceneStep[] => steps.filter((step) => !step.lead)
 
 // ---------- The record ----------

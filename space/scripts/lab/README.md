@@ -44,7 +44,7 @@ node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief 
 ```
 
 Flags: `--brief-only` (the task alone, as in a real session), `--no-code` and
-`--no-html` (hide code items or HTML from the agent), `--brief <file>` (serve
+`--no-html` (hide worlds or HTML from the agent), `--brief <file>` (serve
 a draft brief), `--no-web`, `--interview`. See the script header.
 
 It starts a fresh app (`--name council`, MCP 47891, debug 9491), draws the

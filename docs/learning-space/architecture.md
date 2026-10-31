@@ -121,8 +121,8 @@ limits scripts and images.
     `AGENTS.md` (`src/main/brief-block.ts` refreshes it when a folder opens,
     unless the learner edited it) and as `get_brief` for agents without it;
   - the board reference, `resources/guide.md`: `get_guide`, one topic per
-    call (scene, scene-code, scene-interact, model, html, math, svg, images,
-    tokens, placement, ink, view; the
+    call (scene, scene-files, scene-world, scene-interact, model, html, math,
+    svg, images, tokens, placement, ink, view; the
     description lists them with one line each from the file's
     `<!-- summary: … -->` markers); without a topic, all of it (decision T11);
   - server instructions, `resources/instructions.md` (a short orientation
@@ -190,7 +190,7 @@ limits scripts and images.
 ## Live scenes (live drawing)
 
 How an agent's scene program becomes drawing on the board (decisions P11,
-P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
+P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - **Scene files.** A program is inline code or a file in `boards/scenes/`
   of the learning folder, with `import` and `export` between files
@@ -285,8 +285,8 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   (`timeOf`) never passes it (T28). A preview past it asks for its moments on
   the frames port, and the worker answers between two batches (T32). What the
   sweep finds later waits in `lateNotes` for the next tool result (T31). A
-  scene with a stepping canvas or program item, and every run that is not a
-  draft, drains before its reply, on the same code.
+  scene with a world, and every run that is not a draft, drains before its
+  reply, on the same code.
 
 - **Main process.** `write_scene` and `play_scene` (`src/main/mcp.ts`) send
   the program to the board's stage (`live-scene.ts`, decision T18): one
@@ -327,7 +327,7 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   answers are recorded in its stage log entry, so a rebuild of the stage,
   a cut or a replay gets the same answers.
   `storyboard.ts` builds preview images. `live-item-protocol.ts` serves the
-  `live-item://` origin for program items, with bundled libraries listed in
+  `live-item://` origin for worlds, with bundled libraries listed in
   `src/shared/live-libs.ts` (three.js, `ls/interact`).
 - **Renderer.** `src/renderer/src/live/` turns the description into board
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
@@ -350,12 +350,14 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `board/playback.ts` holds per-node playback looks (reveal, transform,
   params) that the board applies while a scene plays; the board file always
   holds the final state.
-- **Program items** (`live` nodes, mode `program`, also `shader` and
-  `canvas`): `src/renderer/src/live-pixels/` — each item is a sandboxed
-  iframe of its own origin with a worker that owns an OffscreenCanvas
-  (`program.ts`, `sandbox.ts`, `shader.ts`, `registry.ts`, `LiveView.tsx`,
-  `stills.ts`). Network is open for items; input reaches them only
-  in the mode the item declares.
+- **Worlds** (`live` nodes, mode `world`; decision P19): one sandboxed iframe
+  of the `live-item://` origin holds one worker with one WebGL renderer, and
+  that worker draws all worlds of a board. The pictures show between the page
+  content and the ink. The code is in `src/renderer/src/live-pixels/`
+  (`registry.ts`, `LiveView.tsx`, `stills.ts`, `world/`). Network is open for
+  worlds, and input reaches a world only in the mode it declares. An older
+  item with another mode keeps its data and shows a note. Details:
+  [`one-world-architecture.md`](one-world-architecture.md).
 - **Requests** between main and renderer: `sceneContext`, `runScene`,
   `sceneDraft`, `sceneFrames`, `sceneControl`, `sceneRestore`,
   `sceneMemory` (`src/shared/space-api.ts`); the board window asks main
@@ -384,8 +386,8 @@ P12, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
   `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay
   reads `LEARNING_SPACE_PORT`. Lab switches (lab runs only,
-  `src/main/lab-switch.ts`): `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML` (hide code
-  items or HTML from the agent), `LS_LAB_BRIEF` (serve a draft brief).
+  `src/main/lab-switch.ts`): `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML` (hide
+  worlds or HTML from the agent), `LS_LAB_BRIEF` (serve a draft brief).
 - `scripts/drive.mjs` drives a running dev app over the debug port: draw
   pen strokes, keys, clicks, drags, wheel, node rects, screenshots, state.
 - `scripts/trace-report.mjs` summarises traces; `scripts/bench/run.mjs` runs

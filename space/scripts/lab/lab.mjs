@@ -10,8 +10,8 @@
  *
  * Default: the dev renderer (electron-vite dev, React StrictMode). --built runs
  * `electron .` on out/ (run `npm run build` first). --fresh starts with an empty
- * folder and board. --no-code sets the lab switch LS_LAB_NO_CODE=1 (no code
- * items for agents; src/main/lab-switch.ts), --no-html LS_LAB_NO_HTML=1 (no HTML
+ * folder and board. --no-code sets the lab switch LS_LAB_NO_CODE=1 (no worlds
+ * for agents; src/main/lab-switch.ts), --no-html LS_LAB_NO_HTML=1 (no HTML
  * material), --brief <file> LS_LAB_BRIEF (a draft brief). stop kills only the PIDs in the state file.
  */
 import { resolve } from 'node:path'

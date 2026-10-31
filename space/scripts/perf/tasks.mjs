@@ -17,7 +17,7 @@ export const TASKS = {
     text: 'Show me how an electromagnetic wave travels in 3D.'
   },
   pendulum: {
-    title: 'Pendulum simulation, then period vs length (a code item and two scenes in a row)',
+    title: 'Pendulum simulation, then period vs length (a world and two scenes in a row)',
     text: 'Simulate a pendulum, then show how its period depends on the length.'
   }
 }

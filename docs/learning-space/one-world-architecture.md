@@ -1,10 +1,9 @@
 # One world: the architecture
 
-> **Status (2026-10-31):** built on branch `one-world`, slices 1 to 4, and reviewed
-> twice by GPT-6.1 Sol. The text of slice 5 is a draft
-> ([compare](drafts/one-world-text-2026-10-31/compare.html)). `shader`, `canvas` and
-> `program` stay until worlds replace them. This file is the plan for
-> [`one-world-design.md`](one-world-design.md), on branch `one-world`. Terms:
+> **Status (2026-10-31):** built on branch `one-world`, all slices. GPT-6.1 Sol
+> reviewed slices 1 to 4 twice. A world is the only way to run code on the board
+> (decision P19). This file says how [`one-world-design.md`](one-world-design.md)
+> is built. Terms:
 > a **world** is a live node with mode `world`. The **surface** is the one GPU
 > canvas that draws all worlds. The contract between the page and the worker is
 > `space/src/shared/world-protocol.ts`.
@@ -17,7 +16,7 @@ flowchart TB
     S["Selection, lasso, eraser (z 3+)"]
     A["Active stroke canvas (z 2)"]
     I["Ink canvases: learner and scene ink (z 1)"]
-    W["NEW world surface: iframe with one canvas (z 1, before ink in the DOM)"]
+    W["World surface: iframe with one canvas (z 1, before ink in the DOM)"]
     C["Content: DOM under one CSS camera (z 0). A world keeps an invisible placeholder here"]
   end
 ```
@@ -37,12 +36,12 @@ flowchart LR
   subgraph Page ["Renderer main thread"]
     CO["compile.ts + player.ts: LiveNode mode world"]
     R["registry.ts: LiveItem per node"]
-    H["world/host.ts: WorldHost implements LiveHost"]
+    H["world/host.ts: WorldHost, one per world"]
     SF["world/surface.ts: WorldSurface, one per board"]
     B["Board.tsx paint(): camera"]
   end
   subgraph Frame ["Sandboxed iframe + one worker"]
-    RT["world/runtime: one WebGLRenderer on an OffscreenCanvas"]
+    RT["world/worker: one WebGLRenderer on an OffscreenCanvas"]
     W1["World A: scene, camera, look, floor, code"]
     W2["World B"]
   end
@@ -53,14 +52,19 @@ flowchart LR
   RT --> W2
 ```
 
-| Module | Job | Reuses |
-| --- | --- | --- |
-| `live-prelude.js` | `world(src, o)`, the same `liveObject` path as `program` | All of it |
-| `registry.ts` | The life cycle. `world` takes no slot, as `shader` does | `LiveItem` |
-| `world/host.ts` | `WorldHost`: a thin `LiveHost` that forwards to the surface | `LiveHost` |
-| `world/surface.ts` | The iframe, the port, placements, the CSS transform | `frame.html` boot of `program.ts` |
-| `world/runtime` (worker) | The renderer, the frame loop, worlds, views, compositing | The clock rules of `runtime.ts` |
-| `world/look` (worker) | Environment light, floor with soft shadow and reflection, bloom, tone mapping | `film.js` |
+The `world/` paths are under `space/src/renderer/src/live-pixels/`.
+
+| Module | Job |
+| --- | --- |
+| `live-prelude.js` | `world(src, o)` in the scene program |
+| `registry.ts` | The life cycle: hosts, clocks, status and generations |
+| `world/host.ts` | `WorldHost`: one world's link to the surface |
+| `world/surface.ts` | The iframe, the port, placements, the CSS transform |
+| `world/worker/realm.ts` | Time and `Math.random` per world, the clock, the API for a world's code |
+| `world/worker/view.ts` | Reach, the crop, the render targets |
+| `world/worker/look.ts` | Environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`) |
+| `world/worker/touch.ts` | Pick, pins, ink, the hand's events, the anchor |
+| `world/worker/surface.ts` | Compositing, pictures, the frame loop, the messages |
 
 All worlds run in one realm and share one `three` module, because they share one
 renderer. A world's code is an async function. Inside the realm, `performance`,
@@ -172,7 +176,7 @@ flowchart LR
   `clock.ts`.
 - **Preview and screenshots.** `withStepHost` makes a `WorldHost` with a private
   headless surface. So stills use the same runtime. A still can be larger than the
-  placeholder, so `LiveFrame` gains the offset of the picture.
+  placeholder, so each still carries its box (`stillBoxes`).
 - **Errors.** Each tick of a world runs in a try block. An error stops that world
   only and shows the usual note.
 - **Endless loops.** `pong` names the world that was running. If the worker stops
@@ -187,16 +191,16 @@ flowchart LR
   S1["1 Surface: one world, film look, soft shadow, in step, uncut"] --> S2["2 Links: values, points, follows"]
   S2 --> S3["3 Many worlds: on demand, replay, previews, recovery"]
   S3 --> S4["4 Touch: pointer, pick, pins, ink as input, cursor"]
-  S4 --> S5["5 Agents: guide text, real runs; shader, canvas, program move onto worlds"]
+  S4 --> S5["5 Agents: guide text, real runs; shader, canvas, program removed"]
 ```
 
-Rule for slice 5: `shader`, `canvas` and `program` stay until worlds replace them.
-Old boards keep the old hosts until their items are converted.
+Slice 5 removed `shader`, `canvas` and `program` (P19). An older item keeps its data
+in the board file and shows a note at its place.
 
 ## 8. Decisions in this build
 
 - The film look and the floor with soft shadow are on by default, and every part
-  can change (`look: "plain"`, `floor: false`). The founder called shadows "the
-  best part".
-- WebGL 2 first, because `film.js` is proven there.
-- A world's code is a string in slice 1. Files come in slice 5.
+  can change (`world.look = "plain"`, `world.floor = false`). The founder called
+  shadows "the best part".
+- WebGL 2, because `film.js` is proven there.
+- A world's code is a string, the first argument of `world()`.

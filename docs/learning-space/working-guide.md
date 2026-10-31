@@ -105,7 +105,7 @@ whole set every time, and one run per model is usually enough.
 | What changed | Run |
 | --- | --- |
 | Drawing engine, timeline, values, labels | `sphere` (and `em-wave` for motion) |
-| Program items, 3D, interaction | `em-wave` (and `heart`) |
+| Worlds, 3D, interaction | `em-wave` (and `heart`) |
 | The brief or other agent text | `seasons` and `fusion`, with `--brief-only` |
 | Reading the learner's work | `fusion` |
 | Pages, frames, images, HTML in scenes | `fractions`, `rome` |
@@ -117,10 +117,9 @@ Use `--brief-only` to measure what a real session sees (the brief through
 `council/purpose.md`, which says the purpose out loud. Compare with the
 earlier runs of the same task in `live-drawing-log.md`.
 
-Use `--no-code` (also on `lab.mjs start`) to measure a run without code
-items: the app starts with `LS_LAB_NO_CODE=1`, scenes have no `shader()`,
-`canvas()` or `program()`, and the brief, the guide and the tool
-descriptions leave out the spans marked `<!-- code-items -->` /
+Use `--no-code` (also on `lab.mjs start`) to measure a run without worlds:
+the app starts with `LS_LAB_NO_CODE=1`, scenes have no `world()`, and the
+brief, the guide and the tool descriptions leave out the spans marked `<!-- code-items -->` /
 `codeItems()` (`src/main/lab-switch.ts`). `meta.json` records `no_code`.
 `--no-html` does the same for HTML material (`LS_LAB_NO_HTML=1`: no
 `html()`, no `get_item` form "html", no html/svg topics; markers `<!-- html -->`,

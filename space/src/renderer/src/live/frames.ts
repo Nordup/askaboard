@@ -155,8 +155,8 @@ const jobs = new Map<number, JobFrames>()
 let lastAsk = 0
 
 function onWindowMessage(event: MessageEvent): void {
-  // Only this window's own preload hands over the port. Program items run in iframes of this window and can post to
-  // it, but their messages have their own window as the source, so they cannot replace the stage port.
+  // Only this window's own preload hands over the port. Worlds run in an iframe of this window that can post to
+  // it, but its messages have their own window as the source, so they cannot replace the stage port.
   if (event.source !== window || event.data !== 'ls-frames-port' || event.ports.length !== 1) return
   port?.close()
   for (const id of [...jobs.keys()]) cutJob(id)
