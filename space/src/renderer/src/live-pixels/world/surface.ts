@@ -168,6 +168,10 @@ export class WorldSurface {
     if (fixed) this.begin({ type: 'init', ...fixed, margin: 0 })
   }
 
+  get active(): boolean {
+    return this.members.size > 0
+  }
+
   setBoard(board: WorldBoard): void {
     this.board = board
     if (this.members.size) board.paint()
@@ -461,6 +465,11 @@ export function bindWorldBoard(element: HTMLElement, side: WorldBoard): () => vo
     surfaces.get(element)?.dispose()
     surfaces.delete(element)
   }
+}
+
+/** The board has worlds now: a change of their look needs a paint, as ink does. */
+export function hasWorlds(element: HTMLElement | null): boolean {
+  return !!element && !!surfaces.get(element)?.active
 }
 
 /** In the board's paint. */

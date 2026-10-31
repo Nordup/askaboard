@@ -768,6 +768,7 @@ export function sendWorldInk(inks: ReadonlyArray<{ node: { id: string; points: R
   const list = inks.map(({ node, offset }) => ({
     id: node.id,
     node,
+    at: offset,
     points: () => node.points.map((p): [number, number, number] => [p[0] + offset[0], p[1] + offset[1], p[2] ?? 0.5])
   }))
   for (const item of items.values()) if (item.world?.wants.ink) item.world.sendInk(list)

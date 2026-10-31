@@ -1,3 +1,4 @@
+import { copiedLinks } from '@shared/world-links'
 import { isContent, isFrame, isInk, isInkHost, isKnown, newItemId, parentKey, ROOT, type NodeStyle } from '@shared/board-format'
 import { inkBounds, inkLocalBounds, regionContains, strokeHitByCircle } from './geometry'
 import type { NodeOverride } from './playback'
@@ -302,7 +303,7 @@ export function copySubtrees(
     }
     out.push(copy)
   }
-  return { nodes: out, roots: roots.map((id) => idMap.get(id) as string), idMap }
+  return { nodes: copiedLinks(out, idMap), roots: roots.map((id) => idMap.get(id) as string), idMap }
 }
 
 /** The union of the layout boxes of some ids. */

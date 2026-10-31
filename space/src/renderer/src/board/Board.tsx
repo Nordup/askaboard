@@ -22,9 +22,9 @@ import {
 import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, liveInput, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
-import { bindWorldBoard, syncWorlds } from '../live-pixels/world/surface'
+import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
-import { linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
+import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
@@ -375,7 +375,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const liveSentRef = useRef<{ dirty: boolean; clocks: PlaybackFrame['clocks'] | null; on: boolean }>({ dirty: false, clocks: null, on: false })
   /** The items that follow a point of a world: how each shows now, and its fade when its point is hidden or shown again. */
   const linksRef = useRef(new Map<string, { look: LinkLook; alpha: number }>())
-  const linkedNodesRef = useRef<{ index: SceneIndex | null; list: LinkedNode[] }>({ index: null, list: [] })
+  const linkedNodesRef = useRef<{ index: SceneIndex | null; ghosts: readonly BoardNode[] | null; list: LinkedNode[] }>({ index: null, ghosts: null, list: [] })
   const worldPointsRef = useRef<WorldPoints>({})
   const fadeAtRef = useRef(0)
   /** What worlds moved themselves by: only selection and links read it. */
@@ -524,9 +524,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** The nodes with a link now: the same list while the nodes are the same. */
   const linkedNodes = useCallback(() => {
     const memo = linkedNodesRef.current
-    if (memo.index !== indexRef.current) {
-      const list = [...indexRef.current.byId.values()].filter((node) => isKnown(node) && !!node.follows) as unknown as LinkedNode[]
-      linkedNodesRef.current = { index: indexRef.current, list }
+    if (memo.index !== indexRef.current || memo.ghosts !== ghostNodesRef.current) {
+      const nodes = [...indexRef.current.byId.values(), ...ghostNodesRef.current]
+      const list = nodes.filter((node) => isKnown(node) && !!node.follows) as unknown as LinkedNode[]
+      linkedNodesRef.current = { index: indexRef.current, ghosts: ghostNodesRef.current, list }
       return list
     }
     return memo.list
@@ -735,13 +736,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     // An item that lost its link or left the board shows no link any more.
     const linked = new Set(linkedNodes().map((node) => node.id))
     for (const id of linksRef.current.keys()) if (!linked.has(id)) linksRef.current.delete(id)
+    followPoints(worldPointsRef.current)
     placeLinks()
     sendWorldInk(paintInks())
     // Back on, from the new layout (an element's transform is relative to its layout box).
     if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
-  }, [linkedNodes, paintInks, placeLinks, requestPaint])
+  }, [followPoints, linkedNodes, paintInks, placeLinks, requestPaint])
 
   /** Measure on the next frame (images, fonts and math settle late). */
   const requestMeasure = useCallback(() => {
@@ -1776,7 +1778,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         }
         inkMomentRef.current = { tips, inks }
         // In this frame, with the overrides that applyPlaybackToDom just put in the DOM.
-        if (ink) requestPaint({ playback: true }, true)
+        // Worlds read their look in the paint, whether or not ink changed.
+        if (ink || hasWorlds(hostRef.current)) requestPaint({ playback: ink }, true)
         // The end of playback: measure the final layout once more.
         if (!frame) requestMeasure()
       }
@@ -1857,7 +1860,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         }
         return copy as BoardNode
       })
-      commitNodes([...nodesRef.current, ...nodes])
+      commitNodes([...nodesRef.current, ...(copiedLinks(nodes, idMap))])
       setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
       pasteAnchorRef.current = null
     }

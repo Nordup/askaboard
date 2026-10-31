@@ -40,8 +40,8 @@ export class WorldHost implements LiveHost, WorldMember {
   private waits = new Map<number, (frame: LiveFrame | null) => void>()
   private nextRequest = 1
   private picks = new Map<number, (hit: WorldHit | null) => void>()
-  /** The strokes the world has, by id: each node as it was sent. */
-  private strokes = new Map<string, unknown>()
+  /** The strokes the world has, by id: each node and its board offset as they were sent. */
+  private strokes = new Map<string, { node: unknown; at: readonly [number, number] }>()
   private pins: WorldPin[]
   private stopped = false
 
@@ -163,12 +163,13 @@ export class WorldHost implements LiveHost, WorldMember {
   }
 
   /** The board's ink now: new and changed strokes go to the world, and it hears which are gone. */
-  sendInk(inks: ReadonlyArray<{ id: string; node: unknown; points: () => Array<[number, number, number]> }>): void {
+  sendInk(inks: ReadonlyArray<{ id: string; node: unknown; at: readonly [number, number]; points: () => Array<[number, number, number]> }>): void {
     const present = new Set<string>()
     for (const ink of inks) {
       present.add(ink.id)
-      if (this.strokes.get(ink.id) === ink.node) continue
-      this.strokes.set(ink.id, ink.node)
+      const sent = this.strokes.get(ink.id)
+      if (sent && sent.node === ink.node && sent.at[0] === ink.at[0] && sent.at[1] === ink.at[1]) continue
+      this.strokes.set(ink.id, { node: ink.node, at: ink.at })
       this.surface.send({ type: 'ink', key: this.key, stroke: { id: ink.id, points: ink.points() } })
     }
     for (const id of [...this.strokes.keys()]) {

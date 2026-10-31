@@ -180,22 +180,60 @@ export function linkedOverrides<T extends Linkable>(nodes: readonly LinkedNode[]
 export interface TipLink {
   point: [number, number]
   alpha?: number
-  follows?: { world: string; point: string; at: [number, number]; share: number }
+  /** The points in the tip's place now: `at` stands in for each, and `share` of it is in `point`. A later glide leaves less of it there. */
+  follows?: Array<{ world: string; point: string; at: [number, number]; share: number }>
 }
 
-/** A tip on a point of a world: it arrives at the point's place now and not at the anchor. */
+/** A tip on points of worlds: `point` was made from their anchors, and each anchor gives way to the point's place now. */
 export function linkedTip<T extends TipLink>(tip: T, points: WorldPoints): T {
-  const link = tip.follows
-  const p = link ? pointNow(points, link.world, link.point) : null
-  if (!link || !p) return tip
-  return { ...tip, point: [tip.point[0] + link.share * (p[0] - link.at[0]), tip.point[1] + link.share * (p[1] - link.at[1])], alpha: p[2] ? tip.alpha : 0 }
+  if (!tip.follows?.length) return tip
+  let [x, y] = tip.point
+  let main = 0
+  let alpha = tip.alpha
+  for (const link of tip.follows) {
+    const p = pointNow(points, link.world, link.point)
+    if (!p) continue
+    x += link.share * (p[0] - link.at[0])
+    y += link.share * (p[1] - link.at[1])
+    if (link.share > main) {
+      main = link.share
+      alpha = p[2] ? tip.alpha : 0
+    }
+  }
+  return { ...tip, point: [x, y], alpha }
 }
 
 /** A link after its world's node took another id. */
 export function renamedFollows(follows: NodeFollows, rename: (id: string) => string): NodeFollows {
-  if (!isPathFollows(follows)) return { ...follows, world: rename(follows.world) }
-  const end = (e: PointLink | LinkPoint): PointLink | LinkPoint => (isLink(e) ? { ...e, world: rename(e.world) } : e)
+  const link = (e: PointLink): PointLink => ({ ...e, world: rename(e.world), point: e.point.startsWith('pin:') ? `pin:${rename(e.point.slice(4))}` : e.point })
+  if (!isPathFollows(follows)) return link(follows)
+  const end = (e: PointLink | LinkPoint): PointLink | LinkPoint => (isLink(e) ? link(e) : e)
   return { ...follows, ends: [end(follows.ends[0]), end(follows.ends[1])] }
+}
+
+/** The worlds that a link reads. */
+export function followedWorlds(follows: NodeFollows): string[] {
+  if (!isPathFollows(follows)) return [follows.world]
+  return follows.ends.filter(isLink).map((end) => end.world)
+}
+
+/**
+ * Copies of nodes under new ids (`idMap`: old id to new id): their links and
+ * pins go with them. A link to a world that was not copied stays on that
+ * world, except a pin: a pin is one mark's, so a copy of the mark alone is plain ink.
+ */
+export function copiedLinks<T>(nodes: T[], idMap: ReadonlyMap<string, string>): T[] {
+  const rename = (id: string): string => idMap.get(id) ?? id
+  return nodes.map((item) => {
+    const node = item as { follows?: NodeFollows; pins?: Array<{ id: string }> }
+    const out = { ...node }
+    if (node.pins) out.pins = node.pins.filter((pin) => idMap.has(pin.id)).map((pin) => ({ ...pin, id: rename(pin.id) }))
+    if (node.follows) {
+      if (!isPathFollows(node.follows) && node.follows.point.startsWith('pin:') && !idMap.has(node.follows.world)) delete out.follows
+      else out.follows = renamedFollows(node.follows, rename)
+    }
+    return out as T
+  })
 }
 
 /** The world that a link follows, from a list of nodes. */

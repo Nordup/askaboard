@@ -1,5 +1,6 @@
 import { stepAt } from '@shared/scene-story'
 import { isLive, type BoardNode, type InkNode, type InkPoint } from '@shared/board-format'
+import { followedWorlds, renamedFollows, type NodeFollows } from '@shared/world-links'
 import { SCENE_EASES, type SceneStatus } from '@shared/live-scene'
 import type { SceneEvent } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
@@ -308,7 +309,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
   if (!play.pointer.length || t < play.pointer[0].start || t > play.duration + 0.05) return null
   let pos: Point | null = null
   let alpha = 0
-  let follows: PlaybackTip['follows']
+  let follows: NonNullable<PlaybackTip['follows']> = []
   for (const action of play.pointer) {
     if (action.start > t) break
     const k = action.dur > 0 ? SCENE_EASES.inOut(clamp01((t - action.start) / action.dur)) : 1
@@ -317,7 +318,10 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
       continue
     }
     const to = action.to as Point
-    follows = typeof action.follows?.world === 'string' ? { world: action.follows.world, point: action.follows.point, at: to, share: k } : undefined
+    // What came before gives way to this glide; the glide that starts from nothing comes in with its point.
+    const first = !(pos && alpha > 0.01)
+    follows = first ? [] : follows.map((link) => ({ ...link, share: link.share * (1 - k) })).filter((link) => link.share > 0.001)
+    if (typeof action.follows?.world === 'string') follows.push({ world: action.follows.world, point: action.follows.point, at: to, share: first ? 1 : k })
     // The first glide comes in from a little below and to the right, as a hand does.
     const from: Point = pos && alpha > 0.01 ? pos : [to[0] + 40, to[1] + 56]
     const fromAlpha = pos && alpha > 0.01 ? alpha : 0
@@ -325,7 +329,7 @@ function pointerAt(play: ScenePlay, t: number): PlaybackTip | null {
     alpha = lerp(fromAlpha, 1, Math.min(1, k * 2))
   }
   if (!pos || alpha <= 0.01) return null
-  return { point: pos, color: sceneColor('accent').hex, size: 9, kind: 'pointer', alpha, ...(follows ? { follows } : {}) }
+  return { point: pos, color: sceneColor('accent').hex, size: 9, kind: 'pointer', alpha, ...(follows.length ? { follows } : {}) }
 }
 
 export interface SceneFrame {
@@ -1183,9 +1187,27 @@ export class ScenePlayer {
         if (now) hidden.push(t.nodeId)
       }
     }
+    // What follows a world that shows as it was follows that world: such an item is a ghost too.
+    for (const object of allObjects(play)) {
+      for (const t of object.targets) {
+        const snap = memory.snapshot.get(t.nodeId)
+        const follows = (snap?.ghost as { follows?: NodeFollows } | undefined)?.follows
+        if (!snap || !follows || remap.has(t.nodeId) || !followedWorlds(follows).some((world) => remap.has(world))) continue
+        const ghostId = `${id}:${t.nodeId}`
+        remap.set(t.nodeId, ghostId)
+        ghosts.push({ ...snap.ghost, id: ghostId } as BoardNode)
+        if (present.has(t.nodeId)) hidden.push(t.nodeId)
+      }
+    }
+    const rename = (node: string): string => remap.get(node) ?? node
+    const relinked = ghosts.map((node) => {
+      const follows = (node as { follows?: NodeFollows }).follows
+      return follows ? ({ ...node, follows: renamedFollows(follows, rename) } as BoardNode) : node
+    })
+    const moved = <T extends { follows?: { world: number | string; point: string } }>(action: T): T => (typeof action.follows?.world === 'string' ? { ...action, follows: { ...action.follows, world: rename(action.follows.world) } } : action)
     // dyn stays shared: a clone of a scene that streams reads the same stream.
     const clone = (object: PlayObject): PlayObject => ({ ...object, targets: object.targets.map((t) => (remap.has(t.nodeId) ? { ...t, nodeId: remap.get(t.nodeId) as string } : t)) })
-    return { ...play, id, objects: play.objects.map(clone), quiet: play.quiet.map(clone), ghosts: [...play.ghosts, ...ghosts], hidden }
+    return { ...play, id, objects: play.objects.map(clone), quiet: play.quiet.map(clone), ghosts: [...play.ghosts, ...relinked], hidden, pointer: play.pointer.map(moved), camera: play.camera.map(moved) }
   }
 
   /** Seconds until a scene added now to the queue would start. */
