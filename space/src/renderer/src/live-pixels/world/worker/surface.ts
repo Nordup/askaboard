@@ -85,6 +85,13 @@ export const SURFACE = String.raw`
     return { w, place, crop, res, W, H, pixels: W * H, seen };
   };
 
+  /** A world with no frame callback counts no ticks. Its first picture after setup counts as a frame, so the page knows that its setup ended. */
+  const firstPicture = (w) => {
+    if (!w.setUp || w.count > 0) return;
+    w.count = 1;
+    post({ type: 'alive', key: w.key, frames: w.count, tick: w.tick });
+  };
+
   const renderPlan = (plan) => {
     const { w, place, crop, res, W, H } = plan;
     if (!w.output || w.output.width !== W || w.output.height !== H) {
@@ -98,6 +105,7 @@ export const SURFACE = String.raw`
     w.waited = 0;
     w.renders = (w.renders || 0) + 1;
     w.shownPoints = measurePoints(w);
+    firstPicture(w);
   };
 
   /**
@@ -245,6 +253,7 @@ export const SURFACE = String.raw`
       renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target);
       const data = new Uint8Array(W * H * 4);
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
+      firstPicture(w);
       const points = {};
       for (const [name, x, y, seen] of measurePoints(w)) points[name] = [x + w.w / 2, y + w.h / 2, seen];
       return { data, W, H, s, crop, points };
