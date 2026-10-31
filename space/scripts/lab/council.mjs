@@ -14,7 +14,7 @@
  * strokes before the session), or any text. The prompt is council/purpose.md
  * plus the task. Defaults: Claude opus; Codex gpt-6.1-sol at effort medium.
  * --no-code starts the app with LS_LAB_NO_CODE=1 (src/main/lab-switch.ts): no
- * shader(), canvas() or program() in scenes, and no word of them in the brief,
+ * world() in scenes, and no word of them in the brief,
  * the guide or the tool descriptions. meta.json records it as no_code.
  * --no-html (LS_LAB_NO_HTML=1) does the same for html() and HTML material.
  * --brief <file> (LS_LAB_BRIEF) serves that file as the brief (AGENTS.md block,

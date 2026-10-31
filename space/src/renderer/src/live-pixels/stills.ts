@@ -1,48 +1,49 @@
 import type { LiveNode } from '@shared/board-format'
 import { absNow, seedOf, tickOf, type ItemClock, type LiveTimeline, type SceneView } from './clock'
-import type { CanvasSize, HostEvents, HostStart, LiveFrame, LiveHost } from './host'
-import { CanvasHost } from './sandbox'
-import { ProgramHost } from './program'
-import { ShaderHost } from './shader'
-import { WorldHost } from './world/host'
-import { withStepSlot } from './slots'
+import { WorldHost, type LiveFrame } from './world/host'
 
 /**
- * Stills of live items at moments of a scene, made by step hosts on this
- * page (the main window), apart from the snapshot window: its capture queue
- * gets finished pictures with their ticks, so a plain screenshot never
- * waits behind a simulation.
+ * Stills of worlds at moments of a scene, made by step hosts on this page
+ * (the main window), apart from the snapshot window: its capture queue gets
+ * finished pictures with their ticks, so a plain screenshot never waits behind
+ * a simulation.
  *
- * One host per item per preview: it steps forward from the scene's start
+ * One host per world per preview: it steps forward from the scene's start
  * through the asked moments in time order and takes one picture per tick
  * (advance with capture: the barrier), then it ends. Pictures go back in the
  * order of the request. A host that makes no progress for PROGRESS_MS gives
- * up (no picture). Step hosts take turns (slots.ts).
+ * up (no picture). Step hosts take turns.
  */
 
 const PROGRESS_MS = 8000
-/** A program check ends after this long (pass). */
+/** A check ends after this long (pass). */
 const CHECK_MS = 3000
 /** The largest still: pixels per picture (a step host computes every tick at this size). */
 const MAX_PIXELS = 2_000_000
+/** Step hosts that run at once. */
+const STEP_HOSTS = 2
 
-export function createHost(mode: LiveNode['mode'], start: HostStart, events: HostEvents, container: HTMLElement | null): LiveHost {
-  if (mode === 'shader') return new ShaderHost(start, events, container)
-  if (mode === 'program') return new ProgramHost(start, events, container)
-  if (mode === 'world') return new WorldHost(start, events, container)
-  return new CanvasHost(start, events, container)
+let stepRunning = 0
+const stepQueue: Array<() => void> = []
+
+/** Run `work` with a step host's turn: at most STEP_HOSTS at once, in the order asked. */
+async function withStepTurn<T>(work: () => Promise<T>): Promise<T> {
+  if (stepRunning >= STEP_HOSTS) await new Promise<void>((resolve) => stepQueue.push(resolve))
+  else stepRunning++
+  try {
+    return await work()
+  } finally {
+    const next = stepQueue.shift()
+    if (next) next()
+    else stepRunning--
+  }
 }
 
-/** A still's size at `scale` px per board point, within MAX_PIXELS and 4096 px a side. */
-export function stillSize(node: { w: number; h: number }, scale: number): CanvasSize {
-  let pw = Math.max(1, Math.round(node.w * scale))
-  let ph = Math.max(1, Math.round(node.h * scale))
-  if (pw * ph > MAX_PIXELS) {
-    const k = Math.sqrt(MAX_PIXELS / (pw * ph))
-    pw = Math.max(1, Math.round(pw * k))
-    ph = Math.max(1, Math.round(ph * k))
-  }
-  return { w: Math.max(1e-3, node.w), h: Math.max(1e-3, node.h), pw: Math.min(pw, 4096), ph: Math.min(ph, 4096) }
+/** Pixels per board point of a still at `scale`, within MAX_PIXELS and 4096 px a side. */
+export function stillScale(node: { w: number; h: number }, scale: number): number {
+  const w = Math.max(1e-3, node.w)
+  const h = Math.max(1e-3, node.h)
+  return Math.min(scale, Math.sqrt(MAX_PIXELS / (w * h)), 4096 / w, 4096 / h)
 }
 
 const HELD: ItemClock = { t: 0, at: 0, rate: 0 }
@@ -54,14 +55,14 @@ const NO_SCENE: SceneView = { t: 0, playing: false, active: false, ended: true, 
  * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`.
  */
 async function withStepHost<T>(
-  node: Pick<LiveNode, 'mode' | 'code' | 'name' | 'params'> & Partial<Pick<LiveNode, 'id' | 'data' | 'pins'>>,
-  size: CanvasSize,
+  node: Pick<LiveNode, 'code' | 'name' | 'params' | 'w' | 'h'> & Partial<Pick<LiveNode, 'id' | 'data' | 'pins'>>,
+  dpr: number,
   from: number,
   timeline: LiveTimeline | null,
-  run: (host: LiveHost, watch: <R>(work: Promise<R | null>) => Promise<R | null>) => Promise<T>,
+  run: (host: WorldHost, watch: <R>(work: Promise<R | null>) => Promise<R | null>) => Promise<T>,
   options: { onError?: (message: string) => void; limitMs?: number } = {}
 ): Promise<T> {
-  return withStepSlot(async () => {
+  return withStepTurn(async () => {
     const started = absNow()
     let moved = started
     let lastTick = -2
@@ -71,9 +72,8 @@ async function withStepHost<T>(
       lastTick = tick
       moved = absNow()
     }
-    const host = createHost(
-      node.mode,
-      { id: node.id ?? 'step', code: node.code, data: node.data, pins: node.pins, seed: seedOf(node), size, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
+    const host = new WorldHost(
+      { id: node.id ?? 'step', code: node.code, data: node.data, pins: node.pins, seed: seedOf(node), w: node.w, h: node.h, dpr, params: node.params, mode: 'step', from, clock: HELD, scene: NO_SCENE, timeline, visible: false },
       {
         onAlive: (_frames, tick) => progress(tick),
         onProgress: progress,
@@ -81,8 +81,7 @@ async function withStepHost<T>(
           failed = true
           options.onError?.(message)
         },
-        onLost: () => undefined,
-        onGpu: () => undefined
+        onLost: () => undefined
       },
       null
     )
@@ -127,7 +126,7 @@ export interface LiveStill {
   box?: { x: number; y: number; w: number; h: number }
 }
 
-/** Pictures of each item at its moments: one step host per item, from tick 0 forward. */
+/** Pictures of each world at its moments: one step host per world, from tick 0 forward. */
 export async function sceneStills(items: LiveStillRequest[], scale: number): Promise<LiveStill[]> {
   const results = await Promise.all(items.map((item) => itemStills(item, scale)))
   return results.flat()
@@ -136,7 +135,7 @@ export async function sceneStills(items: LiveStillRequest[], scale: number): Pro
 async function itemStills(item: LiveStillRequest, scale: number): Promise<LiveStill[]> {
   const ticks = [...new Set(item.moments.map((moment) => tickOf(moment.t)))].sort((a, b) => a - b)
   const pictures = new Map<number, LiveFrame>()
-  await withStepHost(item.node, stillSize(item.node, scale), 0, item.timeline, async (host, watch) => {
+  await withStepHost(item.node, stillScale(item.node, scale), 0, item.timeline, async (host, watch) => {
     for (const tick of ticks) {
       const frame = await watch(host.advance(tick, true))
       if (!frame) return
@@ -149,23 +148,23 @@ async function itemStills(item: LiveStillRequest, scale: number): Promise<LiveSt
   })
 }
 
-/** A picture of an item that has no host on the board (not started, released): a fresh host at the tick of item time t. */
+/** A picture of a world that has no host on the board: a fresh host at the tick of item time t. */
 export async function stillAt(node: LiveNode, params: Record<string, number>, t: number, scale: number): Promise<LiveFrame | null> {
   const tick = tickOf(t)
-  return withStepHost({ ...node, params }, stillSize(node, scale), tick, null, (host, watch) => watch(host.advance(tick, true)))
+  return withStepHost({ ...node, params }, stillScale(node, scale), tick, null, (host, watch) => watch(host.advance(tick, true)))
 }
 
 /**
- * Check a program or a world before a scene plays it: run its setup and its first
- * ticks in a step host, and return its first error (syntax, a failed
- * import, a runtime error), or null. A program still busy after CHECK_MS
- * (a slow import, a setup that waits) passes.
+ * Check a world before a scene plays it: run its setup and its first ticks
+ * in a step host, and return its first error (syntax, a failed import, a
+ * runtime error), or null. A world still busy after CHECK_MS (a slow import,
+ * a setup that waits) passes.
  */
-export async function programError(mode: 'program' | 'world', code: string, params: Record<string, number>, size: [number, number] = [320, 200], data?: unknown): Promise<string | null> {
+export async function worldError(code: string, params: Record<string, number>, size: [number, number] = [480, 360], data?: unknown): Promise<string | null> {
   let error: string | null = null
   await withStepHost(
-    { mode, code, params, data },
-    stillSize({ w: size[0], h: size[1] }, 1),
+    { code, params, data, w: size[0], h: size[1] },
+    1,
     0,
     null,
     (host, watch) => watch(host.advance(2, false)),

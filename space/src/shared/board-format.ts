@@ -178,19 +178,17 @@ export interface ImageNode extends NodeBase {
 }
 
 /**
- * Live pixels: a rectangle whose pixels agent code paints every frame.
- * `mode: 'shader'`: `code` is a GLSL ES 3.0 fragment shader (Shadertoy style,
- * `mainImage(out vec4, in vec2)`). `mode: 'canvas'`: `code` is the body of
- * `function (ctx, t, w, h, params)` that paints a 2D canvas in a sandbox.
- * `mode: 'program'`: `code` is a whole program that runs once in its own
- * worker and frame with the item's canvas (renderer/src/live-pixels/program.ts).
- * `params` become `uniform float <name>` (shader) or the `params` argument
- * (canvas); scene playback may override them. `w`, `h`: the size in board points.
- * Ink drawn on it becomes its child, as on a frame.
+ * A world: `code` runs on the board's world surface (renderer/src/live-pixels/world).
+ * `params`: named values that scene playback may override. `w`, `h`: its nominal
+ * size in board points. Ink drawn on it becomes its child, as on a frame.
+ *
+ * Boards from before worlds hold items with `mode` "shader", "canvas" or "program".
+ * They load and keep all their data, and they run nothing (isOldLive).
  */
 export interface LiveNode extends NodeBase {
   kind: 'live'
-  mode: 'shader' | 'canvas' | 'program' | 'world'
+  /** Only on items of an older kind, and on worlds of early boards ("world"). */
+  mode?: string
   code: string
   params: Record<string, number>
   /** Worlds: a JSON value for the code (world.data). */
@@ -283,7 +281,6 @@ function validKnown(node: BoardNode): boolean {
       return typeof raw.src === 'string' && validStyle(raw.style)
     case 'live':
       return (
-        (raw.mode === 'shader' || raw.mode === 'canvas' || raw.mode === 'program' || raw.mode === 'world') &&
         typeof raw.code === 'string' &&
         isRecord(raw.params) &&
         Object.values(raw.params).every(finite) &&
@@ -320,11 +317,16 @@ export function isFrame(node: BoardNode): node is FrameNode {
   return node.kind === 'frame' && isKnown(node)
 }
 
+/** An item of a kind that no longer runs: it keeps its data and shows a note. */
+export function isOldLive(node: LiveNode): boolean {
+  return node.mode !== undefined && node.mode !== 'world'
+}
+
 export function isLive(node: BoardNode): node is LiveNode {
   return node.kind === 'live' && isKnown(node)
 }
 
-/** A node that ink can belong to (decision B7): a frame or a live pixel item. */
+/** A node that ink can belong to (decision B7): a frame or a world. */
 export function isInkHost(node: BoardNode): node is FrameNode | LiveNode {
   return (node.kind === 'frame' || node.kind === 'live') && isKnown(node)
 }

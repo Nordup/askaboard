@@ -1,28 +1,113 @@
 import type { WorldKey, WorldPin, WorldPointer, WorldToPage } from '@shared/world-protocol'
-import type { ItemClock, SceneView } from '../clock'
-import { blobUrl, type CanvasSize, type HostEvents, type HostStart, type LiveFrame, type LiveHost } from '../host'
-import { boardColors } from '../sandbox'
+import type { ItemClock, LiveTimeline, SceneView } from '../clock'
 import { boardSurface, WorldSurface, type WorldMember } from './surface'
 
 /**
- * A world on the host protocol (host.ts): a thin host that forwards to the
- * surface (surface.ts). Each host is one generation of its world, so a seek
- * in the registry's restart works as it does for a program: the new generation
- * ticks unseen and catches up while the old one stays on the surface with its
- * last picture, then the page shows the new one and removes the old one in one
- * paint. A generation shows when it goes live, or at its first frame when it
- * starts live.
+ * A world's host: a thin object that forwards to the surface (surface.ts).
+ * Each host is one generation of its world, so a seek makes a new generation
+ * (registry.ts): it ticks unseen and catches up while the old one stays on the
+ * surface with its last picture, then the page shows the new one and removes
+ * the old one in one paint. A generation shows when it goes live, or at its
+ * first frame when it starts live.
  *
- * A step host has a private surface (previews, stills, checks). A still shows
- * all that the world reaches, so it can pass the nominal rect: its box says where.
+ * A step host has a private surface (previews, stills, checks): it runs ticks
+ * only on advance, every tick up to `to` with the timeline's params and steps
+ * as inputs, then holds. A capture never runs a frame: a held world gives the
+ * pixels it shows, and `advance(to, true)` captures tick `to` in the same task
+ * as its drawing. A still shows all that the world reaches, so it can pass the
+ * nominal rect: its box says where.
  */
+
+export type LiveInput = 'none' | 'enter' | 'direct'
+
+/** A picture of a world and the tick it shows; url null when no picture could be taken. */
+export interface LiveFrame {
+  url: string | null
+  tick: number
+  /** The published points in this picture, from the nominal rect's top-left. */
+  points?: Record<string, [number, number, boolean]>
+  /** Where the picture sits in board points, from the nominal rect's top-left. It can pass the rect. */
+  box?: { x: number; y: number; w: number; h: number }
+}
+
+export interface HostStart {
+  /** The world's node id. */
+  id: string
+  code: string
+  seed: number
+  data?: unknown
+  pins?: WorldPin[]
+  /** The nominal size in board points. */
+  w: number
+  h: number
+  /** Step hosts: pixels per board point of a still. */
+  dpr?: number
+  params: Record<string, number>
+  /** live: follow the item clock in real time (board worlds). step: run ticks only on advance. */
+  mode: 'live' | 'step'
+  /** The first tick the host runs. */
+  from: number
+  clock: ItemClock
+  scene: SceneView
+  /** Step hosts: the params and steps over time; null keeps the params. */
+  timeline: LiveTimeline | null
+  /** It runs ticks. */
+  visible: boolean
+}
+
+export interface HostEvents {
+  /** Alive: the frames drawn so far and the tick the host is at. */
+  onAlive(frames: number, tick: number): void
+  onError(message: string): void
+  /** The worker ended: the world starts a new generation. */
+  onLost(): void
+  /** A stepping host moved on. */
+  onProgress?(tick: number): void
+  onInput?(mode: LiveInput): void
+  onReport?(values: unknown): void
+}
+
+function blobUrl(blob: unknown): Promise<string | null> {
+  if (!(blob instanceof Blob)) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(blob)
+  })
+}
+
+/** The board colour tokens for a world's code, as CSS colour strings in `colors`, read once from content.css. */
+let colorCache: Record<string, string> | null = null
+function boardColors(): Record<string, string> {
+  if (colorCache) return colorCache
+  const probe = document.createElement('div')
+  probe.className = 'board__content'
+  probe.style.display = 'none'
+  document.body.appendChild(probe)
+  const style = getComputedStyle(probe)
+  const read = (name: string): string => style.getPropertyValue(name).trim()
+  colorCache = {
+    text: read('--ls-text'),
+    muted: read('--ls-muted'),
+    accent: read('--ls-accent'),
+    good: read('--ls-good'),
+    bad: read('--ls-bad'),
+    warn: read('--ls-warn'),
+    card: read('--ls-card'),
+    card2: read('--ls-card-2'),
+    border: read('--ls-border'),
+    bg: read('--bg-canvas')
+  }
+  probe.remove()
+  return colorCache
+}
 
 let nextGeneration = 1
 
 export type WorldHit = NonNullable<Extract<WorldToPage, { type: 'picked' }>['hit']>
 
-export class WorldHost implements LiveHost, WorldMember {
-  readonly element = null
+export class WorldHost implements WorldMember {
   readonly key: WorldKey
   shown = false
   /** What the world's code listens to now. */
@@ -35,8 +120,6 @@ export class WorldHost implements LiveHost, WorldMember {
   private readonly step: boolean
   /** It shows at its first frame; a stepping generation shows when it goes live. */
   private readonly startsLive: boolean
-  private w: number
-  private h: number
   private waits = new Map<number, (frame: LiveFrame | null) => void>()
   private nextRequest = 1
   private picks = new Map<number, (hit: WorldHit | null) => void>()
@@ -51,12 +134,10 @@ export class WorldHost implements LiveHost, WorldMember {
     container: HTMLElement | null
   ) {
     this.key = { node: start.id, generation: nextGeneration++ }
-    this.w = start.size.w
-    this.h = start.size.h
     this.pins = start.pins ?? []
     this.step = !container
     this.startsLive = start.mode === 'live'
-    this.surface = container ? boardSurface(container) : new WorldSurface(null, null, { width: start.size.w, height: start.size.h, dpr: start.size.pw / start.size.w })
+    this.surface = container ? boardSurface(container) : new WorldSurface(null, null, { width: start.w, height: start.h, dpr: start.dpr ?? 1 })
     this.surface.add(
       this,
       {
@@ -65,8 +146,8 @@ export class WorldHost implements LiveHost, WorldMember {
         seed: start.seed,
         ...(start.data === undefined ? {} : { data: start.data }),
         ...(this.pins.length ? { pins: this.pins } : {}),
-        w: start.size.w,
-        h: start.size.h,
+        w: start.w,
+        h: start.h,
         params: start.params,
         mode: start.mode,
         from: start.from,
@@ -102,6 +183,9 @@ export class WorldHost implements LiveHost, WorldMember {
         break
       case 'anchor':
         this.surface.anchor(this.key.node, m.dx, m.dy)
+        break
+      case 'cursor':
+        this.surface.cursor(m.value)
         break
       case 'at':
         this.settle(m.request, { url: null, tick: m.tick })
@@ -250,11 +334,8 @@ export class WorldHost implements LiveHost, WorldMember {
     this.surface.send({ type: 'params', key: this.key, params })
   }
 
-  resize(size: CanvasSize): void {
-    if (size.w === this.w && size.h === this.h) return
-    this.w = size.w
-    this.h = size.h
-    this.surface.send({ type: 'size', key: this.key, w: size.w, h: size.h })
+  resize(w: number, h: number): void {
+    this.surface.send({ type: 'size', key: this.key, w, h })
   }
 
   advance(to: number, capture: boolean): Promise<LiveFrame | null> {
@@ -280,6 +361,7 @@ export class WorldHost implements LiveHost, WorldMember {
   dispose(): void {
     this.stopped = true
     this.closeWaits()
+    this.surface.cursor('')
     this.surface.remove(this.key)
     if (this.step) this.surface.dispose()
   }

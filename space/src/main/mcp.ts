@@ -325,7 +325,7 @@ const LIVE_CHECKS = 3
 const contextKey = (context: SceneContext): string => JSON.stringify(context)
 
 /** The code items of a description, to check them. */
-type LiveCheck = Pick<SceneLiveObject, 'api' | 'mode' | 'code' | 'params' | 'data' | 'width' | 'height' | 'line' | 'file'>
+type LiveCheck = Pick<SceneLiveObject, 'api' | 'code' | 'params' | 'data' | 'width' | 'height' | 'line' | 'file'>
 const livesOf = (desc: SceneDescription): LiveCheck[] => desc.objects.filter((object): object is SceneLiveObject => object.kind === 'live')
 
 const isMissing = (value: unknown): boolean => typeof value === 'object' && value !== null && (value as { draftMissing?: unknown }).draftMissing === true
@@ -1055,10 +1055,10 @@ export class AgentServer {
   }
 
   /**
-   * Compile every shader()/canvas() program of a scene with the board's own
+   * Check every world() program of a scene with the board's own
    * compiler before anything plays. A failing one is a program error at the
-   * line of its shader()/canvas() call; the compile log keeps the line
-   * numbers of the agent's shader or canvas code.
+   * line of its world() call; the error keeps the line
+   * numbers of the agent's code.
    */
   private async checkLivePrograms(lives: LiveCheck[]): Promise<SceneProgramError | null> {
     type Live = LiveCheck
@@ -1066,7 +1066,7 @@ export class AgentServer {
     // The same code is checked once; at most LIVE_CHECKS checks run at once.
     const checks = new Map<string, { args: AgentMethods['validateLive']['params']; lives: Live[] }>()
     for (const live of lives) {
-      const args = { mode: live.mode, code: live.code, params: live.params, size: [live.width, live.height] as [number, number], ...(live.data === undefined ? {} : { data: live.data }) }
+      const args = { code: live.code, params: live.params, size: [live.width, live.height] as [number, number], ...(live.data === undefined ? {} : { data: live.data }) }
       const key = JSON.stringify(args)
       const check = checks.get(key)
       if (check) check.lives.push(live)
@@ -1082,7 +1082,7 @@ export class AgentServer {
     await Promise.all(Array.from({ length: Math.min(LIVE_CHECKS, queue.length) }, worker))
     if (!failed.length) return null
     failed.sort((a, b) => (a.live.file ?? '').localeCompare(b.live.file ?? '') || (a.live.line ?? 0) - (b.live.line ?? 0))
-    const what = (entry: { live: Live; error: string }): string => `the ${entry.live.api}() code ${entry.live.mode === 'program' || entry.live.mode === 'world' ? 'fails' : 'does not compile'}: ${entry.error}`
+    const what = (entry: { live: Live; error: string }): string => `the ${entry.live.api}() code fails: ${entry.error}`
     if (failed.length === 1) return new SceneProgramError(what(failed[0]), failed[0].live.line ?? null, failed[0].live.file ?? null)
     return new SceneProgramError(failed.map((entry) => (entry.live.line ? `${siteLabel({ file: entry.live.file ?? null, line: entry.live.line })}: ${what(entry)}` : what(entry))).join('\n'), null)
   }

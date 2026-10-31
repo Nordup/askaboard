@@ -21,7 +21,7 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { InkLayers, paintActive, type PaintInk } from './paint'
-import { enteredWorld, enterLive, enteredLive, enterWorlds, liveInput, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
+import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
 import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
@@ -370,7 +370,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const ghostByIdRef = useRef<ReadonlyMap<string, BoardNode>>(new Map())
   /** The element of each node that shows an override now. */
   const appliedRef = useRef(new Map<string, HTMLElement>())
-  /** The overrides with live item params (for the live pixel registry), and what it got last. */
+  /** The overrides with world params (for the registry), and what it got last. */
   const liveParamsRef = useRef(new Map<string, NodeOverride>())
   const liveSentRef = useRef<{ dirty: boolean; clocks: PlaybackFrame['clocks'] | null; on: boolean }>({ dirty: false, clocks: null, on: false })
   /** The items that follow a point of a world: how each shows now, and its fade when its point is hidden or shown again. */
@@ -510,7 +510,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (frame) for (const id of frame.overrides.keys()) show(id)
       for (const id of linksRef.current.keys()) if (!frame?.overrides.has(id)) show(id)
     }
-    // Live pixel items: their params and scene clocks, when they changed.
+    // Worlds: their params and scene clocks, when they changed.
     if (!frame) {
       if (sent.on) setLivePlayback(null)
       liveSentRef.current = { dirty: false, clocks: null, on: false }
@@ -716,7 +716,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         placeLinks()
         if (selectedIdsRef.current.includes(id)) setLayoutVersion((version) => version + 1)
       },
-      wants: () => sendWorldInk(paintInks())
+      wants: () => sendWorldInk(paintInks()),
+      cursor: (value) => {
+        board.style.cursor = value
+      }
     })
   }, [followPoints, paintInks, placeLinks, requestPaint, worldPlace])
 
@@ -1544,8 +1547,6 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (target.kind === 'text' && target.id === hit.id && isKnown(target) && !target.locked) startEditing(target.id)
     else {
       setSelectedIds([target.id])
-      // A program item that takes input on entering gets the pointer and keys until Escape or a press outside.
-      if (target.kind === 'live' && target.mode !== 'world' && liveInput(target.id) === 'enter') enterLive(target.id)
     }
   }
 

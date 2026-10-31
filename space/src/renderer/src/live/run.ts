@@ -1,4 +1,4 @@
-import { isContent, isInk, isLive, newItemId, type BoardNode, type ContentNode, type InkNode, type LiveNode } from '@shared/board-format'
+import { isContent, isInk, isLive, isOldLive, newItemId, type BoardNode, type ContentNode, type InkNode, type LiveNode } from '@shared/board-format'
 import type { MomentsFailure } from '@shared/frames'
 import type { DraftInfo, FrameMoment, FramePart, SceneContext, SceneDescription, SceneItem, SceneResult } from '@shared/live-scene'
 import { sceneSteps } from '@shared/live-scene'
@@ -1416,7 +1416,7 @@ function liveItemsOf(play: CompiledScene['play'], evaluated: ReadonlyArray<{ mom
   for (const node of play.ghosts) ofScene.add(node.id)
   const out: FramesLiveItem[] = []
   for (const node of nodes) {
-    if (!isLive(node)) continue
+    if (!isLive(node) || isOldLive(node)) continue
     const timeline = timelines.get(node.id) ?? null
     const still = s.layout.get(node.id) ?? liveBox(node)
     const moments: FramesLiveItem['moments'] = []

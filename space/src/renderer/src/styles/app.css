@@ -285,9 +285,6 @@ button:focus-visible {
  *   .pill__action  the one small icon button, at the right end
  *   .pill__toggle  a plain button around the dot and text of a static pill (the scene
  *                  pill: shows or collapses the script panel); the pill hovers with it
- *   .pill--item    a static pill on a board item, not in the top bar (a live item that
- *                  stopped responding: dot, label, one restart action). It sits inside
- *                  the item at the bottom left and follows the board's zoom.
  *   .pill--flash   the pill lights up once (the scene pill, when the reading panel went into it,
  *                  or when it wakes up for a selected item)
  *   .pill--selected the pill speaks of what the learner selected: its text in --text-primary
@@ -321,25 +318,6 @@ button:focus-visible {
 .pill--static:has(.pill__action) {
   /* the button sits evenly inside the pill's border */
   padding-right: calc((var(--pill-height) - var(--pill-action-size)) / 2 - 1px);
-}
-
-.pill--static.pill--item {
-  position: absolute;
-  z-index: 1; /* over the item's canvas or frame */
-  left: var(--item-pill-inset);
-  bottom: var(--item-pill-inset);
-  gap: var(--item-pill-gap);
-  height: var(--item-pill-height);
-  padding: 0 var(--space-1) 0 var(--item-pill-pad-left);
-  background: var(--bg-elevated);
-  font-family: var(--font-ui);
-  line-height: normal;
-  pointer-events: auto;
-  --status-dot-ring: var(--item-pill-ring);
-}
-
-.pill--item .pill__action {
-  color: var(--text-primary);
 }
 
 .pill__label {

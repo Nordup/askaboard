@@ -102,7 +102,7 @@ export interface ScenePlayerState {
 /** Ink points by node id, with their world offset, for pen tips. */
 export type InkIndex = Map<string, { points: ReadonlyArray<readonly [number, number, number]>; offset: Point }>
 
-/** The scene clock of a live item (program items follow it). */
+/** The scene clock of a world. */
 interface Clock {
   t: number
   playing: boolean

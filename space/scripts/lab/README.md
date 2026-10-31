@@ -78,21 +78,6 @@ answering"), and a clock in the corner shows real time. `video-real.mp4`
 keeps real time. `recut.py` (Pillow, frames piped to ffmpeg) makes the watch
 video; `meta.json` has `numbers.watch_s`, `numbers.recorded_s` and `cuts`.
 
-## Live pixel items
-
-```sh
-node scripts/lab/live.mjs --port 9490 examples                 # the four programs in programs/live/
-node scripts/lab/live.mjs --port 9490 add programs/live/ripples.glsl --at 0,0 --param k=80
-node scripts/lab/live.mjs --port 9490 list                     # state and frame count of each item
-node scripts/lab/live.mjs --port 9490 validate my-shader.glsl  # compile log or "ok"
-node scripts/lab/mcp-call.mjs --port 47890 get_screenshot '{"target":"content"}' --out shot.png
-```
-
-`live.mjs` uses the dev hook `window.__spaceDev.live` (no scene API needed).
-A `.glsl` file is a shader (`mainImage`, Shadertoy style); a `.js` file is
-the body of `function (ctx, t, w, h, params, dt)`. The first line can set
-defaults: `// live: shader  size: 600x340  params: k=16 omega=3`.
-
 ## The gallery
 
 Runs go to `space/.lab/runs/<YYYYMMDD-HHMMSS>-<slug>/` (not in git).

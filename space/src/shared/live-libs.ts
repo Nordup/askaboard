@@ -1,5 +1,5 @@
 /**
- * The libraries that program() items import by bare name, served by the app
+ * The libraries that worlds import by bare name, served by the app
  * (main/live-item-protocol.ts) so they load fast and with no network. Any
  * other bare name loads from esm.sh, and any URL loads as it is.
  *

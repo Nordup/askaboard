@@ -675,7 +675,6 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const node: LiveNode = {
         id: prior ? prior[0] : newItemId('n'),
         kind: 'live',
-        mode: live.mode,
         code: live.code,
         params: { ...live.params },
         ...(live.data === undefined ? {} : { data: live.data }),
@@ -1104,11 +1103,11 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   // Program items keep the scene clock they rest at when the scene has ended, so a reopened board
   // shows them as the learner last saw them (program.ts: scene.t, scene.step, scene.ended).
   const played = new Set(objects.flatMap((object) => object.targets.map((target) => target.nodeId)))
-  // The program's own steps (not the story's lead step): what a code item reads as scene.step.
+  // The program's own steps (not the story's lead step): what a world reads as scene.step.
   const programSteps = ownSteps(desc.steps)
   const endStep: string | undefined = programSteps[stepAt(programSteps, desc.duration)]?.name
   const rest = { t: Math.round(desc.duration * 1000) / 1000, ...(endStep !== undefined ? { step: endStep } : {}) }
-  next = next.map((node) => (node.kind === 'live' && ((node as LiveNode).mode === 'program' || (node as LiveNode).mode === 'world') && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
+  next = next.map((node) => (node.kind === 'live' && played.has(node.id) ? ({ ...node, rest } as LiveNode) : node))
   next = linkNodes(next, desc, nodesOf, stage)
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {

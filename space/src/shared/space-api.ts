@@ -450,8 +450,8 @@ export interface AgentMethods {
   /** The learner's changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
-  /** Check live pixel code (shader compile log, canvas syntax error); error null when it is fine. */
-  validateLive: { params: { mode: 'shader' | 'canvas' | 'program' | 'world'; code: string; params?: Record<string, number>; size?: [number, number]; data?: unknown }; result: { error: string | null } }
+  /** Check a world's code; error null when it is fine. */
+  validateLive: { params: { code: string; params?: Record<string, number>; size?: [number, number]; data?: unknown }; result: { error: string | null } }
   /**
    * Stills of live items for preview frames, at `scale` px per board point: for each request, a picture per
    * moment (t: scene time; null: the item as it is on the board now). url null when there is no picture.

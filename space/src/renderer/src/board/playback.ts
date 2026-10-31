@@ -33,7 +33,7 @@ export interface NodeOverride {
   strokeWidth?: number
   /** Changing text: its HTML now. */
   html?: string
-  /** Live pixel items: param values now, merged over the node's own params. */
+  /** Worlds: param values now, merged over the node's own params. */
   params?: Record<string, number>
   /** Content: inline style values now (an edit() on its way), camelCase keys. */
   style?: Record<string, string>
@@ -65,7 +65,7 @@ export interface PlaybackFrame {
   tips: readonly PlaybackTip[]
   /** Ink that exists only now (changing ink objects): top-level, in world coordinates, painted on the canvas. The player changes their points from frame to frame. */
   inks?: readonly BoardNode[]
-  /** The scene clock of each live item a scene plays (program items follow it): scene time, playing or held, step name, duration. */
+  /** The scene clock of each world a scene plays: scene time, playing or held, step name, duration. */
   clocks?: ReadonlyMap<string, { t: number; playing: boolean; step: string | null; end: number }>
 }
 

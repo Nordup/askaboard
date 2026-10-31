@@ -1,7 +1,7 @@
 /**
- * The one param evaluator of live items (shader, canvas, program). Playback
- * (player.ts), shader stills (shader.ts through clock.ts) and worker stills
- * (live-pixels/runtime.ts) all use it, so a preview and a pause of playback
+ * The one param evaluator of worlds. Playback
+ * (player.ts) and world stills
+ * (world/worker) use it, so a preview and a pause of playback
  * at the same time show the same params.
  */
 

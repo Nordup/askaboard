@@ -15,7 +15,7 @@ import {
   type Revision
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
-import { liveItems, liveResources, validateLiveCode } from './live-pixels/registry'
+import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
 import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
@@ -757,9 +757,9 @@ export function App() {
       get scene() {
         return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), frame: () => scenePlayer.debugFrame(), snap: () => { const s = scenePlayer.snapshot(); return s && { overrides: [...s.frame.overrides], inks: s.frame.inks } } }
       },
-      /** Live pixel items (dev checks, scripts/lab/live.mjs): add one, list them with status and frame counts, check code. */
+      /** Worlds (dev checks): add one, list them with status and frame counts, check code. */
       live: {
-        add: (fields: Partial<LiveNode> & Pick<LiveNode, 'mode' | 'code'>) => {
+        add: (fields: Partial<LiveNode> & Pick<LiveNode, 'code'>) => {
           const board = boardRef.current
           if (!board) return null
           const state = board.liveState()
@@ -796,7 +796,7 @@ export function App() {
         },
         items: () => liveItems(),
         resources: () => liveResources(),
-        validate: (mode: 'shader' | 'canvas' | 'program' | 'world', code: string, params?: Record<string, number>) => validateLiveCode(mode, code, params)
+        validate: (code: string, params?: Record<string, number>) => validateWorld(code, params)
       },
       /** The sidebar's own board actions (dev checks, scripts/drive.mjs board-action): the same callbacks as its Rename and Move to Trash menu items; trash answers the confirm with OK. */
       sidebar: {

@@ -262,7 +262,7 @@ async function itemAnswer(ctx: HostContext, request: Record<string, unknown>): P
   const node = s.index.byId.get(ref)
   if (!node || !isKnown(node)) return { error: `there is no item "${ref}" on the board` }
   if (isInk(node)) return { kind: 'ink', strokes: [strokeOf(node)] }
-  if (node.kind === 'live') return { error: `"${ref}" is a live item made before this stage; make it again with program(), shader() or canvas()` }
+  if (node.kind === 'live') return { error: `"${ref}" is a live item made before this stage; make it again with world()` }
   const drafts = htmlToDrafts(nodesToHtml(node.id, s.index, false))
   const box = s.layout.get(node.id)
   if (drafts[0] && box && isFlowed(node, s.index.byId) && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(box.width)}px` }

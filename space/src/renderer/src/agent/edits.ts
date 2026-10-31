@@ -1,4 +1,4 @@
-import { isKnown, type BoardNode } from '@shared/board-format'
+import { isKnown, isOldLive, type BoardNode } from '@shared/board-format'
 import { followsText } from '@shared/world-links'
 import { liveParts } from '../live-pixels/registry'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
@@ -91,15 +91,16 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
     if (node.kind === 'live') {
       const status = liveStatus(node.id)
       Object.assign(info, {
-        mode: node.mode,
         size: { w: node.w, h: node.h },
         params: node.params,
         code_length: node.code.length,
         state: status ? status.state : 'not shown',
         ...(status?.error ? { error: status.error } : {}),
-        ...(node.mode === 'program' || node.mode === 'world' ? { input: status?.input ?? 'none' } : {}),
+        input: status?.input ?? 'none',
         ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {}),
-        ...(node.mode === 'world' ? { parts: liveParts(node.id) ?? [], pins: (node.pins ?? []).map((pin) => ({ id: pin.id, part: pin.part })) } : {})
+        parts: liveParts(node.id) ?? [],
+        pins: (node.pins ?? []).map((pin) => ({ id: pin.id, part: pin.part })),
+        ...(isOldLive(node) ? { older_kind: node.mode } : {})
       })
     }
     if (node.kind === 'svg') {

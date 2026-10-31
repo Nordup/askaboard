@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isLive, type BoardNode } from '@shared/board-format'
+import { isLive, isOldLive, type BoardNode } from '@shared/board-format'
 import type { SnapshotMark, SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
@@ -192,7 +192,7 @@ function cellsOf(req: SnapshotRequest): CellPlan[] {
 async function showWorlds(layer: HTMLDivElement | null, root: HTMLElement, index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, overrides: ReadonlyMap<string, NodeOverride>): Promise<void> {
   if (!layer) return
   layer.style.transform = root.style.transform
-  const worlds = [...index.byId.values()].filter(isLive).filter((node) => node.mode === 'world').sort((a, b) => a.z - b.z)
+  const worlds = [...index.byId.values()].filter(isLive).filter((node) => !isOldLive(node)).sort((a, b) => a.z - b.z)
   for (const node of worlds) {
     const { still, stillBox: place } = node as unknown as { still?: unknown; stillBox?: { x: number; y: number; w: number; h: number } }
     const box = layout.get(node.id)

@@ -1,5 +1,5 @@
 import { boardTexts, digestBoard, placeText, relation, searchTexts, unionRegions } from '@shared/board-digest'
-import { boardName, isContent, isInk, isKnown, isLive, type BoardNode } from '@shared/board-format'
+import { boardName, isContent, isInk, isKnown, isLive, isOldLive, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
   BoardChangeOp,
@@ -18,7 +18,7 @@ import type { BoardHandle, LiveBoardState } from '../board/Board'
 import { describeChange, type ChangeLog } from '../board/changes'
 import { buildIndex, ROOT } from '../board/scene'
 import type { Region } from '../board/types'
-import { liveStill, validateLiveCode } from '../live-pixels/registry'
+import { liveStill, validateWorld } from '../live-pixels/registry'
 import { sceneStills } from '../live-pixels/stills'
 import { sceneAt, type FramesLiveItem, type ScenePlace } from '../live/run'
 import { runEditTool } from './edits'
@@ -380,14 +380,14 @@ async function openBoard(context: AgentContext, path: string): Promise<void> {
   await context.openBoard(path)
 }
 
-/** Live pixel items carry their current pixels into the snapshot window (`still`, not saved). */
+/** Worlds carry their current pixels into the snapshot window (`still`, not saved). */
 async function withLiveStills(plan: ScreenshotPlan): Promise<ScreenshotPlan> {
   if (plan.kind !== 'plan') return plan
   const nodes = plan.nodes as BoardNode[]
   if (!nodes.some(isLive)) return plan
   const withStills = await Promise.all(
     nodes.map(async (node) => {
-      if (!isLive(node)) return node
+      if (!isLive(node) || isOldLive(node)) return node
       const still = await liveStill(node.id)
       return { ...node, still: still?.url ?? undefined, ...(still?.box ? { stillBox: still.box } : {}) }
     })
@@ -455,7 +455,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     }
     case 'validateLive': {
       const params = request.params as AgentMethods['validateLive']['params']
-      return { error: await validateLiveCode(params.mode, params.code, params.params ?? {}, params.size, params.data) }
+      return { error: await validateWorld(params.code, params.params ?? {}, params.size, params.data) }
     }
     case 'liveStills':
       return liveStillsOf(request.params as AgentMethods['liveStills']['params'])

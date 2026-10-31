@@ -1,19 +1,19 @@
-import { RotateCcw } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
-import type { LiveNode } from '@shared/board-format'
-import { LiveItem, enteredLive, observe, subscribeEntered, unobserve, type LiveStatus } from './registry'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { isOldLive, type LiveNode } from '@shared/board-format'
+import { LiveItem, type LiveStatus } from './registry'
 import './live.css'
 
 /**
- * The view of one live pixel item in the content layer. The pixels come from
- * a LiveItem (registry.ts); this component only gives it a box and shows a
- * quiet note when the code fails or waits for a slot. An item that stops
- * answering keeps its last picture and shows a small pill with a Restart button.
+ * The view of one world in the content layer: an invisible anchor, so that
+ * selection, moving, undo and the layout cache work. The pixels are on the
+ * world surface. A failed world shows a quiet note here.
  *
- * In the snapshot window (agent screenshots, preview frames) the item shows
- * the still image that the request carries (`still`: made on the main window
- * by the item's host or a step host, stills.ts). The snapshot window runs no
- * live code.
+ * In the snapshot window (agent screenshots, preview frames) a world shows on
+ * the frame's world layer, from the still that the request carries (made on the
+ * main window, stills.ts). The snapshot window runs no code.
+ *
+ * An item saved by an older app (a shader, canvas or program item) keeps its
+ * data, and it shows a note at its place.
  */
 
 const SNAPSHOT = new URLSearchParams(window.location.search).get('snapshot') === '1'
@@ -28,20 +28,28 @@ function firstLine(text: string | undefined): string {
   return (text ?? '').split('\n').find((line) => line.trim()) ?? ''
 }
 
+function Note({ style, common, title, detail, hint }: Pick<Props, 'style' | 'common'> & { title: string; detail?: string; hint?: string }) {
+  return (
+    <div {...common} className="node node-live node-live--note" style={style}>
+      <div className="node-live__note" title={hint}>
+        <span className="node-live__note-title">{title}</span>
+        {detail && <span className="node-live__note-detail">{detail}</span>}
+      </div>
+    </div>
+  )
+}
+
 function LiveRunner({ node, style, common }: Props) {
   const box = useRef<HTMLDivElement | null>(null)
   const item = useRef<LiveItem | null>(null)
   const [status, setStatus] = useState<LiveStatus>({ state: 'paused', frames: 0 })
-  const entered = useSyncExternalStore(subscribeEntered, enteredLive) === node.id
 
   useLayoutEffect(() => {
     const element = box.current
     if (!element) return
     const created = new LiveItem(node.id, node, element, setStatus)
     item.current = created
-    observe(element, created)
     return () => {
-      unobserve(element)
       created.dispose()
       item.current = null
     }
@@ -53,16 +61,7 @@ function LiveRunner({ node, style, common }: Props) {
     item.current?.update(node)
   }, [node])
 
-  const note =
-    status.state === 'error'
-      ? { title: node.mode === 'shader' ? 'Shader error' : node.mode === 'program' ? 'Program error' : node.mode === 'world' ? 'World error' : 'Canvas error', detail: firstLine(status.error) }
-      : status.state === 'waiting'
-        ? { title: 'Waiting', detail: 'Too many live items run at once.' }
-        : null
-  const stalled = status.state === 'stalled'
-  // A world has no box to mark: entering it shows nothing.
-  const input = node.mode === 'world' ? '' : entered ? ' node-live--entered' : status.input === 'direct' && !note ? ' node-live--direct' : ''
-
+  const failed = status.state === 'error'
   return (
     <div
       {...common}
@@ -70,27 +69,13 @@ function LiveRunner({ node, style, common }: Props) {
         box.current = element as HTMLDivElement | null
         common.ref(element)
       }}
-      className={`node node-live${note ? ' node-live--note' : ''}${input}`}
+      className={`node node-live${failed ? ' node-live--note' : ''}`}
       style={style}
     >
-      {note && (
+      {failed && (
         <div className="node-live__note" title={status.error}>
-          <span className="node-live__note-title">{note.title}</span>
-          {note.detail && <span className="node-live__note-detail">{note.detail}</span>}
-        </div>
-      )}
-      {stalled && (
-        // The board does not see presses on the pill: no ink, no selection, no double-click.
-        <div
-          className="pill pill--static pill--item"
-          onPointerDown={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-        >
-          <span className="status-dot status-dot--small status-dot--error" />
-          <span className="pill__label">Not responding</span>
-          <button className="pill__action" title="Restart" aria-label="Restart" onClick={() => item.current?.retry()}>
-            <RotateCcw size={12} strokeWidth={1.75} />
-          </button>
+          <span className="node-live__note-title">World error</span>
+          <span className="node-live__note-detail">{firstLine(status.error)}</span>
         </div>
       )}
     </div>
@@ -99,25 +84,11 @@ function LiveRunner({ node, style, common }: Props) {
 
 function LiveStill({ node, style, common }: Props) {
   const given = (node as unknown as { still?: unknown }).still
-  const url = typeof given === 'string' && given.startsWith('data:image/') ? given : null
-  // A world's picture can pass its rect: the snapshot frame shows it in the world layer, and this box stays an anchor.
-  if (url && node.mode === 'world') return <div {...common} className="node node-live" style={style} />
-  if (!url) {
-    return (
-      <div {...common} className="node node-live node-live--note" style={style}>
-        <div className="node-live__note">
-          <span className="node-live__note-title">{node.mode === 'shader' ? 'Shader' : node.mode === 'program' ? 'Program' : node.mode === 'world' ? 'World' : 'Live canvas'}</span>
-        </div>
-      </div>
-    )
-  }
-  return (
-    <div {...common} className="node node-live" style={style}>
-      <img className="node-live__canvas" src={url} alt="" draggable={false} />
-    </div>
-  )
+  if (typeof given === 'string' && given.startsWith('data:image/')) return <div {...common} className="node node-live" style={style} />
+  return <Note style={style} common={common} title="World" />
 }
 
 export function LiveView(props: Props) {
+  if (isOldLive(props.node)) return <Note style={props.style} common={props.common} title="Made with an older kind of item. Ask to rebuild it as a world." />
   return SNAPSHOT ? <LiveStill {...props} /> : <LiveRunner {...props} />
 }

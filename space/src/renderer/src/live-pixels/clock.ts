@@ -3,8 +3,7 @@ import type { ScenePlay } from '../live/compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime, type ParamSample } from '../live/params'
 
 /**
- * The time of live items (shader, canvas and program items): one contract
- * for all three kinds.
+ * The time of worlds.
  *
  * The tick grid, for previews and stills only. Tick k is at item time
  * k / TICK_HZ seconds. Previews and stills step through every tick from the
@@ -60,7 +59,7 @@ export interface ItemClock {
   rate: 0 | 1
 }
 
-/** What the item's code sees of its scene (program items: `scene`). */
+/** What the item's code sees of its scene (`scene`). */
 export interface SceneView {
   t: number
   playing: boolean
@@ -89,7 +88,7 @@ export function sceneTimelineOf(play: ScenePlay, nodeId: string): LiveTimeline |
     if (play.timeline.object(object.id).kind !== 'live' || !object.targets.some((target) => target.nodeId === nodeId)) continue
     // A live list: the samples of a stream can still arrive.
     const samples = object.dyn?.kind === 'live' ? paramSamplesOf(object.dyn.samples) : null
-    // The program's own steps: a code item sees the step() calls, not the story's lead step.
+    // The program's own steps: a world sees the step() calls, not the story's lead step.
     return { params: samples, steps: ownSteps(play.steps).map((step) => [step.at, step.name] as [number, string]) }
   }
   return null
@@ -102,15 +101,15 @@ export function paramsAt(timeline: LiveTimeline | null, base: Record<string, num
 }
 
 /**
- * The seed of an item's Math.random: from its mode, code and name, never
+ * The seed of a world's Math.random: from its code and name, never
  * from its id. Ids change when a draft is committed, on a replay and on a
  * copy; the seed stays, so a preview and the board run the same numbers.
  * Two items with the same code and name share a seed: give them different
  * names to differ.
  */
-export function seedOf(node: { mode: string; code: string; name?: string }): number {
+export function seedOf(node: { code: string; name?: string }): number {
   let hash = 0x811c9dc5
-  const text = `${node.mode}\u0000${node.code}\u0000${node.name ?? ''}`
+  const text = `world\u0000${node.code}\u0000${node.name ?? ''}`
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i)
     hash = Math.imul(hash, 0x01000193)

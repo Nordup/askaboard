@@ -6,7 +6,7 @@ import { resourcePath } from './resources'
  * they change nothing.
  *
  * LS_LAB_NO_CODE=1: code items do not exist for agents. Scene programs have
- * no shader(), canvas() or program() (live-prelude.js), and every agent text
+ * no world() (live-prelude.js), and every agent text
  * leaves out what points to them.
  *
  * LS_LAB_NO_HTML=1: HTML material does not exist for agents. Scene programs

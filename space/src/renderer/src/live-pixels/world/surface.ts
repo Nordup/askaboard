@@ -10,7 +10,7 @@ import * as worker from './worker'
  * The world surface: one GPU canvas that draws every world of a board, between
  * the page content and the ink. See docs/learning-space/one-world-architecture.md.
  *
- * The worker runs in a hidden sandboxed frame (the frame of program.ts), with
+ * The worker runs in a hidden sandboxed frame (main/live-item-protocol.ts), with
  * the protocol of shared/world-protocol.ts over one port. It renders to no
  * visible canvas: it sends each finished picture with the camera it was made
  * for, and the page shows the picture in its own paint (`sync`), with the CSS
@@ -59,6 +59,8 @@ export interface WorldBoard {
   anchor(id: string, dx: number, dy: number): void
   /** What a world listens to changed. */
   wants(): void
+  /** The cursor that a world asks for; '' gives it back to the board. */
+  cursor(value: string): void
 }
 
 /** One generation of a world on a surface (host.ts). */
@@ -183,7 +185,7 @@ export class WorldSurface {
     if (this.frame) return
     listen()
     const frame = document.createElement('iframe')
-    frame.setAttribute('sandbox', 'allow-scripts allow-pointer-lock')
+    frame.setAttribute('sandbox', 'allow-scripts')
     frame.setAttribute('tabindex', '-1')
     frame.setAttribute('aria-hidden', 'true')
     frame.style.cssText = 'width:100%;height:100%;border:0'
@@ -331,6 +333,10 @@ export class WorldSurface {
 
   wantsChanged(): void {
     this.board?.wants()
+  }
+
+  cursor(value: string): void {
+    this.board?.cursor(value)
   }
 
   /** A member's placement changed: the next paint sends it. */

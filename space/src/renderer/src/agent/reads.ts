@@ -1006,7 +1006,7 @@ function oneItem(m: Model, key: string, as: ItemAs, includeIds: boolean): unknow
       if (!node || node.kind !== 'svg') throw new Error(`"${id}" is ${node ? `a ${node.kind}` : 'an ink group'}, not an SVG item: as "svg" is for svg items.`)
       return String((node as { markup?: unknown }).markup ?? '')
     case 'source':
-      if (!node || !isLive(node)) throw new Error(`"${id}" is not a code item: as "source" is for live items (shader, canvas, program).`)
+      if (!node || !isLive(node)) throw new Error(`"${id}" is not a world: as "source" is for worlds.`)
       return node.code
     case 'html':
       if (!node || isInk(node)) throw new Error(`"${id}" is ink, which is not HTML: as "html" is for material (frames, text, svg, images).`)

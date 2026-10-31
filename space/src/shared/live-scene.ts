@@ -163,17 +163,16 @@ export interface SceneNodeObject extends SceneObjectBase {
   ref: string
 }
 
-/** Live pixels: a fragment shader or a 2D canvas program, drawn every frame by the board. */
+/** A world. */
 export interface SceneLiveObject extends SceneObjectBase {
   kind: 'live'
-  mode: 'shader' | 'canvas' | 'program' | 'world'
   code: string
   width: number
   height: number
   params: Record<string, number>
   data?: unknown
   style: SceneStyle
-  /** The program line of the shader()/canvas() call, for compile errors; file: its module in boards/scenes/ (none: the inline code). */
+  /** The program line of the world() call, for errors; file: its module in boards/scenes/ (none: the inline code). */
   line?: number
   file?: string
 }

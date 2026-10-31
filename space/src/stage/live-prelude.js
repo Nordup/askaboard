@@ -55,7 +55,7 @@
   delete G.__shared
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
-  // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no shader(), canvas() or program(), and no word of them.
+  // Lab switch LS_LAB_NO_CODE (main/lab-switch.ts): no world(), and no word of it.
   const NO_CODE_ITEMS = G.__noCodeItems === true
   delete G.__noCodeItems
   // Lab switch LS_LAB_NO_HTML: no html(), and no word of HTML material in messages. H(text, without) picks the words.
@@ -407,7 +407,7 @@
       return `[part "${this.name}" of ${this.entry.api} ${this.entry.id}]`
     }
   }
-  const isWorld = (entry) => entry.kind === 'live' && entry.mode === 'world'
+  const isWorld = (entry) => entry.kind === 'live'
   const partName = (name, what) => {
     if (typeof name !== 'string' || !name) fail(`${what}(name) needs a name`)
     return name
@@ -1474,11 +1474,12 @@
     return site ? (site.file === null ? `line ${site.line}` : `${site.file} line ${site.line}`) : 'line ?'
   }
 
-  function liveObject(api, mode, code, opts, size = [320, 200]) {
+  function world(code, opts) {
+    const api = 'world'
     if (typeof code !== 'string' || !code.trim()) fail(`${api}(code, options) needs its program as a string`)
     const site = callSite()
     opts = options(opts, `${api} options`)
-    const [w, h] = opts.size === undefined ? size : pair(opts.size, `${api} size`)
+    const [w, h] = opts.size === undefined ? [480, 360] : pair(opts.size, `${api} size`)
     if (w <= 0 || h <= 0) fail(`${api} size must be positive`)
     let x
     let y
@@ -1494,7 +1495,6 @@
     }
     let data
     if (opts.data !== undefined) {
-      if (mode !== 'world') fail(`${api} has no data option; only world() has`)
       try {
         data = JSON.parse(JSON.stringify(opts.data))
       } catch {
@@ -1504,7 +1504,6 @@
     return make({
       kind: 'live',
       api,
-      mode,
       name: nameOf(opts),
       ...(data === undefined ? {} : { data }),
       code,
@@ -1517,10 +1516,6 @@
       bounds: { x, y, width: w, height: h }
     })
   }
-  const shader = (code, opts) => liveObject('shader', 'shader', code, opts)
-  const canvas = (code, opts) => liveObject('canvas', 'canvas', code, opts)
-  const program = (code, opts) => liveObject('program', 'program', code, opts)
-  const world = (code, opts) => liveObject('world', 'world', code, opts, [480, 360])
 
   // ---------- Board material: html(), image(), space(), copy(), edit() ----------
 
@@ -2402,7 +2397,7 @@
       if (key === 'params' && plain(value)) {
         for (const [k, v] of Object.entries(value)) {
           for (const e of leaves(entry)) {
-            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params${NO_CODE_ITEMS ? '' : '; only shader(), canvas() and program() items do'}`)
+            if (e.kind !== 'live') fail(`tween: object ${e.id} (${e.api}) has no params${NO_CODE_ITEMS ? '' : '; only world() items do'}`)
             addValueTrack(values[optionValue(e, `params.${k}`).id], T, dur, num(v, `tween params.${k}`), ease || 'inOut')
           }
         }
@@ -2980,8 +2975,8 @@
     }
   }
 
-  /** A canvas or program item with changing params integrates them, moment by moment: its scene drains before the reply. */
-  const stepping = () => sweep.runs.some((run) => run.entry.kind === 'live' && run.entry.mode !== 'shader')
+  /** A world with changing params integrates them, moment by moment: its scene drains before the reply. */
+  const stepping = () => sweep.runs.some((run) => run.entry.kind === 'live')
 
   const shortName = (e) => `${e.api} ${e.id}${e.name ? ` "${e.name}"` : ''}`
   const who = (e) => {
@@ -3150,7 +3145,7 @@
       if (e.kind === 'ink') Object.assign(o, { style: e.style, lines: e.lines, pressure: e.pressure })
       if (e.kind === 'shape') Object.assign(o, { style: e.style, d: drawnD(e) })
       if (e.kind === 'text') Object.assign(o, { style: e.style, text: e.text, math: e.math, at: e.at, center: e.center })
-      if (e.kind === 'live') Object.assign(o, { style: e.style, mode: e.mode, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}), ...(e.data === undefined ? {} : { data: e.data }) })
+      if (e.kind === 'live') Object.assign(o, { style: e.style, code: e.code, width: e.width, height: e.height, params: e.params, line: e.line, ...(e.file ? { file: e.file } : {}), ...(e.data === undefined ? {} : { data: e.data }) })
       if (e.follows) o.follows = e.follows
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
@@ -3345,9 +3340,6 @@
     around: creator('around', around, { optIndex: 1 }),
     label: labelApi,
     trace: (fn, opts) => traceCreator(fn, T, opts),
-    shader: creator('shader', shader, { optIndex: 1 }),
-    canvas: creator('canvas', canvas, { optIndex: 1 }),
-    program: creator('program', program, { optIndex: 1 }),
     world: creator('world', world, { optIndex: 1 }),
     html,
     image,
@@ -3373,7 +3365,9 @@
     mark,
     stage
   }
-  if (NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program', 'world']) delete api[key]
+  // The kinds of code item before worlds: a scene that calls one hears what to do.
+  if (!NO_CODE_ITEMS) for (const key of ['shader', 'canvas', 'program']) api[key] = () => fail(`${key}() no longer exists: use world(code, options)`)
+  if (NO_CODE_ITEMS) delete api.world
   if (NO_HTML) delete api.html
   for (const [key, value] of Object.entries(api)) Object.defineProperty(G, key, { value, enumerable: true, writable: false, configurable: false })
 
