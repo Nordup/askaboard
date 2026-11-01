@@ -298,7 +298,8 @@ export const LOOK = String.raw`
 
   /** world.look = "toon", "plain", "film", or an object of changes. */
   const setLook = (w, value) => {
-    if (value === 'toon') Object.assign(w.look, TOON_LOOK);
+    const from = w.look.name;
+    if (value === 'toon') Object.assign(w.look, TOON_LOOK, { shades: [...TOON_LOOK.shades], steps: [...TOON_LOOK.steps] });
     else if (value === 'plain') Object.assign(w.look, PLAIN);
     else if (value === 'film') Object.assign(w.look, FILM);
     else if (value && typeof value === 'object') Object.assign(w.look, value);
@@ -306,8 +307,7 @@ export const LOOK = String.raw`
     if (value === 'plain') w.floor = false;
     if (value === 'toon') { w.keyLight.color.set('#ffffff'); w.keyLight.intensity = TOON_KEY; }
     if (value === 'film') { w.keyLight.color.set('#e8efff'); w.keyLight.intensity = FILM_KEY; }
-    // A program holds the look, so what was compiled in another look compiles again.
-    w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+    if (w.look.name !== from) recompileToon(w);
     w.floorBuilt = false;
     w.stale = true;
   };
@@ -455,8 +455,8 @@ export const LOOK = String.raw`
     u.opacity.value = look.shadow;
   };
 
-  /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
-  const renderWorld = (w, s, crop, inner, output, samples) => {
+  /** Render world w at scale s for a crop into output. inkScale: pixels of the target per unit of look.outline, at full resolution. Sets all renderer state that it needs and restores it. */
+  const renderWorld = (w, s, crop, inner, output, samples, inkScale) => {
     const look = lookOf(w), camera = w.camera, direct = isDirect(look);
     if (!direct || look.environment > 0) makeFilm();
     rendering = w;
@@ -488,7 +488,7 @@ export const LOOK = String.raw`
       w.inkPass.visible = false;
 
       if (direct) {
-        if (look.name === 'toon') beginToon(w, look, W, H, surface.dpr * res);
+        if (look.name === 'toon') beginToon(w, look, W, H, inkScale * res);
         renderer.setRenderTarget(output);
         renderer.render(w.scene, camera);
         return;

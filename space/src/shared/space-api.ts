@@ -556,6 +556,8 @@ export interface SpaceApi {
   readonly devHooks: boolean
   /** Measuring switches of the world surface (env SPACE_WORLD_TUNE), or null. */
   readonly worldTune: WorldTune | null
+  /** The display's rate when this process started with no frame limit, else null (renderer/src/frame-pace.ts). */
+  readonly frameLimitOff: number | null
 
   getInitialState(): Promise<Snapshot>
   /** Show the system folder picker. Resolves null when the user cancels. */
@@ -651,6 +653,7 @@ export const IPC = {
   appVersion: 'space:app-version',
   devHooks: 'space:dev-hooks',
   worldTune: 'space:world-tune',
+  frameLimitOff: 'space:frame-limit-off',
   getInitialState: 'space:get-initial-state',
   openFolderDialog: 'space:open-folder-dialog',
   openRecent: 'space:open-recent',

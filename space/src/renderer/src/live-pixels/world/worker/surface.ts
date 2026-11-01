@@ -138,7 +138,7 @@ export const SURFACE = String.raw`
       if (w.output) giveOutput(w.output);
       w.output = takeOutput(W, H, direct, samples);
     }
-    renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output, samples);
+    renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output, samples, surface.dpr);
     w.drawn = { s: place.s, crop, quality };
     w.stale = false;
     w.moving = false;
@@ -308,7 +308,8 @@ export const SURFACE = String.raw`
       if (!crop) return null;
       const W = crop.r - crop.l, H = crop.b - crop.t;
       target = takeOutput(W, H, isDirect(lookOf(w)), samplesAt(0));
-      renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target, samplesAt(0));
+      // A still has no view, and s can be under the device pixel ratio: its line keeps the same width on the board.
+      renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target, samplesAt(0), s);
       const data = new Uint8Array(W * H * 4);
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
       firstPicture(w);
@@ -422,7 +423,8 @@ export const SURFACE = String.raw`
     if (surface.dirty && surface.camera) return true;
     for (const w of worlds.values()) {
       if (due(w)) return true;
-      if (w.stale && w.placement && w.placement.shown && !w.culled && !w.failed && (w.setUp || w.ran)) return true;
+      // A world below full quality has one sharp render still to come, even when no tick will ask for it.
+      if ((w.stale || (w.drawn && w.drawn.quality > 0)) && w.placement && w.placement.shown && !w.culled && !w.failed && (w.setUp || w.ran)) return true;
     }
     return false;
   };

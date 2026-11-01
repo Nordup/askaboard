@@ -6,6 +6,7 @@ import { IPC, type SpaceApi, type Unsubscribe } from '@shared/space-api'
 const version = ipcRenderer.sendSync(IPC.appVersion) as string
 const devHooks = ipcRenderer.sendSync(IPC.devHooks) === true
 const worldTune = ipcRenderer.sendSync(IPC.worldTune) as SpaceApi['worldTune']
+const frameLimitOff = ipcRenderer.sendSync(IPC.frameLimitOff) as SpaceApi['frameLimitOff']
 
 function listen<T>(channel: string, listener: (payload: T) => void): Unsubscribe {
   const handler = (_event: IpcRendererEvent, payload: T): void => listener(payload)
@@ -20,6 +21,7 @@ const api: SpaceApi = {
   version,
   devHooks,
   worldTune,
+  frameLimitOff,
 
   getInitialState: () => ipcRenderer.invoke(IPC.getInitialState),
   openFolderDialog: () => ipcRenderer.invoke(IPC.openFolderDialog),

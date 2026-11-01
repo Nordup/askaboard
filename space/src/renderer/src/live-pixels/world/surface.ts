@@ -5,6 +5,7 @@ import type { WorldTune } from '@shared/world-tune'
 import type { WorldPoints } from '@shared/world-links'
 import type { NodeOverride } from '../../board/playback'
 import type { Camera, Point } from '../../board/types'
+import { paceFrames } from '../../frame-pace'
 import * as worker from './worker'
 
 /**
@@ -106,6 +107,7 @@ let uncapped = false
 /** Tell every board surface, now and after a new worker: pictures wait only for the GPU. */
 export function setWorldUncapped(on: boolean): void {
   uncapped = on
+  paceFrames(!on && !tune.uncapped)
   for (const surface of boardSurfaces) surface.send({ type: 'uncapped', on })
 }
 

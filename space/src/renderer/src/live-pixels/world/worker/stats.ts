@@ -41,7 +41,7 @@ export const STATS = String.raw`
     for (const w of worlds.values()) {
       if (w.failed || !(w.setUp || w.ran)) continue;
       alive++;
-      if (w.placement && w.placement.shown) share = Math.min(share, QUALITY[w.quality]);
+      if (w.placement && w.placement.shown && w.drawn) share = Math.min(share, QUALITY[w.drawn.quality]);
       if (w.drawn && w.reach && !w.reach.full) {
         const c = w.drawn.crop, r = w.reach, inner = innerOf(w, w.drawn.s, c);
         crops.push({ scale: w.drawn.s, reach: [Math.round(r.r - r.l), Math.round(r.b - r.t)], scene: [inner.r - inner.l, inner.b - inner.t], crop: [c.r - c.l, c.b - c.t] });

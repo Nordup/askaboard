@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
@@ -241,6 +241,9 @@ function registerIpc(): void {
   ipcMain.on(IPC.worldTune, (event) => {
     event.returnValue = worldTune
   })
+  ipcMain.on(IPC.frameLimitOff, (event) => {
+    event.returnValue = uncappedAtLaunch ? screen.getPrimaryDisplay().displayFrequency || 60 : null
+  })
 
   handle(IPC.getInitialState, () => snapshot(true))
   handle(IPC.getAgentStatus, () => agentServer.status())
@@ -430,7 +433,10 @@ async function capture(win: BrowserWindow, path: string): Promise<void> {
 
 store.loadState()
 
-/** The switches need a restart, so they follow what was saved at launch: for a user with the pill off, the frame limit stays. */
+/**
+ * The switches need a restart, so they follow what was saved at launch: for a user with the pill off, the frame limit stays.
+ * They last for the process, so when the pill closes, renderer/src/frame-pace.ts keeps the display's rate.
+ */
 const uncappedAtLaunch = (store.getShowPerformance() && store.getUncappedFrames()) || !!worldTune?.uncapped
 if (uncappedAtLaunch) {
   app.commandLine.appendSwitch('disable-frame-rate-limit')

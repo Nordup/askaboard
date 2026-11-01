@@ -185,7 +185,16 @@ export const TOON = String.raw`
     w.stage.add(hemi, pass);
     w.toonFill = hemi;
     w.inkPass = pass;
+    w.toonFragment = TOON_LOOK.fragment;
     w.toonUniforms = { toonShades: { value: new THREE.Vector3() }, toonSteps: { value: new THREE.Vector2() }, toonSoft: { value: 0 }, toonGlass: { value: 1 } };
+  };
+
+  /**
+   * A program belongs to a look and a material keeps the uniforms of its last compile, and three skips the compile hook for a program it has.
+   * So a change of look or of look.fragment frees these programs, and each material compiles again through the hook.
+   */
+  const recompileToon = (w) => {
+    w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) if (TOONED[m.type]) m.dispose(); });
   };
 
   /** Before a render in this look. W, H: the target. px: device pixels per CSS pixel of the target. */
@@ -195,6 +204,7 @@ export const TOON = String.raw`
     u.toonSteps.value.fromArray(look.steps);
     u.toonSoft.value = look.soft;
     u.toonGlass.value = look.see;
+    if (w.toonFragment !== look.fragment) { w.toonFragment = look.fragment; recompileToon(w); }
     ink.inkWidth.value.set((2 * width) / W, (2 * width) / H);
     ink.inkColor.value.set(look.ink);
     ink.inkAlpha.value = 1;
