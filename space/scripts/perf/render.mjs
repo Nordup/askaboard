@@ -53,7 +53,10 @@ ObjC.import('AppKit'); ObjC.import('CoreGraphics');
 function run(argv) {
   const pids = argv.map(Number), list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0)));
   const at = list.findIndex((w) => pids.includes(w.kCGWindowOwnerPID) && w.kCGWindowLayer <= 3);
-  if (at < 0) return JSON.stringify({ share: 0 });
+  if (at < 0) {
+    const all = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(0, 0))).find((w) => pids.includes(w.kCGWindowOwnerPID) && w.kCGWindowLayer === 0 && w.kCGWindowBounds.Width > 1000);
+    return JSON.stringify({ share: 0, x: all?.kCGWindowBounds.X, y: all?.kCGWindowBounds.Y });
+  }
   const r = list[at].kCGWindowBounds, front = list.slice(0, at).filter((w) => w.kCGWindowLayer <= 3 && w.kCGWindowAlpha > 0.5).map((w) => w.kCGWindowBounds);
   const screens = ObjC.deepUnwrap($.NSScreen.screens).map((s) => s.frame), top = screens[0].size.height;
   const onScreen = (x, y) => screens.some((s) => x >= s.origin.x && x < s.origin.x + s.size.width && y >= top - s.origin.y - s.size.height && y < top - s.origin.y);
