@@ -292,7 +292,8 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   history share one budget (`run.ts trimScenes`, decision B30): an older
   finished scene gives up its play data and rebuilds at its next replay.
   What a replay or a preview needs stays until it is done, also over the
-  budget (`scenePlayer.keepPlay`, `mcp.ts withPlayable`, decision B41).
+  budget (`scenePlayer.keepPlay`, `mcp.ts withPlayable`, decision B41), and
+  the budget is checked again as soon as that ends (`onFree`, decision B47).
 - **Errors.** A scene input works, draws nothing, or is an error with its
   line, also from parallel async functions and functions of moving objects;
   results carry no warnings (decision B18). An error at a moment that

@@ -358,6 +358,7 @@ function trimScenes(): void {
 }
 
 onFramesGrowth(trimScenes)
+scenePlayer.onFree(trimScenes)
 
 function keepDraft(key: string, draft: CompiledDraft): void {
   drafts.delete(key)
@@ -1530,7 +1531,6 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       return {}
     case 'freePlay':
       scenePlayer.freePlay(ids(args.scenes))
-      trimScenes()
       return {}
     case 'failures':
       // The stage's failure state after it changed (main/mcp.ts publishFailures): it replaces the renderer's copy.

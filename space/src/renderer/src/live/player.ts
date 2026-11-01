@@ -1017,6 +1017,10 @@ export class ScenePlayer {
   private history = new Map<string, SceneMemory>()
   /** The scenes that a replay or a preview holds, with the count of those that hold each (keepPlay, freePlay). */
   private holds = new Map<string, number>()
+  /** How many scenes were in `scenes` after the last move on: fewer now means that scenes stopped playing. */
+  private inPlay = 0
+  /** Called when scenes lose what kept their play data over the budget: a hold ended, or they stopped playing. */
+  private free: () => void = () => undefined
   private replays = 0
   /** Bumped when a scene's play changes in place (swap, a later commit that changes an earlier play): the runs are made again. */
   private epoch = 0
@@ -1120,6 +1124,12 @@ export class ScenePlayer {
       if (count > 1) this.holds.set(id, count - 1)
       else this.holds.delete(id)
     }
+    this.free()
+  }
+
+  /** The owner of the scene budget (run.ts) trims when protection ends: at the end of a hold, and when scenes stop playing. */
+  onFree(listener: () => void): void {
+    this.free = listener
   }
 
   /**
@@ -1514,6 +1524,9 @@ export class ScenePlayer {
     }
     const now = performance.now()
     this.advance(now)
+    const stopped = this.scenes.length < this.inPlay
+    this.inPlay = this.scenes.length
+    if (stopped) this.free()
     if (!this.scenes.length) {
       this.firstFrames = []
       this.inkPoints.clear()
@@ -1719,9 +1732,13 @@ export class ScenePlayer {
       })
       return true
     }
+    // Held until all of them are in the queue: what stops playing here frees room while later scenes of the list still wait for their turn.
+    const scenes = list.map((entry) => entry.scene)
+    this.keepPlay(scenes)
     this.scenes = []
     this.queueEnd = null
     list.forEach((entry, i) => this.replay(board, { scene: entry.scene, ...(i === 0 && entry.at !== undefined ? { at: entry.at } : i === 0 && entry.step ? { step: entry.step } : {}) }, 'queue'))
+    this.freePlay(scenes)
     return true
   }
 
