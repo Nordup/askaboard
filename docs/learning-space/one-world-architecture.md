@@ -169,9 +169,13 @@ flowchart LR
 - Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
   real alpha. The last pass writes premultiplied colour.
 - Where `bitmaprenderer` is missing, the page draws each picture on a 2D canvas.
-- Toon and plain: the direct path. The scene renders once into the world's 8-bit
-  MSAA output, and materials write display colours. Blending makes them premultiplied,
-  so no pass follows.
+- Toon and plain: the direct path. The scene renders once, and materials write display
+  colours. Blending makes them premultiplied, so no pass follows. With samples, it renders
+  into a multisample target of the pool, and the resolved picture goes into the world's
+  plain 8-bit output by a copy on the GPU. Samples and depth take 9 times the bytes of the
+  picture and last for one render, so worlds of like size share them, and a world at rest
+  keeps 8 MB per 2 MP, not 72 MB. With no samples, it renders into the output, which then
+  has depth.
 - Compositing uses `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by
   world opacity.
 - Render targets come from a pool with a limit in bytes that follows the device's

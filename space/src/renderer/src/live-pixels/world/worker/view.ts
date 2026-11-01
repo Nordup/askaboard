@@ -565,8 +565,8 @@ export const VIEW = String.raw`
    */
   const OUTPUT_STEP = 128, OUTPUT_WASTE = 1.6;
   const stepUp = (n) => Math.ceil(n / OUTPUT_STEP) * OUTPUT_STEP;
-  /** direct: the output is where the scene renders, so it has depth and samples. */
-  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.samples === samples) && t.width >= W && t.height >= H
+  /** direct: the scene renders for this output. With samples it renders in a shared target and comes here as a copy, and with no samples it renders here, so the output has depth. */
+  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.depthBuffer === !samples) && t.width >= W && t.height >= H
     && t.width * t.height <= Math.max(W * H * OUTPUT_WASTE, stepUp(W) * stepUp(H));
   /** Use the corner of t that holds W x H. Three renders there, and the composite reads there. */
   const useOutput = (t, W, H) => {
@@ -585,7 +585,7 @@ export const VIEW = String.raw`
       poolBytes -= targetBytes(best);
       return useOutput(best, W, H);
     }
-    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: !!direct, samples: direct ? samples : 0, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: !!direct && !samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
     if (direct) { t.isXRRenderTarget = true; t.texture.colorSpace = THREE.SRGBColorSpace; t.texture.internalFormat = 'RGBA8'; }
     t.direct = !!direct;
     return useOutput(t, W, H);
@@ -594,5 +594,26 @@ export const VIEW = String.raw`
     t.used = useCount;
     spareOutputs.push(t);
     poolBytes += targetBytes(t);
+  };
+  /**
+   * Where a direct render with samples draws: a target of the pool with room, as an output has. Samples and depth last for one render and are 9 times the
+   * bytes of the picture, so worlds of like size share them, and a world at rest keeps only its output.
+   */
+  const multisampleTarget = (W, H, samples) => useOutput(sharedOf('multisample' + samples, stepUp(W), stepUp(H), () => {
+    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: true, resolveDepthBuffer: false, samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    t.isXRRenderTarget = true;
+    t.texture.colorSpace = THREE.SRGBColorSpace;
+    t.texture.internalFormat = 'RGBA8';
+    return t;
+  }), W, H);
+  /** The resolved picture of a multisample target into an output, on the GPU. The scissor of both targets holds the copy to W x H. */
+  const copyPicture = (from, to, W, H) => {
+    const gl = renderer.getContext(), state = renderer.state;
+    renderer.initRenderTarget(to);
+    state.bindFramebuffer(gl.READ_FRAMEBUFFER, renderer.properties.get(from).__webglFramebuffer);
+    state.bindFramebuffer(gl.DRAW_FRAMEBUFFER, renderer.properties.get(to).__webglFramebuffer);
+    gl.blitFramebuffer(0, 0, W, H, 0, 0, W, H, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    state.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    state.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
   };
 `

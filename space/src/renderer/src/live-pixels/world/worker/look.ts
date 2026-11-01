@@ -601,9 +601,11 @@ export const LOOK = String.raw`
 
       if (direct) {
         if (look.name === 'toon') beginToon(w, look, W, H, inkScale * res);
-        renderer.setRenderTarget(output);
+        const target = samples ? multisampleTarget(W, H, samples) : output;
+        renderer.setRenderTarget(target);
         if (compileOnly) return compileWorld(w, camera);
         drawWorld(w, camera);
+        if (target !== output) copyPicture(target, output, W, H);
         return;
       }
 
