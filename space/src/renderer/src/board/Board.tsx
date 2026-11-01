@@ -282,6 +282,8 @@ function cancelFrame(slot: { current: number | null }): void {
   slot.current = null
 }
 
+const NO_INDEX = buildIndex([])
+
 /** Dot grid style: pans and scales with the camera, fades when zoomed far out. */
 function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   let size = GRID_PITCH * camera.zoom
@@ -347,7 +349,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const editorRef = useRef<HTMLTextAreaElement>(null)
 
   const nodesRef = useRef<BoardNode[]>(doc.nodes)
-  const indexRef = useRef<SceneIndex>(buildIndex(doc.nodes))
+  const indexRef = useRef<SceneIndex>(null as unknown as SceneIndex)
+  indexRef.current ??= buildIndex(doc.nodes)
   const layoutRef = useRef<LayoutMap>(new Map())
   /** The layout as measured: linked items at their resting place. `layoutRef` shows them where they are now. */
   const restLayoutRef = useRef<LayoutMap>(layoutRef.current)
@@ -374,6 +377,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const dirtyLayersRef = useRef({ committed: false, active: false, playback: false })
   const editingRef = useRef<EditingState | null>(null)
   const measureFrameRef = useRef<number | null>(null)
+  /** Counts the measures, so that a commit that a layout effect measured does not measure again. */
+  const measuresRef = useRef(0)
+  /** What the last render's measure saw: only a change here moves a box. */
+  const measuredRef = useRef<{ content: readonly BoardNode[]; editingId: string | null; ghostIndex: SceneIndex | null } | null>(null)
   /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
   const playbackRef = useRef<PlaybackFrame | null>(null)
   /** What the learner sees now: every learner input that picks or changes items asks it (scene.ts shownNow). */
@@ -405,6 +412,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
 
   const [camera, setCamera] = useState<Camera>(cameraRef.current)
+  /** cameraRef moved since `camera` last took it. */
+  const cameraStaleRef = useRef(false)
   const [viewport, setViewport] = useState<Point>([1, 1])
   const [index, setIndex] = useState<SceneIndex>(indexRef.current)
   const [layoutVersion, setLayoutVersion] = useState(0)
@@ -671,6 +680,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       if (paintFrameRef.current !== null) return
       const paint = (): void => {
         paintFrameRef.current = null
+        // The grid, the selection box and the lasso follow the camera in the frame of the ink. Wheel events come faster than frames.
+        if (cameraStaleRef.current) {
+          cameraStaleRef.current = false
+          if (now) setCamera(cameraRef.current)
+          else flushSync(() => setCamera(cameraRef.current))
+        }
         // First the worlds: a new picture moves the items linked to it, and they paint in this same paint.
         syncWorlds(hostRef.current, cameraRef.current, viewportRef.current)
         placeWorlds()
@@ -740,17 +755,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Layout cache ----------
 
-  /** Measure every content element into the layout cache, then add ink. */
-  const measure = useCallback(() => {
+  /** Measure every content element into the layout cache, then add ink. `inkOnly`: no content changed, so the boxes stand and setNodes added the ink. */
+  const measure = useCallback((inkOnly = false) => {
+    measuresRef.current++
     const root = contentRootRef.current
     // Playback transforms are only a look: measure the final layout without them.
     const applied = appliedRef.current
-    const playing = applied.size > 0
-    if (playing) for (const element of applied.values()) clearElementOverride(element)
-    applied.clear()
-    const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
-    addInkLayout(indexRef.current, layout)
-    restLayoutRef.current = layout
+    const playing = !inkOnly && applied.size > 0
+    if (!inkOnly) {
+      if (playing) for (const element of applied.values()) clearElementOverride(element)
+      applied.clear()
+      const layout: LayoutMap = root ? measureContent(root, elementsRef.current, domCameraRef.current.zoom) : new Map()
+      addInkLayout(indexRef.current, layout)
+      restLayoutRef.current = layout
+    }
     // An item that lost its link or left the board shows no link any more.
     const linked = new Set(linkedNodes().map((node) => node.id))
     for (const id of linksRef.current.keys()) if (!linked.has(id)) linksRef.current.delete(id)
@@ -777,7 +795,18 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => requestMeasure())
+    // An element's first report is its size as measured after its render: only another size moves anything.
+    const observer = new ResizeObserver((entries) => {
+      const layout = restLayoutRef.current
+      for (const entry of entries) {
+        const id = (entry.target as HTMLElement).dataset.nodeId
+        const box = id ? layout.get(id) : undefined
+        const size = entry.borderBoxSize?.[0]
+        if (box && size && Math.abs(box.width - size.inlineSize) < 0.05 && Math.abs(box.height - size.blockSize) < 0.05) continue
+        requestMeasure()
+        return
+      }
+    })
     for (const element of elementsRef.current.values()) observer.observe(element)
     resizeObserverRef.current = observer
     return () => {
@@ -789,8 +818,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   // Measure after every content render, before the browser paints.
   useLayoutEffect(() => {
     applyContentTransform()
+    // A commit of ink only leaves every box where it is, and on a big board a measure of the DOM is the cost of the commit.
+    const content = [...index.byId.values()].filter((node) => !isInk(node))
+    const last = measuredRef.current
+    const inkOnly = !!last && last.editingId === editingId && last.ghostIndex === ghostIndex && last.content.length === content.length && content.every((node, i) => node === last.content[i])
+    measuredRef.current = { content, editingId, ghostIndex }
     // It also puts the playback overrides back on every element (a new one, as a ghost, needs its override now).
-    measure()
+    measure(inkOnly)
   }, [index, editingId, ghostIndex, applyContentTransform, measure])
 
   useEffect(() => {
@@ -820,7 +854,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const applyCamera = useCallback(
     (next: Camera) => {
       cameraRef.current = next
-      setCamera(next)
+      cameraStaleRef.current = true
       requestPaint({ committed: true, active: true })
       onCameraChangeRef.current(next)
     },
@@ -1201,7 +1235,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   const ghostCtx = useRef<ContentContext>(null as unknown as ContentContext)
   ghostCtx.current = {
-    index: ghostIndex ?? buildIndex([]),
+    index: ghostIndex ?? NO_INDEX,
     editingId: null,
     editorRef,
     editorInitial: '',
@@ -1819,18 +1853,21 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const key = options?.step ?? null
         const join = key !== null && stepKeyRef.current === key
         let changed = false
+        const measures = measuresRef.current
         flushSync(() => {
           changed = commitOver((document) => homeless(applyChanges(document, base, next)), 'agent', !join)
         })
         if (changed || join) stepKeyRef.current = key
-        measure()
+        // The commit's render measured, unless it rendered nothing.
+        if (measuresRef.current === measures) measure()
         const present = new Set(documentNodes().map((node) => node.id))
         if (selectedIdsRef.current.some((id) => !present.has(id))) setSelectedIds(selectedIdsRef.current.filter((id) => present.has(id)))
       },
       agentAmend: (base, next) => {
         if (editingRef.current) commitEditing()
+        const measures = measuresRef.current
         flushSync(() => commitOver((document) => homeless(applyChanges(document, base, next)), 'agent', false))
-        measure()
+        if (measuresRef.current === measures) measure()
       },
       boardId: () => idRef.current,
       setBoardId: (id) => {
@@ -1838,7 +1875,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         idRef.current = id
         emit()
       },
-      remeasure: measure,
+      remeasure: () => measure(),
       selectAll: () => selectAllRef.current(),
       settle: () => {
         if (editingRef.current) commitEditing()

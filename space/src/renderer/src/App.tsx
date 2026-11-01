@@ -265,7 +265,8 @@ export function App() {
       const current = openRef.current
       if (!current) return
       cameraRef.current = { root: current.root, path: current.path, camera }
-      setZoom(camera.zoom)
+      // The top bar shows whole percents: a pan or a small zoom step renders nothing.
+      setZoom(Math.round(camera.zoom * 100) / 100)
       if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current)
       cameraTimerRef.current = setTimeout(flushCamera, CAMERA_SAVE_DELAY_MS)
     },

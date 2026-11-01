@@ -298,8 +298,8 @@ interface ContentLayerProps {
   rootRef: RefObject<HTMLDivElement | null>
 }
 
-/** The transformed root. Its transform is set by the Board, never by React. */
-export function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerProps) {
+/** The transformed root. Its transform is set by the Board, never by React, so a camera change does not render it. */
+export const ContentLayer = memo(function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerProps) {
   const top = (index.children.get(ROOT) ?? []).filter(isContent)
   return (
     <div className="board__content" ref={rootRef} aria-hidden={editingId ? undefined : 'true'}>
@@ -308,7 +308,7 @@ export function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerPro
       ))}
     </div>
   )
-}
+})
 
 /**
  * Measure node elements into world boxes (board points). `root` is the
