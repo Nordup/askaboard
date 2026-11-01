@@ -23,4 +23,8 @@ export interface WorldTune {
   uncapped?: number
   /** The fence time per picture (ms) over which a moving world lowers its quality: a small value acts as a weak machine. */
   budget?: number
+  /** 1: act as on an Intel GPU, whatever this machine has. */
+  integrated?: number
+  /** 1: show pictures through a 2D canvas, as where bitmaprenderer is missing. */
+  flat?: number
 }

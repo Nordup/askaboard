@@ -90,6 +90,21 @@ export const LOOK = String.raw`
     holding = w;
     try { renderer.render(w.scene, camera); } finally { holding = null; }
   };
+  /** The programs that a render of w with this state needs. three starts them and does not wait. */
+  const compileWorld = (w, camera) => {
+    holding = w;
+    try { return renderer.compile(w.scene, camera); } finally { holding = null; }
+  };
+  let passesCompiled = false;
+  /** The film passes, once, with the world that needs them first. */
+  const compilePasses = (list) => {
+    if (passesCompiled) return;
+    passesCompiled = true;
+    for (const m of [dofMat, joinMat, mirrorMat, brightMat, downMat, upMat, finalMat]) {
+      quad.material = m;
+      for (const compiled of renderer.compile(quadScene, quadCam)) list.add(compiled);
+    }
+  };
   let quadScene = null, quadCam = null, quad = null, dofMat = null, joinMat = null, mirrorMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
   /** The measuring switches (SPACE_WORLD_TUNE), read once at boot. tuned: what they force on every look; null when they force nothing. */
   let tune = {}, tuned = null;
@@ -517,8 +532,11 @@ export const LOOK = String.raw`
     u.opacity.value = look.shadow;
   };
 
-  /** Render world w at scale s for a crop into output. inkScale: pixels of the target per unit of look.outline, at full resolution. Sets all renderer state that it needs and restores it. */
-  const renderWorld = (w, s, crop, inner, output, samples, inkScale) => {
+  /**
+   * Render world w at scale s for a crop into output. inkScale: pixels of the target per unit of look.outline, at full resolution. Sets all renderer state
+   * that it needs and restores it. compileOnly: draw nothing, start the programs of this state, and return their materials.
+   */
+  const renderWorld = (w, s, crop, inner, output, samples, inkScale, compileOnly) => {
     const look = lookOf(w), camera = w.camera, direct = isDirect(look);
     if (!direct || look.environment > 0) makeFilm();
     rendering = w;
@@ -555,17 +573,31 @@ export const LOOK = String.raw`
       if (direct) {
         if (look.name === 'toon') beginToon(w, look, W, H, inkScale * res);
         renderer.setRenderTarget(output);
+        if (compileOnly) return compileWorld(w, camera);
         drawWorld(w, camera);
         return;
       }
 
       if (floor) {
         w.catcher.visible = !!look.shadows;
-        if (look.shadows) renderFloorShadow(w, look);
+        if (look.shadows && !compileOnly) renderFloorShadow(w, look);
         renderer.shadowMap.autoUpdate = saved.autoUpdate;
       }
 
-      // Reflection: the world mirrored in the floor, into a half-size target.
+      if (compileOnly) {
+        renderer.setRenderTarget(sceneTarget(IW, IH, look.name !== 'film', samples));
+        const list = compileWorld(w, camera);
+        // The mirror pass has no shadow, and that is another program.
+        if (floor && w.keyLight.castShadow) {
+          w.keyLight.castShadow = false;
+          for (const compiled of compileWorld(w, camera)) list.add(compiled);
+          w.keyLight.castShadow = true;
+        }
+        compilePasses(list);
+        return list;
+      }
+
+      // Reflection: the world mirrored in the floor, into a third-size target.
       if (floor) {
         const root = w.root, sy = root.scale.y, py = root.position.y, castShadow = w.keyLight.castShadow;
         const mirrorW = Math.ceil(IW / 3), mirrorH = Math.ceil(IH / 3), mirror = mirrorTarget(mirrorW, mirrorH), blurred = flatTarget('mirror-blur', mirrorW, mirrorH);

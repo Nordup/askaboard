@@ -143,6 +143,32 @@ export const SURFACE = String.raw`
     return { w, place, crop, quality, W, H, pixels: W * H, seen };
   };
 
+  /**
+   * The first picture of a world must not stall the others on its shaders. So its programs start here, and three does not wait for them, and the
+   * world draws once they are linked. Not three's compileAsync: it waits with the global setTimeout, and here a global timer belongs to a world.
+   * COMPILE_MS: a driver with no answer must not hold a world back. New materials later compile in their render, as in three.
+   */
+  const COMPILE_MS = 4000;
+  const prepareWorld = (plan) => {
+    const { w, place, crop, W, H } = plan, direct = isDirect(lookOf(w)), samples = samplesAt(0);
+    const target = takeOutput(W, H, direct, samples);
+    let list;
+    try { list = renderWorld(w, place.s, crop, innerOf(w, place.s, crop), target, samples, surface.dpr, true); } finally { giveOutput(target); }
+    w.compiling = true;
+    const started = realNow();
+    const poll = () => {
+      for (const m of list) {
+        const program = renderer.properties.get(m).currentProgram;
+        if (!program || program.isReady()) list.delete(m);
+      }
+      if (list.size && !dead && worlds.has(w.id) && realNow() - started < COMPILE_MS) { nativeSetTimeout(poll, 8); return; }
+      w.compiling = false;
+      w.prepared = true;
+      schedule();
+    };
+    poll();
+  };
+
   /** A world with no frame callback counts no ticks. Its first picture after setup counts as a frame, so the page knows that its setup ended. */
   const firstPicture = (w) => {
     if (!w.setUp || w.count > 0) return;
@@ -266,10 +292,14 @@ export const SURFACE = String.raw`
           w.timeMoved = false;
         }
         // At rest a world goes sharp once, and then nothing renders.
+        if (w.compiling) continue;
         if (!w.moving && w.drawn && w.drawn.quality > 0) w.sharpen = true;
         if (!w.stale && !w.sharpen && w.drawn && w.reach && !cropMoved(w)) continue;
         const planned = meter ? realNow() : 0;
-        try { const plan = planWorld(w); if (plan) plans.push(plan); } catch (e) { fail(w, e); }
+        try {
+          const plan = planWorld(w);
+          if (plan) { if (w.prepared) plans.push(plan); else prepareWorld(plan); }
+        } catch (e) { fail(w, e); }
         if (meter) meter.planMs += realNow() - planned;
       }
       plans.sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || b.pixels * (1 + 2 * b.w.waited) - a.pixels * (1 + 2 * a.w.waited));
@@ -432,8 +462,17 @@ export const SURFACE = String.raw`
    * a Retina screen, and a world at rest always has step 0. GPU_HIGH: the fence time per picture (ms) that a moving world must stay under.
    */
   const QUALITY = [1, 1, 0.85, 0.72, 0.6, 0.5], SAMPLES = [4, 2, 2, 2, 0, 0];
-  const samplesAt = (quality) => Math.min(tune.msaa ?? 4, SAMPLES[quality]);
+  const samplesAt = (quality) => Math.min(tune.msaa ?? 4, weakGpu && quality > 0 ? 0 : memoryGb < 4 ? 2 : SAMPLES[quality]);
   const GPU_HIGH = 14, DROP_AFTER = 5, RISE_AFTER = 30;
+  /**
+   * An Intel GPU shares a narrow bus with memory, and HDR targets with samples fill it. So a moving world there has no samples from its first
+   * step, and it starts on that step. The picture at rest keeps its samples.
+   */
+  let weakGpu = false;
+  const isIntegrated = (gl) => {
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    return /intel/i.test(String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)));
+  };
   /** What a fence takes with no work: it reads back late. So only the time over this is work of the worlds. */
   const FENCE_FLOOR = 5;
   /** A world's first guess, and the share of its time that it takes as fixed while it renders at one size only. */
@@ -538,7 +577,7 @@ export const SURFACE = String.raw`
     for (const w of worlds.values()) {
       if (due(w)) return true;
       // A world below full quality has one sharp render still to come, even when no tick will ask for it.
-      if ((w.stale || (w.drawn && w.drawn.quality > 0)) && w.placement && w.placement.shown && !w.culled && !w.failed && (w.setUp || w.ran)) return true;
+      if ((w.stale || (w.drawn && w.drawn.quality > 0)) && !w.compiling && w.placement && w.placement.shown && !w.culled && !w.failed && (w.setUp || w.ran)) return true;
     }
     return false;
   };
@@ -670,6 +709,7 @@ export const SURFACE = String.raw`
       renderer.setClearColor(0x000000, 0);
       renderer.setPixelRatio(1);
       setTune(m.tune);
+      weakGpu = !!tune.integrated || isIntegrated(renderer.getContext());
       uncapped = !!tune.uncapped;
       sizeSurface(m);
       watchResources();

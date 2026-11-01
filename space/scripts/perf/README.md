@@ -105,6 +105,8 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 | `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
 | `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
 | `budget` | Fence ms per picture over which a moving world lowers its quality. The default is 14. A small value acts as a weak machine. |
+| `integrated` | 1: act as on an Intel GPU: a moving world has no samples from its first step. |
+| `flat` | 1: pictures reach the page through a 2D canvas, as where `bitmaprenderer` is missing. |
 | `uncapped` | 1: pictures wait only for the GPU, and Chromium's frame limit is off. `render.mjs` sets it unless `--capped`. |
 
 The first seconds of a world cost more CPU, so compare CPU only at the same time after start. `--burst` gives it. With a canvas of 11 MP per picture the renderers used 90% of one core for 10 s. Since the canvas covers only the worlds, they use 35% in the first 5 s and about 20% later.
