@@ -91,6 +91,30 @@ export function isFlowed(node: BoardNode, byId: ReadonlyMap<string, BoardNode>):
   return !!parent && isFrame(parent) && parent.style.display === 'flex'
 }
 
+/**
+ * The index without ink, for the content layer: `last` itself when the content is the same.
+ * So an edit of ink renders no content.
+ */
+export function contentOnly(index: SceneIndex, last: SceneIndex | null): SceneIndex {
+  const byId = new Map<string, BoardNode>()
+  for (const [id, node] of index.byId) if (!isInk(node)) byId.set(id, node)
+  const children = new Map<string, BoardNode[]>()
+  for (const [key, list] of index.children) {
+    const kept = list.filter((node) => !isInk(node))
+    if (kept.length) children.set(key, kept)
+  }
+  const same =
+    !!last &&
+    last.byId.size === byId.size &&
+    last.children.size === children.size &&
+    [...byId].every(([id, node]) => last.byId.get(id) === node) &&
+    [...children].every(([key, list]) => {
+      const before = last.children.get(key)
+      return before?.length === list.length && list.every((node, i) => node === before[i])
+    })
+  return same && last ? last : { byId, children }
+}
+
 /** Content nodes in paint order (depth first, parents before children, by z). */
 export function contentPaintOrder(index: SceneIndex): ContentNode[] {
   const out: ContentNode[] = []
@@ -256,6 +280,32 @@ function mergeFields(current: Record<string, unknown>, base: Record<string, unkn
 }
 
 /**
+ * `merged` with the place that the two sides of an edit leave. x and y count from the parent,
+ * so the parent and the coordinates are one value when the parent changes:
+ *   - The edit changed the parent: the node takes the edit's place, and what `current` moved
+ *     the node since `base` stays on top of it, in board points. (During a drag `base` is what
+ *     the board shows, and `current` is the document under the drag: the difference is the
+ *     part of the drag that the edit's coordinates hold, and the drag goes on top again.)
+ *   - `current` changed the parent: the node keeps the place in `current`.
+ * With the same parent on all sides, x, y and z merge one by one (mergeFields).
+ */
+function mergePlace(merged: Record<string, unknown>, current: Record<string, unknown>, base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const parentMoved = !sameValue(current.parent, base.parent)
+  if (!parentMoved && sameValue(next.parent, base.parent)) return merged
+  const shifted = (key: 'x' | 'y'): unknown => {
+    const [to, now, was] = [next[key], current[key], base[key]]
+    return typeof to === 'number' && typeof now === 'number' && typeof was === 'number' ? to + now - was : to
+  }
+  const place = parentMoved ? current : { parent: next.parent, x: shifted('x'), y: shifted('y'), z: next.z }
+  const out = { ...merged }
+  for (const key of ['parent', 'x', 'y', 'z']) {
+    if (place[key] === undefined) delete out[key]
+    else out[key] = place[key]
+  }
+  return out
+}
+
+/**
  * Apply an edit to the current document by item id. The edit is the change from `base`,
  * the nodes it was computed from, to `next`; `current` is what the board holds now. What
  * changed in `current` since `base` stays: an item the learner removed stays removed, an
@@ -275,7 +325,10 @@ export function applyChanges(current: readonly BoardNode[], base: readonly Board
     else if (!held) continue // removed since base
     else if (held === was) out.push(node)
     else if (node === was) out.push(held)
-    else out.push(mergeFields(held as unknown as Record<string, unknown>, was as unknown as Record<string, unknown>, node as unknown as Record<string, unknown>) as unknown as BoardNode)
+    else {
+      const [mine, from, to] = [held, was, node] as unknown as Array<Record<string, unknown>>
+      out.push(mergePlace(mergeFields(mine, from, to), mine, from, to) as unknown as BoardNode)
+    }
   }
   for (const node of current) {
     if (inNext.has(node.id)) continue

@@ -14,64 +14,74 @@ const WIDE_CELLS = 32
 /** Grid coordinates stay inside this range, so that a cell key stays an exact number. */
 const CELL_LIMIT = 2 ** 25
 
-/** The strokes of the paint order by place: a position in the order for each cell. */
+/** The cells of a region, or null when it goes on the wide list. */
+function cellsOf(region: Region): { x0: number; x1: number; y0: number; y1: number } | null {
+  const x0 = Math.floor(region.x / CELL)
+  const x1 = Math.floor((region.x + region.width) / CELL)
+  const y0 = Math.floor(region.y / CELL)
+  const y1 = Math.floor((region.y + region.height) / CELL)
+  return x1 - x0 < WIDE_CELLS && y1 - y0 < WIDE_CELLS && Math.abs(x0) < CELL_LIMIT && Math.abs(y0) < CELL_LIMIT ? { x0, x1, y0, y1 } : null
+}
+
+const cellKey = (x: number, y: number): number => x * CELL_LIMIT * 4 + y
+
+/** The strokes by place: the ids in each cell. An id does not depend on the paint order, so an edit changes only the cells of the strokes it changed. */
 export class InkGrid {
-  private readonly cells = new Map<number, number[]>()
-  private readonly wide: number[] = []
-  private readonly seen: Uint32Array
-  private stamp = 0
+  private readonly cells = new Map<number, Set<string>>()
+  private readonly wide = new Set<string>()
 
-  constructor(bounds: readonly (Region | null)[]) {
-    this.seen = new Uint32Array(bounds.length)
-    bounds.forEach((region, at) => {
-      if (!region) return
-      const x0 = Math.floor(region.x / CELL)
-      const x1 = Math.floor((region.x + region.width) / CELL)
-      const y0 = Math.floor(region.y / CELL)
-      const y1 = Math.floor((region.y + region.height) / CELL)
-      if (!(x1 - x0 < WIDE_CELLS && y1 - y0 < WIDE_CELLS && Math.abs(x0) < CELL_LIMIT && Math.abs(y0) < CELL_LIMIT)) {
-        this.wide.push(at)
-        return
-      }
-      for (let x = x0; x <= x1; x++) {
-        for (let y = y0; y <= y1; y++) {
-          const key = x * CELL_LIMIT * 4 + y
-          const cell = this.cells.get(key)
-          if (cell) cell.push(at)
-          else this.cells.set(key, [at])
-        }
-      }
-    })
-  }
-
-  /** The positions of the strokes in the cells of `region`, each once, in paint order. The caller checks the bounds. */
-  query(region: Region): number[] {
-    const stamp = ++this.stamp
-    const seen = this.seen
-    const out: number[] = []
-    const add = (list: readonly number[]): void => {
-      for (const at of list) {
-        if (seen[at] === stamp) continue
-        seen[at] = stamp
-        out.push(at)
+  add(id: string, region: Region): void {
+    const range = cellsOf(region)
+    if (!range) {
+      this.wide.add(id)
+      return
+    }
+    for (let x = range.x0; x <= range.x1; x++) {
+      for (let y = range.y0; y <= range.y1; y++) {
+        const key = cellKey(x, y)
+        const cell = this.cells.get(key)
+        if (cell) cell.add(id)
+        else this.cells.set(key, new Set([id]))
       }
     }
-    add(this.wide)
+  }
+
+  remove(id: string, region: Region): void {
+    const range = cellsOf(region)
+    if (!range) {
+      this.wide.delete(id)
+      return
+    }
+    for (let x = range.x0; x <= range.x1; x++) {
+      for (let y = range.y0; y <= range.y1; y++) {
+        const key = cellKey(x, y)
+        const cell = this.cells.get(key)
+        if (cell?.delete(id) && !cell.size) this.cells.delete(key)
+      }
+    }
+  }
+
+  /** The strokes in the cells of `region`, each once. The caller checks the bounds and sets the order. */
+  query(region: Region): Set<string> {
+    const out = new Set(this.wide)
     const x0 = Math.floor(region.x / CELL)
     const x1 = Math.floor((region.x + region.width) / CELL)
     const y0 = Math.floor(region.y / CELL)
     const y1 = Math.floor((region.y + region.height) / CELL)
+    const take = (cell: ReadonlySet<string>): void => {
+      for (const id of cell) out.add(id)
+    }
     if ((x1 - x0 + 1) * (y1 - y0 + 1) > this.cells.size) {
-      for (const cell of this.cells.values()) add(cell)
+      for (const cell of this.cells.values()) take(cell)
     } else {
       for (let x = x0; x <= x1; x++) {
         for (let y = y0; y <= y1; y++) {
-          const cell = this.cells.get(x * CELL_LIMIT * 4 + y)
-          if (cell) add(cell)
+          const cell = this.cells.get(cellKey(x, y))
+          if (cell) take(cell)
         }
       }
     }
-    return out.sort((a, b) => a - b)
+    return out
   }
 }
 
@@ -87,6 +97,10 @@ const RASTER_BUDGET_MS = 6
 const RING_BUDGET_MS = 3
 /** Device pixels around a region that a stroke's edge can reach. */
 const EDGE_PX = 2
+/** Tiles with no ink hold no pixels, but each is an entry of the cache: at most this many, the oldest go first. */
+const MAX_EMPTY_TILES = 4096
+/** An eviction of empty tiles goes down to this many, so it does not come again at each paint. */
+const KEPT_EMPTY_TILES = 3072
 
 /** A tile with no ink has no bitmap. */
 interface Tile {
@@ -125,6 +139,8 @@ export const tileLevel = (scale: number): number => 2 ** Math.round(Math.log2(sc
 export class TileCache {
   private readonly sets = new Map<number, Map<string, Tile>>()
   private bytes = 0
+  /** The tiles with no bitmap, at all scales. */
+  private empties = 0
   private paints = 0
   private scratch: OffscreenCanvas | null = null
   /** Counts the changes that a paint must show. */
@@ -132,6 +148,13 @@ export class TileCache {
 
   /** `draw`: the ink of a board region on a context with the board transform. False: nothing in that region. */
   constructor(private readonly draw: (context: TileContext, region: Region) => boolean) {}
+
+  /** What the cache holds (dev checks). */
+  stats(): { tiles: number; empty: number; bytes: number } {
+    let tiles = 0
+    for (const set of this.sets.values()) tiles += set.size
+    return { tiles, empty: this.empties, bytes: this.bytes }
+  }
 
   /** Tiles that touch a region are out of date, at each scale. */
   invalidate(region: Region): void {
@@ -164,13 +187,17 @@ export class TileCache {
     for (const set of this.sets.values()) for (const tile of set.values()) tile.bitmap?.close()
     this.sets.clear()
     this.bytes = 0
+    this.empties = 0
     this.version++
   }
 
   private drop(set: Map<string, Tile>, key: string, tile: Tile): void {
     set.delete(key)
     this.version++
-    if (!tile.bitmap) return
+    if (!tile.bitmap) {
+      this.empties--
+      return
+    }
     tile.bitmap.close()
     this.bytes -= TILE_BYTES
   }
@@ -190,6 +217,7 @@ export class TileCache {
         this.bytes += TILE_BYTES
       }
     }
+    if (!bitmap) this.empties++
     return { bitmap, used: this.paints }
   }
 
@@ -297,7 +325,7 @@ export class TileCache {
     return false
   }
 
-  /** Down to the byte limit, oldest first. A tile of this paint stays. Scales with no pictures go. */
+  /** Down to the byte limit and the limit of empty tiles, oldest first. A tile of this paint stays. Scales with no pictures go. */
   private evict(target: number): void {
     if (this.bytes > CACHE_BYTES) {
       const found: Array<{ set: Map<string, Tile>; key: string; tile: Tile }> = []
@@ -310,6 +338,16 @@ export class TileCache {
         set.delete(key)
       }
     }
+    if (this.empties > MAX_EMPTY_TILES) {
+      const found: Array<{ set: Map<string, Tile>; key: string; used: number }> = []
+      for (const set of this.sets.values()) for (const [key, tile] of set) if (!tile.bitmap && tile.used !== this.paints) found.push({ set, key, used: tile.used })
+      found.sort((a, b) => a.used - b.used)
+      for (const { set, key } of found) {
+        if (this.empties <= KEPT_EMPTY_TILES) break
+        set.delete(key)
+        this.empties--
+      }
+    }
     if (this.sets.size < 2) return
     for (const [scale, set] of this.sets) {
       if (scale === target) continue
@@ -320,7 +358,9 @@ export class TileCache {
           break
         }
       }
-      if (!held) this.sets.delete(scale)
+      if (held) continue
+      this.empties -= set.size
+      this.sets.delete(scale)
     }
   }
 }

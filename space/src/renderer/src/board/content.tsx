@@ -291,7 +291,7 @@ function ChildView({
 }
 
 interface ContentLayerProps {
-  /** The live index. A new object means the nodes changed. */
+  /** The live index of the content, with no ink. A new object means the content changed. */
   index: SceneIndex
   editingId: string | null
   ctx: RefObject<ContentContext>

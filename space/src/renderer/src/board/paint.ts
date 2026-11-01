@@ -73,7 +73,7 @@ function visibleRegion(viewport: Point, camera: Camera): Region {
 }
 
 /** A smooth path through the points: quadratic curves between segment midpoints. */
-function tracePath(context: InkContext, points: StrokeItem['points']): void {
+function tracePath(context: InkContext | Path2D, points: StrokeItem['points']): void {
   context.moveTo(points[0][0], points[0][1])
   if (points.length === 2) {
     context.lineTo(points[1][0], points[1][1])
@@ -88,20 +88,55 @@ function tracePath(context: InkContext, points: StrokeItem['points']): void {
   context.lineTo(last[0], last[1])
 }
 
-/** Draw one ink node at its world offset; a playback override moves, fades, recolours or partly draws it. */
-function drawInk(context: InkContext, ink: PaintInk, minWidth = 0, override?: NodeOverride): void {
+/** The pieces of pressure ink, 7 numbers each: start, control point and end, then the share of the stroke's width. Piece i runs from the midpoint before sample i to the midpoint after it. */
+function piecesOf(points: StrokeItem['points']): Float64Array {
+  const pieces = new Float64Array(points.length * 7)
+  const last = points.length - 1
+  for (let i = 0; i <= last; i++) {
+    const [x, y, p] = points[i]
+    const [px, py] = points[Math.max(0, i - 1)]
+    const [nx, ny] = points[Math.min(last, i + 1)]
+    pieces.set([(px + x) / 2, (py + y) / 2, x, y, (x + nx) / 2, (y + ny) / 2, pressureWidth(p)], i * 7)
+  }
+  return pieces
+}
+
+/** What a stroke costs to work out once for each tile that it touches. */
+interface StrokeShape {
+  /** All samples have one pressure. */
+  even: boolean
+  path: Path2D | null
+  pieces: Float64Array | null
+}
+
+/** By the points of a committed node, which never change, so a path is built once. A change of colour keeps them. */
+const shapes = new WeakMap<StrokeItem['points'], StrokeShape>()
+
+function shapeOf(points: StrokeItem['points']): StrokeShape {
+  let shape = shapes.get(points)
+  if (!shape) shapes.set(points, (shape = { even: evenPressure(points), path: null, pieces: null }))
+  return shape
+}
+
+const evenPressure = (points: StrokeItem['points']): boolean => points.every((point) => point[2] === points[0][2])
+
+/**
+ * Draw one ink node at its world offset; a playback override moves, fades, recolours or partly draws it.
+ * committed: the node is on the board, so its points never change. Ink of a stream is not.
+ */
+function drawInk(context: InkContext, ink: PaintInk, minWidth = 0, override?: NodeOverride, committed = false): void {
   context.save()
   if (override?.matrix) context.transform(...override.matrix)
   context.translate(ink.offset[0], ink.offset[1])
   if (override && (override.reveal !== undefined || override.color !== undefined)) {
     const points = override.reveal === undefined ? ink.node.points : revealPoints(ink.node.points, override.reveal)
-    drawStroke(context, { ...ink.node, points, color: override.color ?? ink.node.color }, minWidth, override.opacity ?? 1)
-  } else drawStroke(context, ink.node, minWidth, override?.opacity ?? 1)
+    drawStroke(context, { ...ink.node, points, color: override.color ?? ink.node.color }, minWidth, override.opacity ?? 1, committed && points === ink.node.points)
+  } else drawStroke(context, ink.node, minWidth, override?.opacity ?? 1, committed)
   context.restore()
 }
 
-/** `minWidth`: the thinnest line to draw, in board points (offscreen export only). `alpha` multiplies the ink's own. */
-function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha = 1): void {
+/** `minWidth`: the thinnest line to draw, in board points (offscreen export only). `alpha` multiplies the ink's own. `stable`: the points never change, so their shape is kept. */
+function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha = 1, stable = false): void {
   const points = stroke.points
   if (!points.length || alpha <= 0) return
   context.strokeStyle = stroke.color
@@ -121,28 +156,29 @@ function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha
 
   // One path for highlighters and constant-pressure ink: a translucent path
   // must not darken where its own segments overlap.
-  const uniform = highlighter || points.every((point) => point[2] === points[0][2])
-  if (uniform) {
+  const shape = stable ? shapeOf(points) : null
+  if (highlighter || (shape ? shape.even : evenPressure(points))) {
     context.lineWidth = Math.max(minWidth, stroke.width * (highlighter ? 1 : pressureWidth(points[0][2])))
-    context.beginPath()
-    tracePath(context, points)
-    context.stroke()
+    if (shape) {
+      if (!shape.path) tracePath((shape.path = new Path2D()), points)
+      context.stroke(shape.path)
+    } else {
+      context.beginPath()
+      tracePath(context, points)
+      context.stroke()
+    }
     context.globalAlpha = 1
     return
   }
 
-  // Pressure ink: one curve piece per sample, each with its own width.
-  // Piece i runs from the midpoint before sample i to the midpoint after it.
-  const mid = (a: StrokeItem['points'][number], b: StrokeItem['points'][number]): Point => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
-  const last = points.length - 1
-  for (let i = 0; i <= last; i++) {
-    const [x, y, p] = points[i]
-    const start: Point = i === 0 ? [x, y] : mid(points[i - 1], points[i])
-    const end: Point = i === last ? [x, y] : mid(points[i], points[i + 1])
-    context.lineWidth = Math.max(minWidth, stroke.width * pressureWidth(p))
+  // Pressure ink: one curve piece per sample, each with its own width. A Path2D per piece would
+  // hold hundreds of objects per stroke, so the numbers of the pieces are what stays.
+  const pieces = shape ? (shape.pieces ??= piecesOf(points)) : piecesOf(points)
+  for (let at = 0; at < pieces.length; at += 7) {
+    context.lineWidth = Math.max(minWidth, stroke.width * pieces[at + 6])
     context.beginPath()
-    context.moveTo(start[0], start[1])
-    context.quadraticCurveTo(x, y, end[0], end[1])
+    context.moveTo(pieces[at], pieces[at + 1])
+    context.quadraticCurveTo(pieces[at + 2], pieces[at + 3], pieces[at + 4], pieces[at + 5])
     context.stroke()
   }
   context.globalAlpha = 1
@@ -300,7 +336,7 @@ export class InkLayers {
   private position = new Map<string, number>()
   /** The bounds of each stroke of the order, and the strokes by place. */
   private bounds: Array<Region | null> = []
-  private grid = new InkGrid([])
+  private grid = new InkGrid()
   /** Where a scene's matrix holds a stroke now, when it holds one. */
   private moved = new Map<string, Region>()
   /** The count of highlighters at the start of the order (changing highlighters go after them). */
@@ -330,15 +366,20 @@ export class InkLayers {
   private pictures: Array<{ canvas: HTMLCanvasElement; lo: number; hi: number }> = []
   private liveUsed = false
   private readonly tiles = new TileCache((context, region) => {
-    const positions = this.strokesIn(region, 0, this.baseEnd)
-    for (const at of positions) this.drawAt(context, at)
-    return positions.length > 0
+    let drew = false
+    for (const at of this.strokesIn(region, 0, this.baseEnd)) if (this.drawAt(context, at)) drew = true
+    return drew
   })
 
   /** The overrides of these nodes changed (null: of any node). Call it for each playback frame. */
   note(changed: ReadonlySet<string> | null | undefined): void {
     if (!changed) this.pending = null
     else if (this.pending) for (const id of changed) this.pending.add(id)
+  }
+
+  /** What the tile cache holds (dev checks). */
+  tileStats(): ReturnType<TileCache['stats']> {
+    return this.tiles.stats()
   }
 
   /** Free the tiles: the board leaves. */
@@ -357,20 +398,25 @@ export class InkLayers {
       for (let at = lo; at < hi; at++) if (hit(at)) out.push(at)
       return out
     }
-    const out = this.grid.query(region).filter((at) => at >= lo && at < hi && hit(at))
-    if (!this.moved.size) return out
-    const known = new Set(out)
-    for (const id of this.moved.keys()) {
+    const out: number[] = []
+    const ids = this.grid.query(region)
+    for (const id of this.moved.keys()) ids.add(id)
+    for (const id of ids) {
       const at = this.position.get(id)
-      if (at !== undefined && at >= lo && at < hi && !known.has(at) && hit(at)) out.push(at)
+      if (at !== undefined && at >= lo && at < hi && hit(at)) out.push(at)
     }
     return out.sort((a, b) => a - b)
   }
 
-  private drawAt(context: InkContext, at: number): void {
+  /** False: the stroke puts no pixel down now (it has no points, or a scene hides it). */
+  private drawAt(context: InkContext, at: number): boolean {
     const ink = this.order[at]
     const override = this.overrides?.get(ink.node.id)
-    if (override?.opacity !== 0) drawInk(context, ink, 0, override)
+    const points = ink.node.points
+    // A one-point stroke has nothing to reveal: it shows whole.
+    if (!points.length || (override?.opacity ?? 1) <= 0 || (points.length > 1 && (override?.reveal ?? 1) <= 0)) return false
+    drawInk(context, ink, 0, override, true)
+    return true
   }
 
   /** A stroke changes: the tiles under it, where it rests and where a scene holds it, are out of date. */
@@ -385,29 +431,41 @@ export class InkLayers {
   private reorder(next: PaintInk[]): void {
     const old = this.order
     const oldAt = this.position
+    const oldBounds = this.bounds
     const position = new Map(next.map((ink, i) => [ink.node.id, i]))
+    /** A stroke's new bounds, and its cells in the grid. */
+    const place = (ink: PaintInk, was: Region | null): Region | null => {
+      const bounds = inkBounds(ink.node, ink.offset)
+      if (was) this.grid.remove(ink.node.id, was)
+      if (bounds) this.grid.add(ink.node.id, bounds)
+      return bounds
+    }
     let last = -1
     let sameOrder = true
-    for (const ink of next) {
+    const bounds = next.map((ink) => {
       const at = oldAt.get(ink.node.id)
       if (at === undefined) {
         this.touch(ink)
-        continue
-      }
-      const was = old[at]
-      if (was.node !== ink.node || was.offset[0] !== ink.offset[0] || was.offset[1] !== ink.offset[1]) {
-        this.touch(was)
-        this.touch(ink)
+        return place(ink, null)
       }
       if (at < last) sameOrder = false
       last = Math.max(last, at)
-    }
-    for (const ink of old) if (!position.has(ink.node.id)) this.touch(ink)
+      const was = old[at]
+      if (was.node === ink.node && was.offset[0] === ink.offset[0] && was.offset[1] === ink.offset[1]) return oldBounds[at]
+      this.touch(was)
+      this.touch(ink)
+      return place(ink, oldBounds[at])
+    })
+    old.forEach((ink, at) => {
+      if (position.has(ink.node.id)) return
+      this.touch(ink)
+      const was = oldBounds[at]
+      if (was) this.grid.remove(ink.node.id, was)
+    })
     if (!sameOrder) this.tiles.clear()
     this.order = next
     this.position = position
-    this.bounds = next.map((ink) => inkBounds(ink.node, ink.offset))
-    this.grid = new InkGrid(this.bounds)
+    this.bounds = bounds
     for (const id of this.moved.keys()) if (!position.has(id)) this.moved.delete(id)
   }
 
@@ -610,7 +668,7 @@ export class InkLayers {
           const bounds = this.bounds[i]
           if (!bounds || !regionsIntersect(bounds, visible)) continue
         }
-        drawInk(context, ink, 0, override)
+        drawInk(context, ink, 0, override, true)
       }
       if (transientHighlighter && run.hi === this.highlighters) transients('highlighter')
       const picture = this.pictures[r]
@@ -655,8 +713,8 @@ export function paintItems(
     return bounds !== null && regionsIntersect(bounds, visible)
   })
   if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id) && !overrides?.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
-  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
-  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id))
+  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
+  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
   drawTips(context, playback?.tips ?? [], camera.zoom)
 }
 
@@ -848,8 +906,8 @@ export function renderRegion(
     const bounds = inkBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, rect)
   })
-  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, minWidth)
-  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, minWidth)
+  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, minWidth, undefined, true)
+  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, minWidth, undefined, true)
 
   // Outlines in image pixels, so they stay thin at any scale.
   context.setTransform(1, 0, 0, 1, 0, 0)

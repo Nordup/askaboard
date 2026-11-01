@@ -32,6 +32,7 @@ import {
   applyChanges,
   boundsOf,
   buildIndex,
+  contentOnly,
   contentAt,
   copySubtrees,
   withoutScene,
@@ -131,6 +132,8 @@ export interface BoardHandle {
   selectAll(): void
   /** Commit what the learner has open, the text editor and a stroke in progress: the board is about to save, close or leave. */
   settle(): void
+  /** What the tile cache holds (dev checks). */
+  tileStats(): ReturnType<InkLayers['tileStats']>
   /**
    * Show a moment of live-scene playback (see playback.ts), or end it with
    * null. Content elements change before this returns, so a scene committed
@@ -385,7 +388,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** Counts the measures, so that a commit that a layout effect measured does not measure again. */
   const measuresRef = useRef(0)
   /** What the last render's measure saw: only a change here moves a box. */
-  const measuredRef = useRef<{ content: readonly BoardNode[]; editingId: string | null; ghostIndex: SceneIndex | null } | null>(null)
+  const measuredRef = useRef<{ contentIndex: SceneIndex; editingId: string | null; ghostIndex: SceneIndex | null } | null>(null)
   /** Live-scene playback: the frame shown now, the ghost layer, and the elements it changed. */
   const playbackRef = useRef<PlaybackFrame | null>(null)
   /** What the learner sees now: every learner input that picks or changes items asks it (scene.ts shownNow). */
@@ -421,6 +424,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const cameraStaleRef = useRef(false)
   const [viewport, setViewport] = useState<Point>([1, 1])
   const [index, setIndex] = useState<SceneIndex>(indexRef.current)
+  /** The content of the index: the same object while only ink changes, so the content layer renders nothing. */
+  const contentIndexRef = useRef<SceneIndex>(null as unknown as SceneIndex)
+  contentIndexRef.current ??= contentOnly(indexRef.current, null)
+  const [contentIndex, setContentIndex] = useState<SceneIndex>(contentIndexRef.current)
   const [layoutVersion, setLayoutVersion] = useState(0)
   const [selectedIds, setSelectedIdsState] = useState<string[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -825,13 +832,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useLayoutEffect(() => {
     applyContentTransform()
     // A commit of ink only leaves every box where it is, and on a big board a measure of the DOM is the cost of the commit.
-    const content = [...index.byId.values()].filter((node) => !isInk(node))
     const last = measuredRef.current
-    const inkOnly = !!last && last.editingId === editingId && last.ghostIndex === ghostIndex && last.content.length === content.length && content.every((node, i) => node === last.content[i])
-    measuredRef.current = { content, editingId, ghostIndex }
+    const inkOnly = !!last && last.editingId === editingId && last.ghostIndex === ghostIndex && last.contentIndex === contentIndex
+    measuredRef.current = { contentIndex, editingId, ghostIndex }
     // It also puts the playback overrides back on every element (a new one, as a ghost, needs its override now).
     measure(inkOnly)
-  }, [index, editingId, ghostIndex, applyContentTransform, measure])
+  }, [index, contentIndex, editingId, ghostIndex, applyContentTransform, measure])
 
   useEffect(() => {
     void document.fonts?.ready.then(() => requestMeasure())
@@ -843,6 +849,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       nodesRef.current = next
       const nextIndex = buildIndex(next)
       indexRef.current = nextIndex
+      contentIndexRef.current = contentOnly(nextIndex, contentIndexRef.current)
       // Ink layout now, so hit tests right after an edit are right; content is measured after render.
       const layout = new Map(restLayoutRef.current)
       for (const id of layout.keys()) if (!nextIndex.byId.has(id)) layout.delete(id)
@@ -850,6 +857,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       restLayoutRef.current = layout
       placeLinks()
       setIndex(nextIndex)
+      setContentIndex(contentIndexRef.current)
       requestPaint({ committed: true })
     },
     [placeLinks, requestPaint]
@@ -1219,7 +1227,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   const contentCtx = useRef<ContentContext>(null as unknown as ContentContext)
   contentCtx.current = {
-    index,
+    index: contentIndex,
     editingId,
     editorRef,
     editorInitial: editingRef.current?.initial ?? '',
@@ -1882,6 +1890,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         emit()
       },
       remeasure: () => measure(),
+      tileStats: () => inkLayersRef.current.tileStats(),
       selectAll: () => selectAllRef.current(),
       settle: () => {
         if (editingRef.current) commitEditing()
@@ -2122,7 +2131,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       onContextMenu={(event) => event.preventDefault()}
       aria-label="Board canvas"
     >
-      <ContentLayer index={index} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
+      <ContentLayer index={contentIndex} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
       {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
       <canvas className="board__world" aria-hidden="true" />
       <canvas className="board__ink" ref={inkRef} />
