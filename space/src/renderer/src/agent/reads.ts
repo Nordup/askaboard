@@ -598,7 +598,11 @@ function resolvePart(m: Model, part: PartArg | undefined, tool: string): Resolve
   if ('id' in part) {
     const ids = Array.isArray(part.id) ? part.id : [part.id]
     if (!ids.length) throw new Error('id needs one id or a list of ids.')
-    return { kind: 'ids', ids }
+    // An id, an item name or a scene name, as in get_item.
+    const board = sceneOf(m.ctx.board, () => m.ctx.groups)
+    const info = ids.length === 1 && itemIdOf(board, ids[0]) === null ? findScene(m, ids[0]) : null
+    if (info) return { kind: 'scene', info }
+    return { kind: 'ids', ids: ids.map((id) => itemIdOf(board, id) ?? id) }
   }
   if ('scene' in part) {
     const ref = part.step === undefined && !findScene(m, part.scene) ? stepPart(m, part.scene) : null
