@@ -1,6 +1,6 @@
 # One world: the architecture
 
-> **Status (2026-10-31):** built on branch `one-world`, all slices. GPT-6.1 Sol
+> **Status (2026-11-01):** all slices are built. GPT-6.1 Sol
 > reviewed slices 1 to 4 twice. A world is the only way to run code on the board
 > (decision P19). This file says how [`one-world-design.md`](one-world-design.md)
 > is built. Terms:
