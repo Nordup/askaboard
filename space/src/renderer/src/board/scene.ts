@@ -234,6 +234,57 @@ export function moveNodes(nodes: readonly BoardNode[], ids: ReadonlySet<string>,
   )
 }
 
+const sameValue = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
+
+/** `current` with the fields that `next` changed from `base`. A field that changed in `current` too keeps its value; the style merges by key. */
+function mergeFields(current: Record<string, unknown>, base: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  let out = current
+  const put = (key: string, value: unknown): void => {
+    if (out === current) out = { ...current }
+    if (value === undefined) delete out[key]
+    else out[key] = value
+  }
+  for (const key of new Set([...Object.keys(base), ...Object.keys(next)])) {
+    if (key === 'seq' || sameValue(base[key], next[key])) continue
+    if (sameValue(current[key], base[key])) put(key, next[key])
+    else if (key === 'style' && current.style && base.style && next.style) {
+      const style = mergeFields(current.style as Record<string, unknown>, base.style as Record<string, unknown>, next.style as Record<string, unknown>)
+      if (style !== current.style) put(key, style)
+    }
+  }
+  return out
+}
+
+/**
+ * Apply an edit to the current document by item id. The edit is the change from `base`,
+ * the nodes it was computed from, to `next`; `current` is what the board holds now. What
+ * changed in `current` since `base` stays: an item the learner removed stays removed, an
+ * item that changed since `base` is not removed, a field that changed is not overwritten,
+ * and an item added since `base` stays. When `current` is `base`, the result is `next`.
+ */
+export function applyChanges(current: readonly BoardNode[], base: readonly BoardNode[], next: readonly BoardNode[]): BoardNode[] {
+  if (current === base) return [...next]
+  const before = new Map(base.map((node) => [node.id, node]))
+  const now = new Map(current.map((node) => [node.id, node]))
+  const inNext = new Set(next.map((node) => node.id))
+  const out: BoardNode[] = []
+  for (const node of next) {
+    const was = before.get(node.id)
+    const held = now.get(node.id)
+    if (!was) out.push(node) // new in this edit
+    else if (!held) continue // removed since base
+    else if (held === was) out.push(node)
+    else if (node === was) out.push(held)
+    else out.push(mergeFields(held as unknown as Record<string, unknown>, was as unknown as Record<string, unknown>, node as unknown as Record<string, unknown>) as unknown as BoardNode)
+  }
+  for (const node of current) {
+    if (inNext.has(node.id)) continue
+    const was = before.get(node.id)
+    if (!was || was !== node) out.push(node) // added or changed since base
+  }
+  return out
+}
+
 /** Remove nodes and all their descendants. Locked nodes stay. */
 export function removeNodes(nodes: readonly BoardNode[], ids: Iterable<string>, index: SceneIndex): BoardNode[] {
   const unlocked = [...ids].filter((id) => {

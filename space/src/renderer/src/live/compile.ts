@@ -156,6 +156,8 @@ export interface SceneRevert {
 }
 
 export interface CompiledScene {
+  /** The nodes the scene was compiled from: `next` is a change from them (Board agentCommit). */
+  base: readonly BoardNode[]
   /** The board after the scene: commit as one undo step. */
   next: BoardNode[]
   play: ScenePlay
@@ -1111,6 +1113,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   next = linkNodes(next, desc, nodesOf, stage)
   const removedAll = removed.size ? [...withDescendants(removed, s.index)].filter((id) => !rescued.has(id)).map((id) => s.index.byId.get(id) as BoardNode).filter(Boolean) : []
   return {
+    base: s.nodes,
     next,
     play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: linkActions(desc.camera ?? [], desc, nodesOf, stage), pointer: linkActions(desc.pointer ?? [], desc, nodesOf, stage), cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
     inkGroups,

@@ -28,6 +28,7 @@ import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type L
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
 import {
   addInkLayout,
+  applyChanges,
   boundsOf,
   buildIndex,
   contentAt,
@@ -104,17 +105,21 @@ export interface BoardHandle {
   applyWidth(width: number): boolean
   /**
    * Commit an agent edit as one undo step, then lay it out before returning,
-   * so the layout cache has the new nodes' bounds. With `step`, every commit
-   * with the same key that follows it directly (no other edit, undo or redo
-   * between them) joins that one undo step: an action made of several
-   * commits (play_scene start of a scene that is on the board, cut, clear_queue) is one step for the learner.
+   * so the layout cache has the new nodes' bounds. The edit is the change from
+   * `base` (the nodes it was computed from) to `next`, and it applies to the
+   * current document by item id (scene.ts applyChanges), after an open text
+   * editor commits and under a drag, so the learner's edits stay. With `step`,
+   * every commit with the same key that follows it directly (no other edit,
+   * undo or redo between them) joins that one undo step: an action made of
+   * several commits (play_scene start of a scene that is on the board, cut,
+   * clear_queue) is one step for the learner.
    */
-  agentCommit(next: BoardNode[], options?: { step?: string }): void
+  agentCommit(base: readonly BoardNode[], next: BoardNode[], options?: { step?: string }): void
   /**
    * Change the last agent commit without a new undo step (a post-layout
-   * correction of the same write), then lay it out before returning.
+   * correction of the same write), then lay it out before returning. Applied as agentCommit is.
    */
-  agentAmend(next: BoardNode[]): void
+  agentAmend(base: readonly BoardNode[], next: BoardNode[]): void
   /** The board's id (BoardDoc.id), or undefined when it has none yet. */
   boardId(): string | undefined
   /** Give the board its id (the first scene record, main/scene-store.ts): it is saved with the board. */
@@ -123,6 +128,8 @@ export interface BoardHandle {
   remeasure(): void
   /** Select every top-level node and all loose ink (⌘A on the canvas). */
   selectAll(): void
+  /** Commit what the learner has open, the text editor and a stroke in progress: the board is about to save, close or leave. */
+  settle(): void
   /**
    * Show a moment of live-scene playback (see playback.ts), or end it with
    * null. Content elements change before this returns, so a scene committed
@@ -213,6 +220,7 @@ interface DragState {
   start: Point
   last: Point
   points: Point[]
+  /** The document under the drag: the last commit. A commit during the drag replaces it (commitOver). */
   startNodes: BoardNode[]
   startCamera: Camera
   startSelectedIds: string[]
@@ -221,6 +229,12 @@ interface DragState {
   lasso: Point[]
   /** Move: the ids that move. */
   moveIds?: Set<string>
+  /** Move and resize: how far the pointer is from the start, in board points. */
+  delta?: Point
+  /** Resize: Shift keeps the aspect ratio. */
+  keepAspect?: boolean
+  /** Erase: the ids erased so far. */
+  erased?: Set<string>
   /** Move: the clicked node, to select alone when the press was a click. */
   clicked?: string
   /** Lasso with Shift: add to the selection. */
@@ -865,9 +879,69 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Nodes ----------
 
-  const emit = useCallback(() => {
-    onDocChangeRef.current({ ...(idRef.current ? { id: idRef.current } : {}), nextSeq: nextSeqRef.current, nodes: nodesRef.current, extra: extraRef.current })
+  /** Apply a resize drag to the document under it. */
+  const resizeTo = useCallback((drag: DragState): BoardNode[] => {
+    const info = drag.resize
+    if (!info) return drag.startNodes
+    const startById = new Map(drag.startNodes.map((node) => [node.id, node]))
+    const node = startById.get(info.id)
+    if (!node || !isKnown(node)) return drag.startNodes
+    const byId = indexRef.current.byId
+    const aspect = !!drag.keepAspect || (node.kind === 'image' && info.handle.length === 2)
+    const next = resizedBox(info.box, info.handle, drag.delta ?? [0, 0], aspect)
+    const dx = next.x - info.box.x
+    const dy = next.y - info.box.y
+    let updated: BoardNode
+    if (isInk(node)) {
+      const sx = next.width / Math.max(1e-6, info.box.width)
+      const sy = next.height / Math.max(1e-6, info.box.height)
+      // World point → scaled about the box origin → back to local.
+      const ox = info.box.ox
+      const oy = info.box.oy
+      const points = node.points.map(([x, y, p]) => {
+        const wx = next.x + (ox + x - info.box.x) * sx
+        const wy = next.y + (oy + y - info.box.y) * sy
+        return [wx - ox, wy - oy, p] as InkNode['points'][number]
+      })
+      updated = { ...node, points }
+    } else if (isLive(node)) {
+      const flowed = isFlowed(node, byId)
+      updated = { ...node, w: next.width, h: next.height, ...(flowed ? {} : { x: node.x + dx, y: node.y + dy }) }
+    } else {
+      const content = node as ContentNode
+      const style: NodeStyle = { ...content.style, width: px(next.width) }
+      if (content.kind === 'text') delete style.height
+      else style.height = px(next.height)
+      const flowed = isFlowed(content, byId)
+      updated = { ...content, style, ...(flowed ? {} : { x: content.x + dx, y: content.y + dy }) } as BoardNode
+    }
+    return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
   }, [])
+
+  /** What the board shows during a drag: the document under it, with the drag on top. The one way to show a drag, so a commit under it stays. */
+  const dragView = useCallback(
+    (drag: DragState): BoardNode[] => {
+      if (!drag.changed) return drag.startNodes
+      if (drag.kind === 'move' && drag.moveIds) return moveNodes(drag.startNodes, drag.moveIds, drag.delta ?? [0, 0])
+      if (drag.kind === 'resize') return resizeTo(drag)
+      if (drag.kind === 'erase' && drag.erased) return drag.startNodes.filter((node) => !drag.erased?.has(node.id))
+      return drag.startNodes
+    },
+    [resizeTo]
+  )
+
+  /** The drag that shows on the nodes: a stroke, a pan or a lasso does not change them. */
+  const openDrag = useCallback((): DragState | null => {
+    const drag = dragRef.current
+    return drag && (drag.kind === 'move' || drag.kind === 'resize' || drag.kind === 'erase') ? drag : null
+  }, [])
+
+  /** The document: the nodes of the last commit, without what the learner has open. */
+  const documentNodes = useCallback((): BoardNode[] => openDrag()?.startNodes ?? editingRef.current?.snapshot ?? nodesRef.current, [openDrag])
+
+  const emit = useCallback(() => {
+    onDocChangeRef.current({ ...(idRef.current ? { id: idRef.current } : {}), nextSeq: nextSeqRef.current, nodes: documentNodes(), extra: extraRef.current })
+  }, [documentNodes])
 
   /** Select nodes by id. Ids that are not on the board are dropped. */
   const setSelectedIds = useCallback(
@@ -905,11 +979,53 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by }))
       setNodes(stamped.nodes)
       onChangesRef.current?.({ removed, revisions: stamped.revisions, by })
+      // The new document, also when this commit ends a drag or an editor.
+      const drag = openDrag()
+      if (drag?.startNodes === snapshot) drag.startNodes = stamped.nodes
+      if (editingRef.current?.snapshot === snapshot) editingRef.current.snapshot = stamped.nodes
       emit()
       return true
     },
-    [emit, history, setNodes]
+    [emit, history, openDrag, setNodes]
   )
+
+  /**
+   * Commit a change that does not come from the learner's open gesture (an agent edit, a
+   * pin) to the document under it. The gesture stays open and shows on the new document;
+   * its own commit is a later undo step on top of this one.
+   */
+  const commitOver = useCallback(
+    (change: (document: BoardNode[]) => BoardNode[], by: Author, record: boolean): boolean => {
+      const drag = openDrag()
+      const editing = editingRef.current
+      const held = editing ? indexRef.current.byId.get(editing.id) : undefined
+      const document = documentNodes()
+      const changed = commitNodes(change(document), document, by, record)
+      if (drag) setNodes(dragView(drag))
+      else if (editing && held) {
+        const found = nodesRef.current.some((node) => node.id === held.id)
+        setNodes(found ? nodesRef.current.map((node) => (node.id === held.id ? held : node)) : [...nodesRef.current, held])
+      }
+      return changed
+    },
+    [commitNodes, documentNodes, dragView, openDrag, setNodes]
+  )
+
+  /** An item whose frame left the board stays where it shows: top level, at its world place. So an item that came into a frame since an agent edit's base outlives that edit. */
+  const homeless = useCallback((nodes: BoardNode[]): BoardNode[] => {
+    const ids = new Set(nodes.map((node) => node.id))
+    const lost = (node: BoardNode): boolean => typeof node.parent === 'string' && !ids.has(node.parent)
+    if (!nodes.some(lost)) return nodes
+    const layout = restLayoutRef.current
+    let z = zAbove(indexRef.current.children.get(ROOT) ?? [])
+    return nodes.map((node) => {
+      if (!lost(node) || !isKnown(node)) return node
+      const box = layout.get(node.id)
+      const { parent: _parent, ...free } = node as BoardNode & { parent?: string }
+      if (!box) return { ...free, z: z++ } as BoardNode
+      return { ...free, x: isInk(node) ? box.ox : box.x, y: isInk(node) ? box.oy : box.y, z: z++ } as BoardNode
+    })
+  }, [])
 
   /**
    * A mark stays on a part of a world: pick at its centre; on a hit, the world
@@ -925,18 +1041,22 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const found = await pickWorlds(worlds, center[0], center[1], PICK_MARK_MS)
       const part = found?.hit.part
       if (!found || !part) return
-      const nodes = nodesRef.current
-      const mark = nodes.find((node) => node.id === id)
-      if (!mark || !isKnown(mark) || mark.follows) return
-      const pin = { id, part, local: found.hit.local }
-      const next = nodes.map((node) => {
-        if (node.id === id) return { ...node, follows: { world: found.id, point: `pin:${id}`, offset: [-center[0], -center[1]] } } as BoardNode
-        if (node.id === found.id) return { ...node, pins: [...((node as LiveNode).pins ?? []), pin] } as BoardNode
-        return node
-      })
-      commitNodes(next, nodes, by, false)
+      commitOver(
+        (nodes) => {
+          const mark = nodes.find((node) => node.id === id)
+          if (!mark || !isKnown(mark) || mark.follows) return nodes
+          const pin = { id, part, local: found.hit.local }
+          return nodes.map((node) => {
+            if (node.id === id) return { ...node, follows: { world: found.id, point: `pin:${id}`, offset: [-center[0], -center[1]] } } as BoardNode
+            if (node.id === found.id) return { ...node, pins: [...((node as LiveNode).pins ?? []), pin] } as BoardNode
+            return node
+          })
+        },
+        by,
+        false
+      )
     },
-    [commitNodes]
+    [commitOver]
   )
 
   /** Undo or redo: the restored nodes count as changed, so they get a new seq. */
@@ -969,9 +1089,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const replaceNodes = useCallback(
     (changes: Map<string, BoardNode>) => {
       if (!changes.size) return
-      commitNodes(nodesRef.current.map((node) => changes.get(node.id) ?? node))
+      commitOver((nodes) => nodes.map((node) => changes.get(node.id) ?? node), 'learner', true)
     },
-    [commitNodes]
+    [commitOver]
   )
 
   const eraseAt = useCallback(
@@ -979,19 +1099,24 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const point = screenToBoard(screen, viewportRef.current, cameraRef.current)
       const radius = ERASE_RADIUS / cameraRef.current.zoom
       const layout = layoutRef.current
-      const kept = nodesRef.current.filter((node) => {
-        if (!isInk(node) || !shown(node)) return true
+      const drag = dragRef.current
+      if (!drag) return
+      let hit = false
+      for (const node of nodesRef.current) {
+        if (!isInk(node) || !shown(node)) continue
         const box = layout.get(node.id)
         const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, indexRef.current.byId, layout)
-        return !strokeHitByCircle(node, offset, point, radius)
-      })
-      if (kept.length !== nodesRef.current.length) {
-        setNodes(kept)
-        if (dragRef.current) dragRef.current.changed = true
+        if (!strokeHitByCircle(node, offset, point, radius)) continue
+        ;(drag.erased ??= new Set()).add(node.id)
+        hit = true
+      }
+      if (hit) {
+        drag.changed = true
+        setNodes(dragView(drag))
         if (selectedIdsRef.current.length) setSelectedIds([])
       }
     },
-    [setNodes, setSelectedIds, shown]
+    [dragView, setNodes, setSelectedIds, shown]
   )
 
   // ---------- Text editing ----------
@@ -1261,45 +1386,6 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     }
   }
 
-  /** Apply a resize drag to the start nodes. */
-  const resizeTo = (drag: DragState, delta: Point, keepAspect: boolean): BoardNode[] => {
-    const info = drag.resize
-    if (!info) return drag.startNodes
-    const startById = new Map(drag.startNodes.map((node) => [node.id, node]))
-    const node = startById.get(info.id)
-    if (!node || !isKnown(node)) return drag.startNodes
-    const byId = indexRef.current.byId
-    const aspect = keepAspect || (node.kind === 'image' && info.handle.length === 2)
-    const next = resizedBox(info.box, info.handle, delta, aspect)
-    const dx = next.x - info.box.x
-    const dy = next.y - info.box.y
-    let updated: BoardNode
-    if (isInk(node)) {
-      const sx = next.width / Math.max(1e-6, info.box.width)
-      const sy = next.height / Math.max(1e-6, info.box.height)
-      // World point → scaled about the box origin → back to local.
-      const ox = info.box.ox
-      const oy = info.box.oy
-      const points = node.points.map(([x, y, p]) => {
-        const wx = next.x + (ox + x - info.box.x) * sx
-        const wy = next.y + (oy + y - info.box.y) * sy
-        return [wx - ox, wy - oy, p] as InkNode['points'][number]
-      })
-      updated = { ...node, points }
-    } else if (isLive(node)) {
-      const flowed = isFlowed(node, byId)
-      updated = { ...node, w: next.width, h: next.height, ...(flowed ? {} : { x: node.x + dx, y: node.y + dy }) }
-    } else {
-      const content = node as ContentNode
-      const style: NodeStyle = { ...content.style, width: px(next.width) }
-      if (content.kind === 'text') delete style.height
-      else style.height = px(next.height)
-      const flowed = isFlowed(content, byId)
-      updated = { ...content, style, ...(flowed ? {} : { x: content.x + dx, y: content.y + dy }) } as BoardNode
-    }
-    return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
-  }
-
   const worldPointer = (kind: WorldPointer['kind'], event: React.PointerEvent<HTMLDivElement>): WorldPointer => {
     const host = hostRef.current as HTMLDivElement
     const [x, y] = screenToBoard(cssPoint(event, host.getBoundingClientRect()), viewportRef.current, cameraRef.current)
@@ -1365,11 +1451,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const moved = Math.hypot(screen[0] - drag.start[0], screen[1] - drag.start[1]) >= 2
       if (!drag.changed && !moved) return
       drag.changed = true
-      setNodes(moveNodes(drag.startNodes, drag.moveIds, boardDelta))
+      drag.delta = boardDelta
+      setNodes(dragView(drag))
     } else if (drag.kind === 'resize') {
-      const boardDelta: Point = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
+      drag.delta = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
+      drag.keepAspect = event.shiftKey
       drag.changed = true
-      setNodes(resizeTo(drag, boardDelta, event.shiftKey))
+      setNodes(dragView(drag))
     } else if (drag.kind === 'lasso') {
       const native = event.nativeEvent
       const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
@@ -1404,6 +1492,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     commitNodes([...nodesRef.current, node])
     void pinMark(node.id, 'learner')
   }
+
+  const commitStrokeRef = useRef(commitStroke)
+  commitStrokeRef.current = commitStroke
 
   const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
     if (relayPointer('up', event)) return
@@ -1720,23 +1811,23 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       },
       applyColor,
       applyWidth,
-      agentCommit: (next, options) => {
+      agentCommit: (base, next, options) => {
         // An agent edit ends a learner's text editing first, so the two never mix.
         if (editingRef.current) commitEditing()
         const key = options?.step ?? null
         const join = key !== null && stepKeyRef.current === key
         let changed = false
         flushSync(() => {
-          changed = commitNodes(next, nodesRef.current, 'agent', !join)
+          changed = commitOver((document) => homeless(applyChanges(document, base, next)), 'agent', !join)
         })
         if (changed || join) stepKeyRef.current = key
         measure()
-        const present = new Set(next.map((node) => node.id))
+        const present = new Set(documentNodes().map((node) => node.id))
         if (selectedIdsRef.current.some((id) => !present.has(id))) setSelectedIds(selectedIdsRef.current.filter((id) => present.has(id)))
       },
-      agentAmend: (next) => {
+      agentAmend: (base, next) => {
         if (editingRef.current) commitEditing()
-        flushSync(() => commitNodes(next, nodesRef.current, 'agent', false))
+        flushSync(() => commitOver((document) => homeless(applyChanges(document, base, next)), 'agent', false))
         measure()
       },
       boardId: () => idRef.current,
@@ -1747,6 +1838,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       },
       remeasure: measure,
       selectAll: () => selectAllRef.current(),
+      settle: () => {
+        if (editingRef.current) commitEditing()
+        const drag = dragRef.current
+        const stroke = activeRef.current
+        if (drag?.kind !== 'ink' || !stroke) return
+        dragRef.current = null
+        activeRef.current = null
+        commitStrokeRef.current({ ...stroke, points: [...stroke.points] })
+        requestPaint({ active: true })
+      },
       setPlayback: (frame) => {
         const ghosts = frame?.ghosts ?? []
         const ghostsChanged = ghosts !== ghostNodesRef.current
@@ -1784,7 +1885,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitNodes, emit, fit, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
   )
   useEffect(
     () => () => {
@@ -1803,6 +1904,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   }, [setSelectedIds, shown])
 
   const applyAction = (action: BoardKeyAction): void => {
+    // A key edit needs the document, not a drag on top of it: the drag ends as Escape ends it.
+    if (openDrag()) cancelDrag()
     const ids = [...selectedIdsRef.current]
     const index = indexRef.current
     const layout = layoutRef.current
@@ -1867,6 +1970,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   }
 
   const nudge = (dx: number, dy: number): void => {
+    if (openDrag()) cancelDrag()
     const ids = movableIds(selectedIdsRef.current)
     if (!ids.size) return
     const selection = [...selectedIdsRef.current]

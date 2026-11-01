@@ -171,7 +171,8 @@ export interface RunSceneContext {
 
 /** Take a committed scene off the board again (a skipped queued scene, a restage): a new undo step, or part of the keyed step `step`. */
 function revertScene(board: BoardHandle, revert: SceneRevert, step?: string): void {
-  board.agentCommit(revertedNodes(board.liveState().nodes, revert), step ? { step } : undefined)
+  const nodes = board.liveState().nodes
+  board.agentCommit(nodes, revertedNodes(nodes, revert), step ? { step } : undefined)
 }
 
 /** The player's way to take a scene off the board: by its revert in sceneReverts, the one owner, read when it runs. */
@@ -198,6 +199,7 @@ function settleLayout(board: BoardHandle, compiled: CompiledScene): void {
     }
     if (shifts.size) {
       board.agentAmend(
+        state.nodes,
         state.nodes.map((node) => {
           const shift = shifts.get(node.id)
           return shift && isContent(node) ? { ...node, x: r1(node.x + shift[0]), y: r1(node.y + shift[1]) } : node
@@ -242,6 +244,7 @@ function settleLayout(board: BoardHandle, compiled: CompiledScene): void {
     const height = `${Math.ceil(y1 - ny + PAD)}px`
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && frame.style.width === width && frame.style.height === height) continue
     board.agentAmend(
+      state.nodes,
       state.nodes.map((node) => {
         if (node.id === id) return { ...frame, x: r1(frame.x + dx), y: r1(frame.y + dy), style: { ...frame.style, width, height } } as BoardNode
         if (node.parent === id) return { ...node, x: r1((node.x as number) - dx), y: r1((node.y as number) - dy) } as BoardNode
@@ -468,7 +471,7 @@ function keepInkLook(object: PlayObject, s: Scene): void {
 function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: CompiledScene, step: string | null): CommittedScene {
   const s = ctx.scene()
   const sceneId = compiled.play.id
-  ctx.board.agentCommit(compiled.next, step ? { step } : undefined)
+  ctx.board.agentCommit(compiled.base, compiled.next, step ? { step } : undefined)
   settleLayout(ctx.board, compiled)
   measureGlides(ctx.board, compiled)
 
@@ -1494,7 +1497,7 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       const next = current.flatMap((node) => (removed.has(node.id) && asLeft(node) ? [] : saved.has(node.id) && asLeft(node) ? [saved.get(node.id) as BoardNode] : [node]))
       const present = new Set(current.map((node) => node.id))
       for (const node of nodes) if (revert.created.includes(node.id) && !present.has(node.id)) next.push(node)
-      ctx.board.agentCommit(next, { step: String(args.step) })
+      ctx.board.agentCommit(current, next, { step: String(args.step) })
       sceneReverts.set(id, revert)
       scenePlayer.drop(id)
       return status()

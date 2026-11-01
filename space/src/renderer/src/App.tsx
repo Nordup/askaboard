@@ -786,21 +786,21 @@ export function App() {
             ...fields,
             kind: 'live'
           }
-          board.agentCommit([...state.nodes, node])
+          board.agentCommit(state.nodes, [...state.nodes, node])
           return node.id
         },
         update: (id: string, fields: Partial<LiveNode>) => {
           const board = boardRef.current
           if (!board) return false
           const state = board.liveState()
-          board.agentCommit(state.nodes.map((n) => (n.id === id ? ({ ...n, ...fields } as typeof n) : n)))
+          board.agentCommit(state.nodes, state.nodes.map((n) => (n.id === id ? ({ ...n, ...fields } as typeof n) : n)))
           return true
         },
         setParams: (id: string, params: Record<string, number>) => {
           const board = boardRef.current
           if (!board) return false
           const state = board.liveState()
-          board.agentCommit(state.nodes.map((n) => (n.id === id && n.kind === 'live' ? ({ ...n, params: { ...(n as LiveNode).params, ...params } } as LiveNode) : n)))
+          board.agentCommit(state.nodes, state.nodes.map((n) => (n.id === id && n.kind === 'live' ? ({ ...n, params: { ...(n as LiveNode).params, ...params } } as LiveNode) : n)))
           return true
         },
         items: () => liveItems(),
