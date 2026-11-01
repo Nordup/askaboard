@@ -177,14 +177,15 @@ export const FILES = String.raw`
   };
 
   // A worker frees a module only when it ends, and each generation has its own URLs, so each run of a world with modules keeps one more copy. A generation
-  // must run its modules again, as it runs its code. So a shared copy is no choice, and the bound is a new worker: 'lost' restarts it, as after a lost context,
-  // and each world starts again from its node. This falls in a seek, when a world starts again anyway. A step host has its own worker and never gets here.
+  // must run its modules again, as it runs its code. So a shared copy is no choice, and the bound is a new worker: 'recycle' restarts it, as after a lost context,
+  // and each world starts again from its node. This falls in a seek, when a world starts again anyway. It is no loss, so it counts toward no limit. A step host has
+  // its own worker and never gets here.
   const MODULE_RUNS = 128;
   let moduleRuns = 0;
   const moduleRun = (w) => {
     if (w.modules) return;
     w.modules = true;
-    if (++moduleRuns >= Math.max(tune.moduleRuns ?? MODULE_RUNS, 4 * worlds.size)) post({ type: 'lost' });
+    if (++moduleRuns >= Math.max(tune.moduleRuns ?? MODULE_RUNS, 4 * worlds.size)) post({ type: 'recycle' });
   };
 
   // A world's console also goes to the agent: at most LOG_LINES lines per generation, of at most LOG_CHARS characters.

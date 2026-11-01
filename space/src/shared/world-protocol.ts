@@ -228,6 +228,8 @@ export type WorldToPage =
   | { type: 'frame'; key: WorldKey; request: number; tick: number; still: WorldStill }
   | { type: 'error'; key: WorldKey; message: string }
   | { type: 'lost' }
+  /** The worker ran the worlds with modules that it can hold, and asks for its planned end. No loss. */
+  | { type: 'recycle' }
   | { type: 'input'; key: WorldKey; mode: 'none' | 'enter' | 'direct' }
   | { type: 'report'; key: WorldKey; values: unknown }
   /** A line of the world's console, for the agent. */

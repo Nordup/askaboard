@@ -60,7 +60,8 @@ export interface HostEvents {
   onAlive(frames: number, tick: number): void
   onError(message: string): void
   /** The worker ended: the world starts a new generation. */
-  onLost(): void
+  /** planned: a recycled worker, not a fault. */
+  onLost(planned: boolean): void
   /** A stepping host moved on. */
   onProgress?(tick: number): void
   onInput?(mode: LiveInput): void
@@ -293,10 +294,10 @@ export class WorldHost implements WorldMember {
   }
 
   /** Its worker ended: the item starts a new generation. */
-  lost(): void {
+  lost(planned: boolean): void {
     this.stopped = true
     this.closeWaits()
-    this.events.onLost()
+    this.events.onLost(planned)
   }
 
   private settle(request: number, frame: LiveFrame | null): void {

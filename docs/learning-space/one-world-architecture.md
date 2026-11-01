@@ -317,14 +317,37 @@ flowchart LR
   shared across generations would not run again: its state would pass from one run to
   the next, and a replay would differ. So each generation keeps its copy, and a worker
   that ran 128 generations with modules ends (4 per world, on a board with more). It
-  posts `lost`, and the page restarts it as after a lost context. This falls in a seek,
+  posts `recycle`, and the page restarts it as after a lost context. This falls in a seek,
   when a world starts again anyway. All worlds of that board start again from their nodes.
+  A recycle is no loss, so it does not count toward the limit of three losses in a minute.
+  World code can reach the port, so the page takes the word only from a worker that it gave
+  at least 2 worlds per member. Any other `recycle` counts as a loss.
   A step host has its own worker, so it never comes to this limit.
-- **Loads and hangs.** A load is a read or an item of three's default `LoadingManager`,
-  which lasts to the end of a loader's parse. A step world waits for its own loads, also
-  between ticks, so a still shows what loaded. A load in another world holds up nothing,
-  and a load with no news for 30 s counts as stalled, so step time goes on. A read that
-  ends after its world left does not hold that world.
+- **One read per file.** Worlds that ask for one file at once share one read, and each
+  becomes a user of it. An abort ends the wait of its own reader. The read stops when no
+  reader is left.
+- **Loads and hangs.** A load is a read or an item of a `LoadingManager`, which lasts to
+  the end of a loader's parse. A step world waits for its own loads, also between ticks,
+  so a still shows what loaded. A load in another world holds up nothing, and a load with
+  no news for 30 s counts as stalled, so step time goes on. A read that ends after its
+  world left does not hold that world.
+- **Whose load.** A parse goes on after its world's turn, so "who runs now" cannot name
+  the owner, and the base of a file URL cannot either: `/file/` has one base per worker,
+  and a loader keeps a path relative. So ownership follows the loader. Each world has its
+  own manager, on top of three's default one, whose `onLoad` and handlers go on working.
+  A loader made with no manager takes the manager of the world that runs (`runner` in
+  `realm.ts`), and the loaders of a parse get it from their parent. A manager that a world
+  makes is claimed the same way. An item belongs to its manager, at any URL (https, blob,
+  data), and two worlds with one URL stay two loads. A file URL from a manager names the
+  world in its fragment, which never leaves the worker, so its read is charged and kept
+  for that world.
+- **A load of no world.** A read from no manager has the world whose code runs now. Code
+  after an `await` in a tick has no such world, and neither has a loader made there.
+  The worker does not guess. All step worlds wait for that load: a wait costs less than a
+  wrong still, and the case is rare. In a world's top level, all code that runs counts
+  for that world (`setupQueue`). So the limits are these: a world's own code after a top
+  level that took longer than its turn can charge the world that sets up now, and a
+  library that keeps one loader for all worlds charges the first.
 - **The limit of a silent worker.** The worker's realm runs world code, which can reach
   the port. So no number from the worker counts: a `files` message says only that a load
   may run. In the page, the first message starts an episode. Its limit comes from what

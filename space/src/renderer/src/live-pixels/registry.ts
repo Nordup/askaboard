@@ -236,8 +236,10 @@ export class LiveItem {
         this.endLeaving()
         this.setStatus('error', message)
       },
-      onLost: () => {
-        if (current()) this.lost()
+      onLost: (planned) => {
+        if (!current()) return
+        if (planned) this.restart()
+        else this.lost()
       },
       onInput: (mode) => {
         if (current()) this.setStatus(this.status.state, this.status.error, mode)

@@ -88,7 +88,7 @@ export interface WorldMember {
   loading(ms: number): void
   receive(message: Extract<WorldToPage, { key: WorldKey }>): void
   failed(message: string): void
-  lost(): void
+  lost(planned: boolean): void
 }
 
 type Picture = Extract<WorldToPage, { type: 'picture' }>
@@ -189,6 +189,8 @@ function presenter(canvas: HTMLCanvasElement): Present | null {
 export class WorldSurface {
   private readonly show: Present | null
   private members = new Map<string, WorldMember>()
+  /** Worlds that this worker was given. */
+  private added = 0
   private frame: HTMLIFrameElement | null = null
   private box: HTMLElement | null = null
   private channel: MessageChannel | null = null
@@ -285,11 +287,12 @@ export class WorldSurface {
     this.channel?.port1.postMessage({ type: 'ping', n: ++this.pings } satisfies PageToWorld)
   }
 
-  /** End the worker and start again. `fault`: the world that stays stopped. */
-  private recover(fault: WorldKey | null): void {
+  /** End the worker and start again. `fault`: the world that stays stopped. `planned`: no loss. */
+  private recover(fault: WorldKey | null, planned = false): void {
     const members = [...this.members.values()]
     this.endWorker()
     this.members.clear()
+    this.added = 0
     this.removals = []
     this.outbox = []
     this.opened = false
@@ -302,7 +305,7 @@ export class WorldSurface {
     for (const member of members) {
       if (member.ended) continue
       if (fault && keyOf(fault) === keyOf(member.key)) member.failed('This world stopped answering.')
-      else member.lost()
+      else member.lost(planned)
     }
   }
 
@@ -401,6 +404,8 @@ export class WorldSurface {
       this.running = m.running
     }
     else if (m.type === 'lost') this.recover(null)
+    // World code can reach the port, so the limit of losses must not depend on its word. A worker recycles after 4 generations per world, so one that got too few only claims it.
+    else if (m.type === 'recycle') this.recover(null, this.added >= 2 * this.members.size)
     else if (m.type === 'files') this.loadSeen()
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }
@@ -422,6 +427,7 @@ export class WorldSurface {
   /** A new generation. `run`: it runs ticks. */
   add(member: WorldMember, world: WorldStart, run: boolean): void {
     this.members.set(keyOf(member.key), member)
+    this.added++
     this.boot()
     this.post({ type: 'add', world })
     this.post({ type: 'run', key: member.key, on: run })
