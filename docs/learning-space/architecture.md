@@ -81,7 +81,7 @@ limits scripts and images.
   `ink-tiles.ts`, decisions B28 and B40). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
-  history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Undo: `history.ts`, a full snapshot on top of changes between snapshots. An agent edit is a change from the
+  history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Undo: `history.ts`, a full snapshot on top of sparse changes between snapshots (decision B43). An agent edit is a change from the
   nodes it was computed from, and it applies to the current document by item
   id (`scene.ts applyChanges`; a change of parent takes the place as one value, `mergePlace`, decision B40). A drag shows on top of the document; a commit
   under it goes to the document (`commitOver`, decision B26).
@@ -89,14 +89,18 @@ limits scripts and images.
 ## Saving
 
 The renderer holds one pending version per board, by folder and path
-(`App.tsx`). Each board read and write names its folder (`root`), and main
+(`App.tsx`). A version stays there until its own write succeeds, also during
+that write. Each board read and write names its folder (`root`), and main
 sends it to that folder's `FolderSession`, also when another folder is open by
 then. A folder switch and a board change run in the save chain: they save
 first, and a failed save stops them. Failed saves stay pending and try again.
-At close, main hears which boards failed: their text goes to
+Each way that takes the Board away commits what the learner has open in the
+same task as the unmount (`leaveBoard`), so a stroke that started during an
+await stays. At close, the renderer writes until a write fails or nothing is
+pending. Main hears the newest text of each pending board: it goes to
 `userData/recovery/` (`main/recovery.ts`), one native dialog offers "Try again"
 and "Close anyway", and the board's next open brings the text back. A renderer
-that does not answer in 2 s cannot hold the window. Decisions B26 and B27.
+that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
 
 ## Agent-side helpers (renderer)
 

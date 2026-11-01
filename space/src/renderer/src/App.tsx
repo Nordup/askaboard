@@ -10,6 +10,7 @@ import {
   serializeBoard,
   type Author,
   type BoardDoc,
+  type BoardNode,
   type LiveNode,
   type Removal,
   type Revision
@@ -79,6 +80,15 @@ interface CacheEntry {
   stale?: boolean
 }
 
+/** About the bytes that a board holds in memory. Its undo and its change log share node objects with the document. */
+function entryBytes({ doc, history, log }: CacheEntry): number {
+  const nodes = new Set<BoardNode>(doc.nodes)
+  const add = (node: BoardNode): void => void nodes.add(node)
+  history.eachNode(add)
+  log.eachNode(add)
+  return boardBytes(nodes)
+}
+
 function collectBoards(nodes: FileNode[], out: BoardEntry[] = []): BoardEntry[] {
   for (const node of nodes) {
     if (node.kind === 'dir') collectBoards(node.children ?? [], out)
@@ -136,7 +146,7 @@ export function App() {
 
   // ---------- Saving ----------
 
-  /** The unsaved version of each board, by saveKey. A board stays here until its write succeeds, so a failure never drops edits and no other board displaces them. */
+  /** The newest unsaved version of each board, by saveKey. A version stays here until its own write succeeds, also during that write, so what the file lacks is always here: a failure drops nothing, and no other board displaces it. */
   const pendingRef = useRef(new Map<string, PendingSave>())
   /** The last writes failed: the learner has seen the error. */
   const saveFailingRef = useRef(false)
@@ -156,39 +166,37 @@ export function App() {
 
   /**
    * Write the pending boards. Runs only inside saveChainRef. A failed write keeps its board
-   * pending, and the result lists it. `mustSave` names the boards a board or folder change
-   * needs saved: when one of them fails, this throws (the change must not go on).
+   * pending, and the result says that one failed. `mustSave` names the boards a board or folder
+   * change needs saved: when one of them fails, this throws (the change must not go on).
    */
-  const writePending = useCallback(async (mustSave: (save: PendingSave) => boolean = () => false): Promise<FailedSave[]> => {
+  const writePending = useCallback(async (mustSave: (save: PendingSave) => boolean = () => false): Promise<boolean> => {
     const pending = pendingRef.current
-    if (!pending.size) return []
+    if (!pending.size) return false
     setSaveStatus('saving')
-    const failed: FailedSave[] = []
+    let failed = false
     let refused: string | null = null
     for (const key of [...pending.keys()]) {
       const save = pending.get(key)
       if (!save) continue
-      pending.delete(key)
-      let text: string | null = null
       try {
         const start = performance.now()
-        text = serializeBoard(save.doc)
+        const text = serializeBoard(save.doc)
         const serializeMs = performance.now() - start
         const since = learnerSeqRef.current.get(key)
         const learnerEdit = since === undefined ? null : learnerEditSince(save.doc, since)
         await space.writeBoard(save.root, save.path, text, { learnerEdit, serializeMs })
         learnerSeqRef.current.set(key, save.doc.nextSeq)
+        if (pending.get(key) === save) pending.delete(key) // a newer version stays
       } catch (error) {
         const message = errorMessage(error)
         console.error(`save failed for ${save.path}: ${message}`)
-        if (!pending.has(key)) pending.set(key, save) // newer edits of the board, if any, hold these too
-        if (text !== null) failed.push({ root: save.root, path: save.path, text })
+        failed = true
         if (!saveFailingRef.current) showError(`Could not save the board: ${message}`)
         saveFailingRef.current = true
         if (mustSave(save)) refused ??= `“${boardName(save.path)}” could not be saved first, so nothing was changed: ${message}`
       }
     }
-    if (failed.length) setSaveStatus('error')
+    if (failed) setSaveStatus('error')
     else {
       saveFailingRef.current = false
       setSaveStatus(pending.size ? 'unsaved' : 'saved')
@@ -197,8 +205,8 @@ export function App() {
     return failed
   }, [])
 
-  /** Write the pending boards now, and resolve with the ones that failed. Writes run one after another. */
-  const flushSave = useCallback((): Promise<FailedSave[]> => {
+  /** Write the pending boards now, and resolve with true when a write failed. Writes run one after another. */
+  const flushSave = useCallback((): Promise<boolean> => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
@@ -293,6 +301,18 @@ export function App() {
     return next
   }
 
+  /**
+   * The mounted Board is about to go: commit what the learner has open. Call it in the same
+   * task as the setOpen that unmounts the Board. A stroke can start in any await before that.
+   */
+  const leaveBoard = useCallback((): void => {
+    try {
+      boardRef.current?.settle()
+    } catch (error) {
+      console.error(`could not commit the open edit: ${errorMessage(error)}`)
+    }
+  }, [])
+
   /** The board kept in a recovery file (main/recovery.ts), or null. */
   const recoveryOf = async (root: string, path: string): Promise<BoardDoc | null> => {
     try {
@@ -305,13 +325,14 @@ export function App() {
   }
 
   /**
-   * Closed boards stay in memory for a fast way back, within MAX_BOARD_BYTES.
+   * Closed boards stay in memory for a fast way back, within MAX_BOARD_BYTES. A board costs all
+   * the nodes it holds: its document, its undo and its change log, each node object once.
    * A board that leaves opens from its file, and its undo and its change log go with it, as after a restart.
    * A board with an unsaved version stays: pendingRef holds what its file lacks.
    */
   const trimBoards = (openPath: string): void => {
     const root = rootRef.current
-    const sizes = new Map([...cacheRef.current].map(([path, entry]) => [path, boardBytes(entry.doc.nodes)]))
+    const sizes = new Map([...cacheRef.current].map(([path, entry]) => [path, entryBytes(entry)]))
     let bytes = 0
     for (const size of sizes.values()) bytes += size
     for (const [path, size] of sizes) {
@@ -329,7 +350,7 @@ export function App() {
       const token = ++openTokenRef.current
       openingRef.current = true
       try {
-        boardRef.current?.settle()
+        leaveBoard()
         await flushSave()
         flushCamera()
         let recovered = false
@@ -340,6 +361,7 @@ export function App() {
             doc = await readBoardDoc(root, path)
           } catch (error) {
             if (token !== openTokenRef.current) return
+            leaveBoard()
             setOpen(null)
             setBoardError({ path, message: errorMessage(error) })
             space.setLastBoard(root, path)
@@ -375,6 +397,7 @@ export function App() {
         cacheRef.current.set(path, entry)
         const [camera, records] = await Promise.all([space.getCamera(path).catch(() => null), boardRecords(path, entry.doc)])
         if (token !== openTokenRef.current) return
+        leaveBoard()
         entry.doc = mountRecords(root, path, entry.doc, records)
         cameraRef.current = camera ? { root, path, camera } : null
         setZoom(camera?.zoom ?? 1)
@@ -390,7 +413,7 @@ export function App() {
         if (token === openTokenRef.current) openingRef.current = false
       }
     },
-    [flushCamera, flushSave, scheduleSave]
+    [flushCamera, flushSave, leaveBoard, scheduleSave]
   )
 
   const onChanges = useCallback(({ removed, revisions, by }: { removed: Removal[]; revisions: Revision[]; by: Author }) => {
@@ -414,6 +437,7 @@ export function App() {
 
   /** Show a new folder (or none). Edits made after the last save stay pending under the folder they belong to. */
   const applySnapshot = useCallback((next: Snapshot) => {
+    leaveBoard()
     rootRef.current = next.folder?.root ?? null
     cacheRef.current.clear()
     openTokenRef.current++
@@ -427,7 +451,7 @@ export function App() {
     preferredBoardRef.current = next.folder?.lastBoard ?? null
     setTree(next.folder?.tree ?? null)
     setSnapshot(next)
-  }, [])
+  }, [leaveBoard])
 
   // Open a board automatically: the last one, else the first one.
   useEffect(() => {
@@ -446,21 +470,20 @@ export function App() {
    *   1. the open editor commits, and the pending save is written to the folder it belongs to;
    *      a failed save fails the switch (nothing is changed);
    *   2. the main process makes the new folder the open one;
-   *   3. here the new folder replaces the old one.
-   * An edit that comes in during step 2 stays pending under the old folder, and the save below
-   * writes it there.
+   *   3. here the open editor and a held stroke commit, and the new folder replaces the old one.
+   * An edit that comes in during step 2, or that step 3 commits, stays pending under the old
+   * folder, and the save below writes it there.
    */
   const switchFolder = useCallback(
     async (path: string): Promise<void> => {
       const leaving = rootRef.current
-      boardRef.current?.settle()
+      leaveBoard()
       flushCamera()
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
       unsavedSinceRef.current = null
       const run = saveChainRef.current.then(async () => {
         await writePending((save) => save.root === leaving)
-        boardRef.current?.settle()
         applySnapshot(await space.openFolder(path))
       })
       saveChainRef.current = run.catch(() => undefined)
@@ -470,7 +493,7 @@ export function App() {
         saveSoon()
       }
     },
-    [applySnapshot, flushCamera, saveSoon, writePending]
+    [applySnapshot, flushCamera, leaveBoard, saveSoon, writePending]
   )
 
   const openRecent = useCallback(
@@ -730,7 +753,9 @@ export function App() {
     // A file that replaced the open board's mounts as any board does: its records, and the duplicate-id check.
     const token = openTokenRef.current
     const records = await boardRecords(path, doc)
-    if (token !== openTokenRef.current || openRef.current?.path !== path || isPending(path)) return
+    if (token !== openTokenRef.current || openRef.current?.path !== path) return
+    leaveBoard()
+    if (isPending(path)) return
     const history = current.history
     history.clear()
     const entry = cacheRef.current.get(path)
@@ -760,16 +785,33 @@ export function App() {
     void space.getShowPerformance().then(setShowPerformance)
   }, [])
 
-  /** Save everything now: the open editor first. Resolves with the boards that could not be saved. */
+  /** The text of each board with unsaved edits, as it is now: the newest version, whatever write failed. */
+  const unsavedBoards = (): FailedSave[] => {
+    const out: FailedSave[] = []
+    for (const save of pendingRef.current.values()) {
+      try {
+        out.push({ root: save.root, path: save.path, text: serializeBoard(save.doc) })
+      } catch (error) {
+        console.error(`${save.path} cannot be kept: ${errorMessage(error)}`)
+      }
+    }
+    return out
+  }
+
+  /**
+   * Save everything for the close. Resolves with the boards that stay unsaved, and with none
+   * only when none does: an edit that comes in during a write is written in another pass.
+   */
   const flushRef = useRef<() => Promise<FailedSave[]>>(async () => [])
   flushRef.current = async () => {
-    try {
-      boardRef.current?.settle()
-    } catch (error) {
-      console.error(`could not commit the open edit: ${errorMessage(error)}`)
+    for (;;) {
+      leaveBoard()
+      flushCamera()
+      const failed = await flushSave()
+      leaveBoard()
+      if (failed) return unsavedBoards()
+      if (!pendingRef.current.size) return []
     }
-    flushCamera()
-    return flushSave()
   }
 
   useEffect(() => {
@@ -960,6 +1002,11 @@ export function App() {
         items: () => liveItems(),
         resources: () => liveResources(),
         validate: (code: string, params?: Record<string, number>) => validateWorld(code, params)
+      },
+      /** What the memory bounds hold now: the frames of the replay history, the ink tiles, and the open board's change log and bytes. */
+      memory: () => {
+        const entry = openRef.current ? cacheRef.current.get(openRef.current.path) : undefined
+        return { sceneBytes: scenePlayer.heldBytes(), tiles: boardRef.current?.tileStats() ?? null, revisions: entry?.log.revisionCount() ?? null, boardBytes: entry ? entryBytes(entry) : null }
       },
       /** The render meter (scripts/perf/render.mjs): start(), stop(), read(). */
       perf: perfMeter,

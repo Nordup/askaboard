@@ -1,20 +1,61 @@
 import { isInk, type BoardNode } from '@shared/board-format'
 
-/** How to turn the snapshot above into the one below: nodes at `at` give way to `insert`. A commit changes few nodes, so a step holds few. */
-interface Step {
+/** One place where two lists differ: `remove` nodes at `at` give way to `insert`. */
+interface Span {
   at: number
   remove: number
   insert: BoardNode[]
 }
 
-/** The step that turns `from` into `to`: all between their same start and same end. */
+/** How to turn the snapshot above into the one below. A commit changes few nodes, so a step holds few, wherever they are in the list. */
+type Step = Span[]
+
+/**
+ * The spans that turn `from` into `to`: all between their same start and same end, then each
+ * run of nodes between nodes that both lists hold in the same order. A node that changed its
+ * place in the list makes a wide span, never a wrong one.
+ */
 function stepBetween(from: readonly BoardNode[], to: readonly BoardNode[]): Step {
   const shortest = Math.min(from.length, to.length)
   let start = 0
   while (start < shortest && from[start] === to[start]) start++
   let end = 0
   while (end < shortest - start && from[from.length - 1 - end] === to[to.length - 1 - end]) end++
-  return { at: start, remove: from.length - start - end, insert: to.slice(start, to.length - end) }
+  const fromEnd = from.length - end
+  const toEnd = to.length - end
+  const place = new Map<BoardNode, number>()
+  for (let at = start; at < fromEnd; at++) place.set(from[at], at)
+  const step: Step = []
+  let at = start
+  let insert: BoardNode[] = []
+  const close = (next: number): void => {
+    if (next > at || insert.length) step.push({ at, remove: next - at, insert })
+    insert = []
+  }
+  for (let i = start; i < toEnd; i++) {
+    const found = place.get(to[i])
+    if (found === undefined || found < at) {
+      insert.push(to[i])
+      continue
+    }
+    close(found)
+    at = found + 1
+  }
+  close(fromEnd)
+  return step
+}
+
+/** `nodes` with a step applied. */
+function applyStep(nodes: readonly BoardNode[], step: Step): readonly BoardNode[] {
+  const out: BoardNode[] = []
+  let at = 0
+  for (const span of step) {
+    for (; at < span.at; at++) out.push(nodes[at])
+    for (const node of span.insert) out.push(node)
+    at += span.remove
+  }
+  for (; at < nodes.length; at++) out.push(nodes[at])
+  return out
 }
 
 /** A stack of snapshots: the newest whole, each one below it as a step from the one above. */
@@ -35,7 +76,7 @@ class Snapshots {
     const snapshot = this.top
     if (!snapshot) return null
     const step = this.below.pop()
-    this.top = step ? [...snapshot.slice(0, step.at), ...step.insert, ...snapshot.slice(step.at + step.remove)] : null
+    this.top = step ? applyStep(snapshot, step) : null
     return [...snapshot]
   }
 
@@ -47,6 +88,11 @@ class Snapshots {
   clear(): void {
     this.top = null
     this.below = []
+  }
+
+  eachNode(visit: (node: BoardNode) => void): void {
+    this.top?.forEach(visit)
+    for (const step of this.below) for (const span of step) span.insert.forEach(visit)
   }
 }
 
@@ -90,10 +136,16 @@ export class BoardHistory {
     this.past.clear()
     this.future.clear()
   }
+
+  /** Each node the history holds. A node can come more than once. */
+  eachNode(visit: (node: BoardNode) => void): void {
+    this.past.eachNode(visit)
+    this.future.eachNode(visit)
+  }
 }
 
 /** About how many bytes the nodes of a board hold in memory: the points of ink, and the text of the rest. */
-export function boardBytes(nodes: readonly BoardNode[]): number {
+export function boardBytes(nodes: Iterable<BoardNode>): number {
   let bytes = 0
   for (const node of nodes) {
     if (isInk(node)) bytes += 200 + node.points.length * 48

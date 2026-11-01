@@ -23,6 +23,8 @@ const MAX_TOMBSTONES = 5000
 const MAX_REVISIONS = 32
 /** The revisions a board keeps in all, deleted nodes too. Older ones drop off first. */
 const MAX_ALL_REVISIONS = 20000
+/** The log drops the oldest revisions when it holds this many more than it keeps, so a drop costs little per revision. */
+const REVISIONS_OVER = 1024
 
 /** What a node was at a seq, for telling a change apart (see describeChange). */
 export type PriorState =
@@ -43,9 +45,6 @@ export type PriorState =
 export class ChangeLog {
   private tombstones: Tombstone[] = []
   private revisions = new Map<string, Revision[]>()
-  /** The node of each revision held, oldest first, from `oldest` on. A dropped revision is the first of its node's list, or was dropped by MAX_REVISIONS. */
-  private arrivals: string[] = []
-  private oldest = 0
   private held = 0
 
   /** Nodes that took a new seq, with their state before. */
@@ -54,25 +53,41 @@ export class ChangeLog {
       const list = this.revisions.get(revision.id) ?? []
       list.push(by ? { ...revision, by } : revision)
       this.held++
-      this.arrivals.push(revision.id)
       if (list.length > MAX_REVISIONS) {
         this.held -= list.length - MAX_REVISIONS
         list.splice(0, list.length - MAX_REVISIONS)
       }
       this.revisions.set(revision.id, list)
     }
-    while (this.held > MAX_ALL_REVISIONS) {
-      const id = this.arrivals[this.oldest++]
-      const list = this.revisions.get(id)
-      if (!list) continue
-      this.held--
-      if (list.length > 1) list.shift()
+    if (this.held > MAX_ALL_REVISIONS + REVISIONS_OVER) this.dropOldest()
+  }
+
+  /** Down to MAX_ALL_REVISIONS: the per-node lists are the only record of what is held, so nothing can fall out of step with them. */
+  private dropOldest(): void {
+    const all = [...this.revisions.values()].flat().sort((a, b) => a.seq - b.seq)
+    const dropped = new Set(all.slice(0, all.length - MAX_ALL_REVISIONS))
+    for (const [id, list] of this.revisions) {
+      const kept = list.filter((revision) => !dropped.has(revision))
+      if (kept.length) this.revisions.set(id, kept)
       else this.revisions.delete(id)
     }
-    if (this.oldest > MAX_ALL_REVISIONS) {
-      this.arrivals = this.arrivals.slice(this.oldest)
-      this.oldest = 0
+    this.held = MAX_ALL_REVISIONS
+  }
+
+  /** How many revisions the log holds. */
+  revisionCount(): number {
+    return this.held
+  }
+
+  /** Each node the log holds. */
+  eachNode(visit: (node: BoardNode) => void): void {
+    for (const list of this.revisions.values()) {
+      for (const { before, after } of list) {
+        if (before) visit(before)
+        visit(after)
+      }
     }
+    for (const { node } of this.tombstones) if (node) visit(node)
   }
 
   /** What node `id` was at seq `since`: the state before its first change after it. */
