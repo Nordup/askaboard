@@ -627,6 +627,8 @@ export interface SpaceApi {
   onFlushRequest(listener: () => void): Unsubscribe
   /** Dev hook (SPACE_REMOTE_DEBUG only): close the window as the red button does. A page's window.close() does not ask main. */
   devClose(): void
+  /** Dev hook: answer the close dialog (0: Try again, 1: Close anyway). */
+  devCloseAnswer(button: number): void
   flushStarted(): void
   flushDone(failed: FailedSave[]): void
 
@@ -695,6 +697,7 @@ export const IPC = {
   menuCommand: 'space:menu-command',
   flushRequest: 'space:flush-request',
   devClose: 'space:dev-close',
+  devCloseAnswer: 'space:dev-close-answer',
   flushStarted: 'space:flush-started',
   flushDone: 'space:flush-done',
   getAgentStatus: 'space:get-agent-status',

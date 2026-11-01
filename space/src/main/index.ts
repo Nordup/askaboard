@@ -110,6 +110,8 @@ const sessions = new Map<string, FolderSession>()
 /** The folder the learner picked in the dialog last: besides the recent list, the one folder the renderer may open. */
 let pickedFolder: string | null = null
 let quitting = false
+/** Dev hook: answers the open close dialog. */
+let answerCloseDialog: ((button: number) => void) | null = null
 
 const snapshots = new SnapshotRenderer()
 
@@ -272,6 +274,9 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.devClose, () => {
     if (remoteDebugPort !== null) mainWindow?.close()
+  })
+  ipcMain.on(IPC.devCloseAnswer, (_event, button: unknown) => {
+    if (remoteDebugPort !== null && typeof button === 'number') answerCloseDialog?.(button)
   })
   ipcMain.on(IPC.worldTune, (event) => {
     event.returnValue = worldTune
@@ -437,6 +442,13 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
       }
     )
     console.log(`close: could not save ${failed.map((board) => board.path).join(', ')}`)
+    // Dev hook: a check answers the sheet (drive.mjs close-answer); the sheet closes as a cancel does.
+    const abort = new AbortController()
+    let answered: number | null = null
+    answerCloseDialog = (button) => {
+      answered = button
+      abort.abort()
+    }
     const { response } = await dialog.showMessageBox(win, {
       type: 'warning',
       message: "Couldn't save your board",
@@ -444,9 +456,11 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
       buttons: ['Try again', 'Close anyway'],
       defaultId: 0,
       cancelId: 1,
-      noLink: true
+      noLink: true,
+      signal: abort.signal
     })
-    if (response !== 0) break
+    answerCloseDialog = null
+    if ((answered ?? response) !== 0) break
   }
   if (!win.isDestroyed()) win.destroy()
 }

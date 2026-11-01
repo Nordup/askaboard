@@ -60,6 +60,7 @@ const api: SpaceApi = {
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),
   onFlushRequest: (listener) => listen<void>(IPC.flushRequest, () => listener()),
   devClose: () => ipcRenderer.send(IPC.devClose),
+  devCloseAnswer: (button) => ipcRenderer.send(IPC.devCloseAnswer, button),
   flushStarted: () => ipcRenderer.send(IPC.flushStarted),
   flushDone: (failed) => ipcRenderer.send(IPC.flushDone, failed),
 

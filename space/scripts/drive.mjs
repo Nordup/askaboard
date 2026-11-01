@@ -22,6 +22,7 @@
  *   node scripts/drive.mjs board-action rename <path> <name> | trash <path>   the sidebar's own Rename / Move to Trash
  *   node scripts/drive.mjs recent <folder>      the sidebar's own recent-folder item
  *   node scripts/drive.mjs close                close the window, as the red button does
+ *   node scripts/drive.mjs close-answer try|close   answer the sheet "Couldn't save your board"
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
  *
@@ -56,6 +57,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   board-action rename <path> <name> | trash <path>   the sidebar's Rename / Move to Trash (prints the open board)
   recent <folder>                                the sidebar's recent-folder item (prints the open board)
   close                                          close the window, as the red button does
+  close-answer try|close                         answer the sheet "Couldn't save your board"
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
@@ -545,6 +547,13 @@ async function main() {
     run = async (cdp) => {
       await requireDevHook(cdp)
       await evaluate(cdp, 'window.__spaceDev.close()')
+      await sleep(100)
+    }
+  } else if (command === 'close-answer') {
+    if (!['try', 'close'].includes(rest[0])) throw new Failure('close-answer needs try or close.')
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      await evaluate(cdp, `window.__spaceDev.closeAnswer(${rest[0] === 'try' ? 0 : 1})`)
       await sleep(100)
     }
   } else if (command === 'eval-state') {
