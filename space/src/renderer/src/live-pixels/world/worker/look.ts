@@ -308,6 +308,7 @@ export const LOOK = String.raw`
     if (value === 'film') { w.keyLight.color.set('#e8efff'); w.keyLight.intensity = FILM_KEY; }
     // A program holds the look, so what was compiled in another look compiles again.
     w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+    w.floorBuilt = false;
     w.stale = true;
   };
   /** world.floor = false, true, or an object: y, the height of the floor. */
@@ -329,6 +330,12 @@ export const LOOK = String.raw`
     if (c.distanceTo(fit.c) + r <= fit.r) return;
     const grown = box.clone().expandByPoint(fit.c.clone().addScalar(fit.r)).expandByPoint(fit.c.clone().subScalar(fit.r));
     buildFloor(w, grown, w.floorY);
+  };
+  /** A toon world draws no floor, and its plane still stands under the world: world.toWorld and stroke.world use it. */
+  const placeFloorPlane = (w, box) => {
+    if (w.look.name !== 'toon' || !w.floor) return;
+    w.floorY = typeof w.floor === 'object' && typeof w.floor.y === 'number' ? w.floor.y : box.min.y - (box.max.y - box.min.y) * 0.1;
+    w.floorBuilt = true;
   };
   const buildFloor = (w, box, keepY) => {
     if (!w.floorGroup) dressFloor(w);

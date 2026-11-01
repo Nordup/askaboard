@@ -62,7 +62,8 @@ The `world/` paths are under `space/src/renderer/src/live-pixels/`.
 | `world/surface.ts` | The iframe, the port, placements, the CSS transform |
 | `world/worker/realm.ts` | Time and `Math.random` per world, the clock, the API for a world's code |
 | `world/worker/view.ts` | Reach, the crop, the render targets |
-| `world/worker/look.ts` | Environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`) |
+| `world/worker/toon.ts` | The toon look, the default: bands of light and an ink line |
+| `world/worker/look.ts` | The direct path of toon and plain, and the film look: environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`). The film parts are made when the first world needs them |
 | `world/worker/touch.ts` | Pick, pins, ink, the hand's events, the anchor |
 | `world/worker/surface.ts` | Compositing, pictures, the frame loop, the messages |
 
@@ -101,9 +102,13 @@ sequenceDiagram
   the same main-thread paint as the ink. The transform is the current camera times
   the inverse of the picture's camera, for pan and for zoom.
 - **One at a time.** The worker sends the next picture only after `presented`, so a
-  slow page gets fewer pictures, not late ones.
-- **Overscan.** The picture is larger than the board by a margin on each side, so a
+  slow page gets fewer pictures, not late ones. Uncapped (the performance pill, the
+  benchmark), only the GPU fence paces the pictures.
+- **Overscan.** The surface is larger than the board by a margin on each side, so a
   pan shows no empty edge before the next picture.
+- **Only what worlds cover.** The surface is a space for crops and placements. The
+  canvas fits the union of the visible crops, and each picture carries its `box`. The
+  page sets the canvas size and transform in the paint that adopts the picture.
 - **Tick and render are separate.** A camera move or a change in another world
   composites again. It does not advance a paused world.
 - **On demand.** With nothing to tick and no change, nothing renders.
@@ -131,10 +136,16 @@ flowchart LR
   the whole visible surface for shaders that move vertices. It is never a visible
   edge. Culling uses reach, not the placeholder, so a world with an anchor outside
   the view still shows what reaches into the view.
-- Tone mapping and colour output happen in the look's last pass. Bloom keeps real
-  alpha. The last pass writes premultiplied colour, and compositing uses
-  `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by world opacity.
+- Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
+  real alpha. The last pass writes premultiplied colour.
+- Toon and plain: the direct path. The scene renders once into the world's 8-bit
+  MSAA output, and materials write display colours. Blending makes them premultiplied,
+  so no pass follows.
+- Compositing uses `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by
+  world opacity.
 - Render targets come from a pool, in steps of 64 pixels.
+- A moving world can lower its samples and then its resolution (`QUALITY`, `steer` in
+  `world/worker/surface.ts`), and a world at rest renders once at full quality.
 
 ## 5. Links
 
@@ -199,8 +210,8 @@ in the board file and shows a note at its place.
 
 ## 8. Decisions in this build
 
-- The film look and the floor with soft shadow are on by default, and every part
-  can change (`world.look = "plain"`, `world.floor = false`). The founder called
-  shadows "the best part".
+- The toon look is the default (P21). `world.look = "film"` gives the film look with
+  its floor and soft shadow, and every part can change (`world.look = "plain"`,
+  `world.floor = false`).
 - WebGL 2, because `film.js` is proven there.
 - A world's code is a string, the first argument of `world()`.

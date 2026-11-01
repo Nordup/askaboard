@@ -85,7 +85,7 @@ export const VIEW = String.raw`
     for (let i = 0; i < w.probesOnStage; i += 3) box.expandByPoint(v.set(probes[i], probes[i + 1], probes[i + 2]));
     if (!probes.length) { w.reach = null; return; }
     const floor = floorOn(w);
-    if (floor && !box.isEmpty()) fitFloor(w, box);
+    if (!box.isEmpty()) { if (floor) fitFloor(w, box); else if (!w.floorBuilt) placeFloorPlane(w, box); }
     nominalCamera(w);
     const c = w.camera, r = { l: Infinity, t: Infinity, r: -Infinity, b: -Infinity, full: false };
     let seen = true;
