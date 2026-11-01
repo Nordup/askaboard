@@ -114,6 +114,9 @@ function learnerItems(dx, dy) {
   ]
 }
 
+/** The same board with no bench around it: the scene programs and the learner pieces, round (dx, dy). */
+export const busyPieces = (dx, dy) => ({ agent: agentItems(dx, dy), learner: learnerItems(dx, dy) })
+
 /**
  * Seed the busy board's agent material round a scenario whose material fits
  * in `area` ({x, y, width, height}, board points) over `mcp`. Returns the

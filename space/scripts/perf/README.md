@@ -4,6 +4,71 @@ Change one thing, measure it, and compare. The scripts write to `space/.lab/perf
 (local only): one folder per run in `runs/`, one JSON line per run in
 `history.jsonl`, and the latest table in `report.md`.
 
+## Rendering: `render.mjs`
+
+`render.mjs` measures what the worlds and the board cost on this machine, as it is now. The standard condition is the founder's M1 MacBook Air (2020) with Firefox, ChatGPT and Claude Code open (decision P20). Do not ask for a quiet machine: the load average and the top processes go in each run.
+
+Run `npm run build` first. From `space/`:
+
+```sh
+node scripts/perf/render.mjs --label before                     # all scenes, about 3 minutes
+node scripts/perf/render.mjs --scenes film,plain --label after  # the table shows the change against the last equal run
+node scripts/perf/render.mjs --scenes film --tune '{"msaa":0}'
+node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"adaptive":0}]'
+node scripts/perf/render.mjs --report                           # writes .lab/perf/render-report.md, a table over commits
+```
+
+Other options: `--seconds 10`, `--dev` (the dev renderer, slower than `out/`), `--covered` (see below).
+
+One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
+
+| Scene | What it is |
+| --- | --- |
+| `film` | One molecule of 24 meshes in the film look. |
+| `plain` | The same molecule in the plain look. |
+| `toon` | The plain look with toon materials and a hull for each mesh. |
+| `many` | One world with 400 separate meshes, turning. |
+| `three` | Three worlds side by side, turning. |
+| `ink` | The busy board, no world. |
+
+Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has the window size and pixel ratio, the camera zoom, the top 5 processes, the commit and dirty flag, the three.js and Electron versions, the machine, the tune and the label. A table column with `-` has no value: `ink` has no world numbers. A line `PROBLEM` means that the run is not valid, and the exit code is 1.
+
+| Column | Meaning |
+| --- | --- |
+| `pict/s` | Pictures per second that the world worker sent to the page. It follows the scene: a world that turns gives up to one per display frame. A still world gives none. |
+| `GPU ms`, `p95` | GPU time per picture, median and 95th percentile. |
+| `timer` | The source of `GPU ms`. `timer`: `EXT_disjoint_timer_query_webgl2`, which works on the M1. `fence`: wall time from flush to fence, which is not pure GPU time. |
+| `wall ms` | Wall time from the first render call of a picture to its fence. |
+| `CPU ms` | Worker CPU time per picture in the render calls and the bitmap transfer. It does not include the world's own frame code. |
+| `fps` | Page paints in one second (`requestAnimationFrame`). The meter's own loop asks for these paints. |
+| `worst` | The longest page frame in the phase, in ms. |
+| `drop` | Page frames over 20 ms in the phase. |
+| `long` | Long tasks of the main thread in the phase. |
+| `draws`, `tris`, `pass` | Draw calls, triangles and `renderer.render` calls per picture, over all passes. |
+| `MP` | Output pixels of the worlds rendered per picture, in millions. A pass inside a world can use more pixels than this. |
+| `res` | The lowest resolution share of a shown world in the phase. 1 is full resolution. Dynamic resolution lowers it while worlds move. |
+| `util%` | `Device Utilization %` of `ioreg`, median over the phase. It is the whole GPU: this app, the window server and the other apps. |
+| `load` | The 1-minute load average at the end of the phase. |
+| `seen` | The share of the app window that shows on the screen, at the start of the phase. |
+| `zoom` | The board zoom. `MP` changes with its square, so compare only runs with the same zoom. |
+
+`GPU ms` can be larger than `wall ms`: it was 45 ms against 25 ms for `three`, at 43 pictures per second. So `GPU ms` is not a share of the frame budget. The cause is not confirmed. Use `wall ms` for the budget, and `GPU ms` to compare runs.
+
+`util%` needs a visible window. A covered window gives the same `GPU ms`, but the window server does no work for it: `plain` gave 55% in front of the other windows and 24% behind them. So the bench sets `SPACE_ON_TOP=1`, and the window floats over the founder's apps with no keyboard focus. This also shows it over a full-screen app, and it can change the Dock icon for the time of a run. `--covered` turns this off. The run reports a `PROBLEM` when the window is less than 95% visible.
+
+`SPACE_WORLD_TUNE` holds JSON with measuring switches. An absent key changes nothing. They are not settings for users. `node scripts/lab/lab.mjs start --tune '<json>'` passes them to a lab app.
+
+| Key | Effect |
+| --- | --- |
+| `msaa` | Samples of the scene target. The default is 4. |
+| `hdr` | 0: 8-bit targets in place of HalfFloat. The floor shadow stays HalfFloat. The film look changes, because no value goes over 1. |
+| `dpr` | A cap on the pixel ratio of the live path. |
+| `adaptive` | 0: the resolution stays at the full share, so dynamic resolution hides no cost. Worlds still take turns inside the budget of a picture. |
+| `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
+| `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
+
+In the app, `window.__spaceDev.perf` has `start()`, `stop()` and `read()`. `src/renderer/src/perf-meter.ts` owns the page state and merges the worker's snapshot, which comes once per second. While it is off, neither the page nor the worker measures anything.
+
 ## Which runs to use
 
 | Change | Measure with |
