@@ -565,9 +565,10 @@ export const VIEW = String.raw`
    */
   const OUTPUT_STEP = 128, OUTPUT_WASTE = 1.6;
   const stepUp = (n) => Math.ceil(n / OUTPUT_STEP) * OUTPUT_STEP;
+  /** Target t holds W x H in a corner, and has no more room than OUTPUT_WASTE allows. */
+  const hasRoom = (t, W, H) => t.width >= W && t.height >= H && t.width * t.height <= Math.max(W * H * OUTPUT_WASTE, stepUp(W) * stepUp(H));
   /** direct: the scene renders for this output. With samples it renders in a shared target and comes here as a copy, and with no samples it renders here, so the output has depth. */
-  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.depthBuffer === !samples) && t.width >= W && t.height >= H
-    && t.width * t.height <= Math.max(W * H * OUTPUT_WASTE, stepUp(W) * stepUp(H));
+  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.depthBuffer === !samples) && hasRoom(t, W, H);
   /** Use the corner of t that holds W x H. Three renders there, and the composite reads there. */
   const useOutput = (t, W, H) => {
     t.useW = W; t.useH = H;
@@ -597,15 +598,24 @@ export const VIEW = String.raw`
   };
   /**
    * Where a direct render with samples draws: a target of the pool with room, as an output has. Samples and depth last for one render and are 9 times the
-   * bytes of the picture, so worlds of like size share them, and a world at rest keeps only its output.
+   * bytes of the picture, so worlds of like size share them, and a world at rest keeps only its output. Each render draws and resolves only in its scissor, in
+   * the corner, so any target with room gives the same pixels. A new target replaces each smaller one that it has room for.
    */
-  const multisampleTarget = (W, H, samples) => useOutput(sharedOf('multisample' + samples, stepUp(W), stepUp(H), () => {
-    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: true, resolveDepthBuffer: false, samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
-    t.isXRRenderTarget = true;
-    t.texture.colorSpace = THREE.SRGBColorSpace;
-    t.texture.internalFormat = 'RGBA8';
-    return t;
-  }), W, H);
+  const multisampleTarget = (W, H, samples) => {
+    const kind = 'multisample' + samples, ofKind = [...shared].filter(([id]) => id.startsWith(kind + ':'));
+    let best = null;
+    for (const [, entry] of ofKind) if (hasRoom(entry.item, W, H) && (!best || entry.item.width * entry.item.height < best.item.width * best.item.height)) best = entry;
+    if (best) { best.used = useCount; return useOutput(best.item, W, H); }
+    const made = sharedOf(kind, stepUp(W), stepUp(H), () => {
+      const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: true, resolveDepthBuffer: false, samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+      t.isXRRenderTarget = true;
+      t.texture.colorSpace = THREE.SRGBColorSpace;
+      t.texture.internalFormat = 'RGBA8';
+      return t;
+    });
+    for (const [id, entry] of ofKind) if (hasRoom(made, entry.item.width, entry.item.height)) dropShared(id, entry);
+    return useOutput(made, W, H);
+  };
   /** The resolved picture of a multisample target into an output, on the GPU. The scissor of both targets holds the copy to W x H. */
   const copyPicture = (from, to, W, H) => {
     const gl = renderer.getContext(), state = renderer.state;

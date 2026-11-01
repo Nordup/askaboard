@@ -174,8 +174,10 @@ flowchart LR
   into a multisample target of the pool, and the resolved picture goes into the world's
   plain 8-bit output by a copy on the GPU. Samples and depth take 9 times the bytes of the
   picture and last for one render, so worlds of like size share them, and a world at rest
-  keeps 8 MB per 2 MP, not 72 MB. With no samples, it renders into the output, which then
-  has depth.
+  keeps 8 MB per 2 MP, not 72 MB. A world takes the smallest target with room, under the
+  area limit of an output (`hasRoom`), and draws in its corner under the scissor. A new
+  target replaces each smaller one that it has room for. With no samples, it renders into
+  the output, which then has depth.
 - Compositing uses `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by
   world opacity.
 - Render targets come from a pool with a limit in bytes that follows the device's
