@@ -61,11 +61,11 @@ The `world/` paths are under `space/src/renderer/src/live-pixels/`.
 | `world/host.ts` | `WorldHost`: one world's link to the surface |
 | `world/surface.ts` | The iframe, the port, placements, the CSS transform |
 | `world/worker/realm.ts` | Time and `Math.random` per world, the clock, the API for a world's code |
-| `world/worker/view.ts` | Reach, the crop, the render targets |
+| `world/worker/view.ts` | Reach and its bounds, the crop, the pool of render targets |
 | `world/worker/toon.ts` | The toon look, the default: bands of light and an ink line |
 | `world/worker/look.ts` | The direct path of toon and plain, and the film look: environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`). The film parts are made when the first world needs them |
 | `world/worker/touch.ts` | Pick, pins, ink, the hand's events, the anchor |
-| `world/worker/surface.ts` | Compositing, pictures, the frame loop, the messages |
+| `world/worker/surface.ts` | Compositing, pictures, the frame loop, steering, the messages |
 
 All worlds run in one realm and share one `three` module, because they share one
 renderer. A world's code is an async function. Inside the realm, `performance`,
@@ -116,6 +116,11 @@ sequenceDiagram
   page sets the canvas size and transform in the paint that adopts the picture.
 - **Tick and render are separate.** A camera move or a change in another world
   composites again. It does not advance a paused world.
+- **Shaders start ahead.** The programs of a world start before its first picture,
+  and the world draws when they are linked, so other worlds do not wait for them.
+- **Ink in one draw.** Rigid meshes of one geometry share one instanced hull.
+- **One walk of the matrices.** In a paint no world code runs, so the check, the
+  bounds, the points and all render passes share one update.
 - **On demand.** With nothing to tick and no change, nothing renders. The check in
   `picture.ts` reads identities and versions of buffers and textures, groups and the
   look's own material flag, in place, so a tick allocates nothing.
@@ -157,6 +162,7 @@ flowchart LR
   so a render with no new content (a zoom, the sharp picture at rest) keeps it.
 - Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
   real alpha. The last pass writes premultiplied colour.
+- Where `bitmaprenderer` is missing, the page draws each picture on a 2D canvas.
 - Toon and plain: the direct path. The scene renders once into the world's 8-bit
   MSAA output, and materials write display colours. Blending makes them premultiplied,
   so no pass follows.
