@@ -155,6 +155,30 @@ export function onFramesGrowth(listener: () => void): void {
   growth = listener
 }
 
+/** A sweep stays this many seconds ahead of the clock before it gives way. */
+const CALM_LEAD_S = 2
+let penDown = false
+let calm = false
+
+/**
+ * The sweep gives way while the learner writes and while a scene waits in a
+ * pause, as long as the scene that plays has seconds of frames ahead of its
+ * clock. It keeps going in short batches, so its end comes. Each chunk and each pen change ask again.
+ */
+function sweepPace(): void {
+  const next = (penDown || scenePlayer.paused()) && scenePlayer.sweepLead() > CALM_LEAD_S
+  if (next === calm) return
+  calm = next
+  port?.postMessage({ t: 'pace', calm })
+}
+
+/** The pen touches the board, or leaves it. */
+export function penOnBoard(down: boolean): void {
+  if (down === penDown) return
+  penDown = down
+  sweepPace()
+}
+
 let port: MessagePort | null = null
 const jobs = new Map<number, JobFrames>()
 let lastAsk = 0
@@ -168,6 +192,7 @@ function onWindowMessage(event: MessageEvent): void {
   jobs.clear()
   port = event.ports[0]
   port.onmessage = (incoming) => onPortMessage(incoming.data)
+  calm = false
 }
 
 /** Ask the main process for a port to the stage (once per load of this window; a new port makes the stage end a program that streams). */
@@ -227,6 +252,7 @@ function onPortMessage(data: unknown): void {
     }
   }
   port?.postMessage({ t: 'ack', job, seq: m.seq })
+  sweepPace()
 }
 
 /**

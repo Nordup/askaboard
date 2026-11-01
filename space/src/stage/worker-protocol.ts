@@ -30,6 +30,8 @@ export type ToWorker =
   | { t: 'run'; id: number; program: StageProgram; ctxText: string; mode: StageMode }
   /** A preview's moments past what the sweep of program id has reached. */
   | { t: 'moments'; id: number; ask: number; times: number[] }
+  /** The sweep gives way to the learner, or runs at full speed. */
+  | { t: 'pace'; calm: boolean }
 
 export type FromWorker =
   /** The scene library is loaded and the context is locked. */

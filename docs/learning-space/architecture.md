@@ -295,7 +295,8 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   T27-T32). A draft's order: the program body, `end()`, seeds, the description,
   the reply, then the sweep. Seeds are a few moments of each dynamic object, and
   the end seed is the final state. The sweep is one forward pass, moment by
-  moment, in 8 ms batches between the worker's messages. Frame chunks
+  moment, in 8 ms batches between the worker's messages, and in short batches
+  with gaps while the pen is down or a scene waits in a pause (decision B32). Frame chunks
   (`shared/frames.ts`) add samples to objects in any order, and carry `through`
   and `end`. One `Producer` record in `SceneStage` lives from the reply to the
   sweep's terminal event, and the idle rebuild (T26) starts from that event.

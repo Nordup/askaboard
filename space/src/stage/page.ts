@@ -102,7 +102,7 @@ function linkFrames(next: MessagePort): void {
 }
 
 /**
- * A message of the board. A preview's moments go to the worker (a run that ended has them, or the board's job ended with it).
+ * A message of the board. A preview's moments go to the worker (a run that ended has them, or the board's job ended with it), and so does the pace of a sweep.
  * An acknowledged chunk: its bytes go back to the worker's credit; the held reply goes once every chunk is acknowledged.
  */
 function onBoard(data: unknown): void {
@@ -112,6 +112,10 @@ function onBoard(data: unknown): void {
     if (typeof m.job === 'number' && typeof m.ask === 'number' && Array.isArray(m.times) && m.times.every(Number.isFinite) && current?.run?.id === m.job) {
       current.worker.postMessage({ t: 'moments', id: m.job, ask: m.ask, times: m.times as number[] } satisfies ToWorker)
     }
+    return
+  }
+  if (m.t === 'pace') {
+    if (typeof m.calm === 'boolean') current?.worker.postMessage({ t: 'pace', calm: m.calm } satisfies ToWorker)
     return
   }
   if (m.t !== 'ack' || typeof m.job !== 'number' || typeof m.seq !== 'number') return

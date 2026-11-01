@@ -1273,6 +1273,19 @@ export class ScenePlayer {
     return this.scenes.map((scene) => scene.play)
   }
 
+  /** A scene waits in a pause. */
+  paused(): boolean {
+    return this.scenes.some((scene) => scene.pausedAt !== null)
+  }
+
+  /** The seconds of frames ahead of the clock, for the scenes that run or wait to start. Infinity: none needs more. */
+  sweepLead(): number {
+    const now = performance.now()
+    let lead = Number.POSITIVE_INFINITY
+    for (const scene of this.scenes) if (scene.pausedAt === null) lead = Math.min(lead, scene.play.ready() - (scene.origin === null ? 0 : this.timeOf(scene, now)))
+    return lead
+  }
+
   /** The plays of the playing scenes changed in place (run.ts after a later commit): evaluate them again from the start. */
   playsChanged(): void {
     this.epoch++

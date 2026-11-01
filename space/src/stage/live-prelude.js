@@ -2819,6 +2819,45 @@
     return g
   }
 
+  /** Add a value to a key: numbers to one list, all else to the other. An array's length goes with a fraction, so that it tells [1, [2]] from [[1], 2]. */
+  function addToKey(value, key) {
+    if (typeof value === 'number') {
+      if (value - value === 0) key.numbers.push(value)
+      else key.others.push(null) // JSON writes each of these as null.
+    } else if (typeof value === 'string' || typeof value === 'boolean' || value === null) key.others.push(value)
+    else if (Array.isArray(value)) {
+      key.numbers.push(-value.length - 0.7182818)
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i]
+        addToKey(item === undefined || typeof item === 'function' ? null : item, key)
+      }
+    } else if (typeof value === 'object') {
+      key.others.push('{')
+      for (const name in value) {
+        const item = value[name]
+        if (item === undefined || typeof item === 'function') continue
+        key.others.push(name)
+        addToKey(item, key)
+      }
+      key.others.push('}')
+    }
+  }
+
+  /** What tells a geometry from another, as JSON.stringify would, with no number written as text: a sweep compares one per evaluation. */
+  function geometryKey(g) {
+    const key = { numbers: [], others: [] }
+    addToKey(g, key)
+    return key
+  }
+
+  function sameKey(a, b) {
+    if (a === b) return true
+    if (!a || !b || a.numbers.length !== b.numbers.length || a.others.length !== b.others.length) return false
+    for (let i = a.numbers.length - 1; i >= 0; i--) if (a.numbers[i] !== b.numbers[i]) return false
+    for (let i = a.others.length - 1; i >= 0; i--) if (a.others[i] !== b.others[i]) return false
+    return true
+  }
+
   /** Recipe evaluations of this scene's sweep, and how many sampling every object at every sample time would make. */
   let evaluations = 0
   let fullEvaluations = 0
@@ -2860,7 +2899,7 @@
        * current run of equal samples, when it is not kept yet. lastChange: the time of its last sample that differs from the one before.
        * seeds: its seeds by time, each { key, sample }. final: its end seed.
        */
-      runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: '', lastChange: 0, runEnd: null, seeds: new Map(), changes: false, final: null, orderDependent: false })
+      runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: null, lastChange: 0, runEnd: null, seeds: new Map(), changes: false, final: null, orderDependent: false })
     }
     return { runs, moments: [...new Set(runs.flatMap((run) => run.times))].sort((p, q) => p - q), next: 0 }
   }
@@ -2896,7 +2935,7 @@
     // A function that changes what kind of object it is: the object keeps its first kind.
     if (spec.kind !== entry.kind) return
     const g = geometryOf(spec)
-    run.seeds.set(t, { key: JSON.stringify(g), sample: { t, ...g } })
+    run.seeds.set(t, { key: geometryKey(g), sample: { t, ...g } })
     return spec
   }
 
@@ -2905,7 +2944,7 @@
     const { entry } = run
     const changed = run.changes
     const records = [...run.seeds.values()]
-    run.changes = records.some(({ key }) => key !== records[0].key)
+    run.changes = records.some(({ key }) => !sameKey(key, records[0].key))
     if (run.changes && giveFrames) for (const { sample } of changed ? fresh : records) giveFrames(entry.id, entry.kind, entry.math === true, sample, true)
   }
 
@@ -2982,10 +3021,10 @@
     // A function that changes what kind of object it is: the object keeps its first kind.
     if (spec.kind !== entry.kind) return
     const g = geometryOf(spec)
-    const key = JSON.stringify(g)
+    const key = geometryKey(g)
     const seed = run.seeds.get(t)
-    if (seed && seed.key !== key) run.orderDependent = true
-    if (key === run.lastKey) {
+    if (seed && !sameKey(seed.key, key)) run.orderDependent = true
+    if (sameKey(key, run.lastKey)) {
       run.runEnd = { t: f3(t), ...g }
       return
     }

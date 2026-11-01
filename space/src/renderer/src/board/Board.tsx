@@ -20,6 +20,7 @@ import {
   zoomAt
 } from './geometry'
 import type { BoardHistory } from './history'
+import { penOnBoard } from '../live/frames'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
@@ -701,6 +702,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
         // The learner's stroke first: it never waits for the scene's ink.
+        if (dirty.active) penOnBoard(activeRef.current !== null)
         if (dirty.active) activeLayerRef.current.paint(penRef.current, activeInkRef.current, activeTailRef.current, activeRef.current, viewportRef.current, cameraRef.current)
         if (dirty.committed) applyContentTransform()
         let again = false

@@ -110,16 +110,22 @@ let host: Host | null = null
 let frameSink: FrameStream | null = null
 /** The sweep after a draft's reply, while it runs. */
 let sweeping: { fns: Host; id: number; frames: FrameStream } | null = null
+/** The board asks the sweep to give way (frames.ts sweepPace). */
+let calm = false
 /** The longest wait for the board to take frames (it acknowledges each chunk at once). */
 const CREDIT_WAIT_MS = 60_000
 /** One batch of a sweep after the reply. */
 const SWEEP_BATCH_MS = 8
+/** While the learner writes or a scene waits in a pause, a sweep takes one short batch per frame: the pen comes first. */
+const CALM_BATCH_MS = 2
+const CALM_GAP_MS = 14
 
 scope.addEventListener('message', (event) => {
   const message = event.data
   if (message.t === 'init') init(message)
   else if (message.t === 'run') run(message)
   else if (message.t === 'moments') moments(message)
+  else if (message.t === 'pace') calm = message.calm
 })
 
 /**
@@ -416,7 +422,8 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): void {
 
 /**
  * The sweep after a draft's reply: batches of SWEEP_BATCH_MS, with the tick of
- * the program's clock between them, so the worker's message loop runs. Each
+ * the program's clock between them, so the worker's message loop runs. While
+ * the board asks for calm, the batches are short, with a gap. Each
  * batch ends with a chunk, so the board's coverage moves often. The stream
  * ends with "swept", or a failed reply with the program's id and its cutoff:
  * the last complete moment, which the board has by then.
@@ -430,10 +437,12 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
   sweeping = { fns, id, frames }
   tick.port1.onmessage = () => {
     try {
-      const until = clock() + SWEEP_BATCH_MS
+      const until = clock() + (calm ? CALM_BATCH_MS : SWEEP_BATCH_MS)
       const swept = fns.sample(() => clock() < until)
       if (!swept) {
         frames.send(false)
+        // No question is open during a sweep, so nothing wakes this wait before its time.
+        if (calm && bridge) atomics.wait(bridge.state, 0, 0, CALM_GAP_MS)
         tick.port2.postMessage(null)
         return
       }
