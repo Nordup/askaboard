@@ -66,11 +66,11 @@ export const TOUCH = String.raw`
 
   const shaped = new WeakMap();
   /** Where the vertices of a morphed or skinned mesh are drawn now, in the mesh's own space. Null when the clock runs out first. */
-  const drawnPositions = (o, g, s, deadline) => {
+  const drawnPositions = (o, g, s, deadline, influences = o.morphTargetInfluences) => {
     const base = flatPositions(g, s), n = base.length / 3;
     let out = shaped.get(o);
     if (!out || out.length !== base.length) shaped.set(o, (out = new Float32Array(base.length)));
-    const morphs = g.morphAttributes.position, influences = o.morphTargetInfluences;
+    const morphs = g.morphAttributes.position;
     let keep = 1;
     if (morphs && influences && !g.morphTargetsRelative) for (let t = 0; t < morphs.length; t++) keep -= influences[t] || 0;
     for (let i = 0; i < base.length; i++) out[i] = base[i] * keep;
@@ -191,7 +191,9 @@ export const TOUCH = String.raw`
      */
     const visitInstances = (o, g, s) => {
       const m = o.instanceMatrix.array, n = o.count, material = o.material, v = flatPositions(g, s), mine = Math.max(deadline, realNow() + PICK_MS);
-      const sx = s.x, sy = s.y, sz = s.z, r = s.radius;
+      const sx = s.x, sy = s.y, sz = s.z, r = s.radius + instanceSlack(o, s);
+      // An instance with its own morph draws its own positions.
+      const morph = o.morphTexture && g.morphAttributes.position ? { morphTargetInfluences: new Array(o.morphTexture.image.width - 1).fill(0) } : null;
       const ox = local.origin.x, oy = local.origin.y, oz = local.origin.z, dx = local.direction.x, dy = local.direction.y, dz = local.direction.z;
       const enters = new Float64Array(PICK_CANDIDATES), ids = new Int32Array(PICK_CANDIDATES);
       let after = -Infinity, near = Infinity, hit = -1;
@@ -201,8 +203,7 @@ export const TOUCH = String.raw`
         for (let i = 0, k = 0; i < n; i++, k += 16) {
           if ((i & 65535) === 65535 && realNow() > mine) break;
           const cx = m[k] * sx + m[k + 4] * sy + m[k + 8] * sz + m[k + 12] - ox, cy = m[k + 1] * sx + m[k + 5] * sy + m[k + 9] * sz + m[k + 13] - oy, cz = m[k + 2] * sx + m[k + 6] * sy + m[k + 10] * sz + m[k + 14] - oz;
-          const a = m[k] * m[k] + m[k + 1] * m[k + 1] + m[k + 2] * m[k + 2], b = m[k + 4] * m[k + 4] + m[k + 5] * m[k + 5] + m[k + 6] * m[k + 6], c = m[k + 8] * m[k + 8] + m[k + 9] * m[k + 9] + m[k + 10] * m[k + 10];
-          const r2 = r * r * (a > b ? (a > c ? a : c) : b > c ? b : c);
+          const r2 = r * r * stretchOf(m, k);
           if (r2 === 0) continue;
           const along = cx * dx + cy * dy + cz * dz, off = cx * cx + cy * cy + cz * cz - along * along;
           if (off > r2) continue;
@@ -219,7 +220,9 @@ export const TOUCH = String.raw`
           toInstance.copy(instance).invert();
           inner.copy(local).applyMatrix4(toInstance);
           inner.direction.normalize();
-          const t = hitMesh(o, g, v, inner, Infinity, mine, instance.determinant() < 0);
+          if (morph) o.getMorphAt(ids[i], morph);
+          const drawn = (morph && drawnPositions(o, g, s, mine, morph.morphTargetInfluences)) || v;
+          const t = hitMesh(o, g, drawn, inner, Infinity, mine, instance.determinant() < 0);
           if (t === Infinity) continue;
           at.copy(inner.direction).multiplyScalar(t).add(inner.origin).applyMatrix4(instance);
           const along = at.clone().sub(local.origin).dot(local.direction);
@@ -254,7 +257,7 @@ export const TOUCH = String.raw`
       if (o.isInstancedMesh && !sphere) return -1;
       if (sphere) center.copy(sphere.center); else center.set(s.x, s.y, s.z);
       center.applyMatrix4(o.matrixWorld).sub(ray.origin);
-      const r = (sphere ? sphere.radius : s.radius) * o.matrixWorld.getMaxScaleOnAxis() + (o.isMesh ? 0 : lineRoom * (1 + center.length()));
+      const r = (sphere ? sphere.radius : s.radius) * Math.sqrt(stretchOf(o.matrixWorld.elements, 0)) + (o.isMesh ? 0 : lineRoom * (1 + center.length()));
       const along = center.dot(ray.direction), off = center.lengthSq() - along * along;
       if (off > r * r) return -1;
       const reach = Math.sqrt(r * r - off);

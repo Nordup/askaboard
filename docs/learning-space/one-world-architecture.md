@@ -151,8 +151,11 @@ flowchart LR
 - Reach comes from conservative bounds, on every picture that a change plans. Each
   drawn object gives a box that holds all it can draw under the matrices of this
   moment: a geometry's cached box and sphere, one box per bone, the slack of its
-  morph influences, or one box of all its instances. So a crop never cuts what the
-  world draws, and a still world costs nothing. Only a vertex that a shader moves
+  morph influences, or one box of all its instances. A sphere under a matrix takes a true
+  upper bound of the matrix's stretch (`stretchOf` in `view.ts`), also under a shear, and
+  the picks use the same bound. three's own culling does not, so a sheared object has no
+  frustum culling. So a crop never cuts what the world draws, and a still world costs
+  nothing. Only a vertex that a shader moves
   passes these bounds: `world.reach()` can set reach, and `world.reach("full")` uses
   the whole visible surface. Reach grows at once and shrinks slowly. It is never a
   visible edge. Culling uses reach, not the placeholder, so a world with an anchor
@@ -215,7 +218,7 @@ flowchart LR
   offset}` and the page moves it each frame. An arrow stores both ends, and the
   page rebuilds its path.
 - **Hand in.** Board forwards the pointer. `pick` tests what is drawn (draw range,
-  groups, material side, morphs, bones), nearest object first, and gives the closest
+  groups, material side, morphs, an instance's own morph, bones), nearest object first, and gives the closest
   hit within its time limit, a named part and a local point. A mark stores that pin, and the world publishes it as a point, so a mark
   stays on the part as it turns.
 

@@ -161,26 +161,29 @@ export const VIEW = String.raw`
     return (s.skin = k = { index, weight, iv: versionOf(index), wv: versionOf(weight), boxes, bones: top + 1 });
   };
 
+  /** How far the morph targets of an instance can move a vertex. */
+  const instanceSlack = (o, s) => {
+    const d = o.morphTexture ? deltasOf(o.geometry, s) : null;
+    if (!d) return 0;
+    let slack = 0;
+    for (let i = 0; i < d.boxes.length; i++) slack = Math.max(slack, Math.abs(d.boxes[i]));
+    return slack * d.list.length * Math.sqrt(3);
+  };
+
   const instanceBoxes = new WeakMap();
   /** The box of all instances in the space of the mesh. Only a new instance matrix finds it again. It also serves three's culling. */
   const instanceBox = (o, s) => {
     let c = instanceBoxes.get(o);
     if (!c) instanceBoxes.set(o, (c = { matrix: null, version: -1, count: -1, shape: null, stamp: -1, box: new Float64Array(6), slack: 0 }));
     const a = o.instanceMatrix;
-    let slack = 0;
-    if (o.morphTexture) {
-      const d = deltasOf(o.geometry, s);
-      if (d) for (let i = 0; i < d.boxes.length; i++) slack = Math.max(slack, Math.abs(d.boxes[i]));
-      if (d) slack *= d.list.length * Math.sqrt(3);
-    }
+    const slack = instanceSlack(o, s);
     if (c.matrix === a && c.version === a.version && c.count === o.count && c.shape === s && c.stamp === s.stamp && c.slack === slack) return c.box;
     c.matrix = a; c.version = a.version; c.count = o.count; c.shape = s; c.stamp = s.stamp; c.slack = slack;
     const m = a.array, r = s.radius + slack, x = s.x, y = s.y, z = s.z;
     let lx = Infinity, ly = Infinity, lz = Infinity, hx = -Infinity, hy = -Infinity, hz = -Infinity;
     for (let i = 0, k = 0; i < o.count; i++, k += 16) {
       const px = m[k] * x + m[k + 4] * y + m[k + 8] * z + m[k + 12], py = m[k + 1] * x + m[k + 5] * y + m[k + 9] * z + m[k + 13], pz = m[k + 2] * x + m[k + 6] * y + m[k + 10] * z + m[k + 14];
-      const sx = m[k] * m[k] + m[k + 1] * m[k + 1] + m[k + 2] * m[k + 2], sy = m[k + 4] * m[k + 4] + m[k + 5] * m[k + 5] + m[k + 6] * m[k + 6], sz = m[k + 8] * m[k + 8] + m[k + 9] * m[k + 9] + m[k + 10] * m[k + 10];
-      const e = r * Math.sqrt(sx > sy ? (sx > sz ? sx : sz) : sy > sz ? sy : sz);
+      const e = r * Math.sqrt(stretchOf(m, k));
       if (px - e < lx) lx = px - e;
       if (px + e > hx) hx = px + e;
       if (py - e < ly) ly = py - e;
@@ -207,6 +210,18 @@ export const VIEW = String.raw`
     const b = g.boundingBox;
     out[0] = b.min.x; out[1] = b.min.y; out[2] = b.min.z; out[3] = b.max.x; out[4] = b.max.y; out[5] = b.max.z;
     return true;
+  };
+
+  /**
+   * The square of an upper bound of how much the 3 x 3 part of the 16 numbers m at k stretches a length: of its largest singular value. The longest
+   * column alone (getMaxScaleOnAxis) falls short under a shear. By Gershgorin's rule on the columns' dot products, each column adds what it shares with
+   * the others. Columns at right angles, as a rotation and a scale give, share nothing, and the bound is exact.
+   */
+  const stretchOf = (m, k) => {
+    const ax = m[k], ay = m[k + 1], az = m[k + 2], bx = m[k + 4], by = m[k + 5], bz = m[k + 6], cx = m[k + 8], cy = m[k + 9], cz = m[k + 10];
+    const ab = Math.abs(ax * bx + ay * by + az * bz), ac = Math.abs(ax * cx + ay * cy + az * cz), bc = Math.abs(bx * cx + by * cy + bz * cz);
+    const x = ax * ax + ay * ay + az * az + ab + ac, y = bx * bx + by * by + bz * bz + ab + bc, z = cx * cx + cy * cy + cz * cz + ac + bc;
+    return x > y ? (x > z ? x : z) : y > z ? y : z;
   };
 
   // One measure runs at a time: its state stays here, so a measure allocates nothing.
@@ -280,7 +295,7 @@ export const VIEW = String.raw`
     const t = tools, e = t.toCamera.multiplyMatrices(t.view, m).elements;
     startObject();
     corners(e, b);
-    if (r > 0) tighten(e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12], e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13], e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14], r * m.getMaxScaleOnAxis());
+    if (r > 0) tighten(e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12], e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13], e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14], r * Math.sqrt(stretchOf(m.elements, 0)));
     if (onFloor) onTheFloor(w, m.elements, b);
     endObject();
   };
@@ -298,6 +313,9 @@ export const VIEW = String.raw`
     const g = o.geometry, position = g && g.attributes && g.attributes.position;
     if (!position) return;
     const b = tools.box, material = Array.isArray(o.material) ? null : o.material;
+    // three's culling scales a sphere by the longest column, so under a shear it can drop a part that shows.
+    const longest = o.matrixWorld.getMaxScaleOnAxis();
+    if (o.frustumCulled && stretchOf(o.matrixWorld.elements, 0) > longest * longest * 1.000001) o.frustumCulled = false;
     if (g.isInstancedBufferGeometry && !o.isInstancedMesh) {
       if (!classBox(g, b)) { open = true; return; }
       if (material && material.isLineMaterial) {
@@ -351,7 +369,7 @@ export const VIEW = String.raw`
     // A point has a size of its own: in world units with attenuation, in pixels without it.
     let grow = 0;
     if (material && material.isPointsMaterial) {
-      if (material.sizeAttenuation && perspective) grow = material.size / 2 / (o.matrixWorld.getMaxScaleOnAxis() || 1);
+      if (material.sizeAttenuation && perspective) grow = (material.size / 2) * Math.sqrt(stretchOf(tools.before.copy(o.matrixWorld).invert().elements, 0));
       else room2 = Math.max(room2, material.size / 2);
     }
     const box = s.box;
