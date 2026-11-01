@@ -179,7 +179,9 @@ flowchart LR
 - A moving or zooming world can lower its samples and then its resolution (`QUALITY`,
   `steer` in `world/worker/surface.ts`), and a world at rest renders once at full
   quality. Each world has its own cost: a fixed part and a part that grows with its
-  pixels, learned from the fence time. So the world whose pixels cost most falls first,
+  pixels, learned from the fence time. A fence times a whole picture, so when worlds
+  render together, one renders alone now and then: soon, three times per world, then
+  once in 240 pictures. So the world whose pixels cost most falls first,
   a world whose time does not follow its pixels stays sharp, and a world that falls
   soon after a rise waits longer each time, so that it does not swing. On a machine
   with less than 8 GB, the size of one world's render has a ceiling that follows memory.

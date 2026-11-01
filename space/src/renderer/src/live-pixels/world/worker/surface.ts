@@ -307,7 +307,11 @@ export const SURFACE = String.raw`
       let spent = 0, pixels = 0;
       skipped = 0;
       if (meter) meterBegin();
+      const solo = soloPlan(plans);
+      nextSolo = !!solo;
       for (const plan of plans) {
+        // The others keep what they need, and the next picture renders them: this is no slow picture.
+        if (solo && plan !== solo) continue;
         const cost = costOf(plan.w, plan.pixels / 1e6);
         if (pixels > 0 && spent + cost > PICTURE_MS) { plan.w.waited++; skipped++; continue; }
         spent += cost;
@@ -339,6 +343,7 @@ export const SURFACE = String.raw`
       const box = { x: x / surface.dpr - surface.margin, y: y / surface.dpr - surface.margin, width: canvasW / surface.dpr, height: canvasH / surface.dpr };
       post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, box, bitmap, points: boardPoints() }, [bitmap]);
       fenced = nextFence;
+      fencedSolo = nextSolo;
       nextFence = [];
       watchGpu();
     } finally {
@@ -481,18 +486,18 @@ export const SURFACE = String.raw`
   /** Hysteresis: a rise must leave this share of the budget free. A drop soon after a rise doubles the wait before the next rise of that world. */
   const RISE_ROOM = 0.85, HOLD_FIRST = 60, HOLD_MOST = 960, BOUNCE = 120;
   let smooth = 0, slowPictures = 0, fastPictures = 0, skipped = 0;
-  /** World and megapixels of each render of the picture that the GPU works on, then of the next one. */
-  let fenced = [], nextFence = [];
-  const newCost = () => ({ n: 0, x: 0, y: 0, xx: 0, xy: 0, fixed: 0, slope: COST_SLOPE });
+  /** World and megapixels of each render of the picture that the GPU works on, then of the next one. Solo: that world rendered alone by choice. */
+  let fenced = [], nextFence = [], fencedSolo = false, nextSolo = false;
+  const newCost = () => ({ n: 0, x: 0, y: 0, xx: 0, xy: 0, fixed: 0, slope: COST_SLOPE, solos: 0 });
   /** Ms of a render of w at mp megapixels. */
   const costOf = (w, mp) => w.cost.fixed + w.cost.slope * mp;
   /**
    * What w costs: passes and geometry that no resolution changes, and a share that grows with its pixels. A fading mean of (megapixels, ms) gives
    * the line, once the sizes differ enough to show one. Until then the line goes through the mean with a fixed share.
    */
-  const learnCost = (w, mp, ms) => {
-    const c = w.cost;
-    c.n = c.n * COST_KEEP + 1; c.x = c.x * COST_KEEP + mp; c.y = c.y * COST_KEEP + ms; c.xx = c.xx * COST_KEEP + mp * mp; c.xy = c.xy * COST_KEEP + mp * ms;
+  const learnCost = (w, mp, ms, weight) => {
+    const c = w.cost, keep = COST_KEEP ** weight;
+    c.n = c.n * keep + weight; c.x = c.x * keep + mp * weight; c.y = c.y * keep + ms * weight; c.xx = c.xx * keep + mp * mp * weight; c.xy = c.xy * keep + mp * ms * weight;
     const spread = c.n * c.xx - c.x * c.x;
     if (spread > 0.01 * c.n * c.xx) {
       c.slope = Math.max(0, (c.n * c.xy - c.x * c.y) / spread);
@@ -502,12 +507,27 @@ export const SURFACE = String.raw`
       c.slope = ((c.y / c.n) * (1 - COST_FIXED)) / Math.max(c.x / c.n, 1e-3);
     }
   };
+  /**
+   * A fence times a whole picture, and a share by the model can only keep the ratio that the model already has: a small world that costs much would stay
+   * cheap in it. So when worlds render together, now and then one renders alone, and its fence is its own cost. Each world soon does this SOLO_ROUNDS times, then rarely.
+   */
+  const SOLO_SOON = 15, SOLO_LATER = 240, SOLO_ROUNDS = 3, SOLO_WEIGHT = 10;
+  let soloIn = SOLO_SOON;
+  /** The plan that renders alone in this picture, or null. */
+  const soloPlan = (plans) => {
+    if (plans.length < 2 || --soloIn > 0) return null;
+    let pick = plans[0];
+    for (const plan of plans) if (plan.w.cost.solos < pick.w.cost.solos) pick = plan;
+    pick.w.cost.solos++;
+    soloIn = pick.w.cost.solos < SOLO_ROUNDS ? SOLO_SOON : SOLO_LATER;
+    return pick;
+  };
   /** The time of a picture, shared over its worlds by what each should cost. */
   const learnPicture = (ms) => {
     const work = Math.max(0, ms - FENCE_FLOOR);
     let whole = 0;
     for (let i = 0; i < fenced.length; i += 2) whole += costOf(fenced[i], fenced[i + 1]);
-    for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], whole > 0 ? (work * costOf(fenced[i], fenced[i + 1])) / whole : 0);
+    for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], whole > 0 ? (work * costOf(fenced[i], fenced[i + 1])) / whole : 0, fencedSolo ? SOLO_WEIGHT : 1);
     fenced.length = 0;
   };
   /** The share of a world's megapixels at full quality. */

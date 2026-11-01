@@ -131,10 +131,6 @@ export const LOOK = String.raw`
   const makeFilm = () => {
     if (filmMade) return;
     filmMade = true;
-    const pm = new THREE.PMREMGenerator(renderer);
-    environment = pm.fromScene(envScene(), 0.03).texture;
-    pm.dispose();
-    commonParts.add(environment);
     quadScene = new THREE.Scene();
     quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
@@ -258,6 +254,18 @@ export const LOOK = String.raw`
     g.fillStyle = r; g.fillRect(0, 0, 512, 512);
     floorMask = new THREE.CanvasTexture(c);
     commonParts.add(floorMask).add(heightMat);
+  };
+
+  /** The studio light, once. Only a standard material reads it, so a film world with none, and each toon world, never pays for it. */
+  const makeEnvironment = (w, look) => {
+    if (environment || !(look.environment > 0)) return;
+    let reads = false;
+    w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) if (m.isMeshStandardMaterial) reads = true; });
+    if (!reads) return;
+    const pm = new THREE.PMREMGenerator(renderer);
+    environment = pm.fromScene(envScene(), 0.03).texture;
+    pm.dispose();
+    commonParts.add(environment);
   };
 
   const pass = (mat, target) => {
@@ -500,24 +508,43 @@ export const LOOK = String.raw`
     return p.up[bottom].texture;
   };
 
-  /** The casters of the floor's shadow: only they, from under the floor. A world with no casters clears the map. */
-  const drawFloorShadow = (w, target) => {
-    const view = w.lightView, marks = [], scene = w.scene, own = scene.overrideMaterial, bit = 1 << SHADOW_LAYER;
-    // Layers and the override are the world's. This pass borrows them: only what casts a shadow stands on its layer, and all goes back after it.
-    scene.traverse((o) => { marks.push(o, o.layers.mask); o.layers.mask = 0; });
+  /** fn with only what casts a shadow on its layer. Layers are the world's: this borrows them, and all goes back after it. */
+  const withCasters = (w, fn) => {
+    const marks = [], bit = 1 << SHADOW_LAYER;
+    w.scene.traverse((o) => { marks.push(o, o.layers.mask); o.layers.mask = 0; });
     w.root.traverse((o) => { if (o.castShadow) o.layers.mask = bit; });
+    try { return fn(); } finally {
+      for (let i = 0; i < marks.length; i += 2) marks[i].layers.mask = marks[i + 1];
+    }
+  };
+  /** The casters of the floor's shadow: only they, from under the floor. A world with no casters clears the map. */
+  const drawFloorShadow = (w, target) => withCasters(w, () => {
+    const scene = w.scene, own = scene.overrideMaterial;
     scene.overrideMaterial = heightMat;
     heightMat.uniforms.floorY.value = w.floorY;
     renderer.shadowMap.autoUpdate = false;
     try {
       renderer.setRenderTarget(target);
       renderer.clear();
-      drawWorld(w, view);
+      drawWorld(w, w.lightView);
     } finally {
       scene.overrideMaterial = own;
-      for (let i = 0; i < marks.length; i += 2) marks[i].layers.mask = marks[i + 1];
     }
-  };
+  });
+  /**
+   * The programs of that pass. three's compile reads no override and walks every mesh, also what is hidden, so for this call a caster has the override's
+   * material and any other mesh has none. A mesh kind (instanced, skinned, morphed) has its own program.
+   */
+  const compileFloorShadow = (w) => withCasters(w, () => {
+    const marks = [];
+    w.scene.traverse((o) => { if (o.material) { marks.push(o, o.material); o.material = o.layers.mask ? heightMat : null; } });
+    try {
+      renderer.setRenderTarget(shadowTarget());
+      return compileWorld(w, w.lightView);
+    } finally {
+      for (let i = 0; i < marks.length; i += 2) marks[i].material = marks[i + 1];
+    }
+  });
   /** The floor's shadow. The map holds its last world: a render for a new zoom or a sharp picture at rest changes no caster, so the map stands. */
   const renderFloorShadow = (w, look) => {
     const target = shadowTarget(), view = w.lightView, u = w.catcher.uniforms;
@@ -539,7 +566,8 @@ export const LOOK = String.raw`
    */
   const renderWorld = (w, s, crop, inner, output, samples, inkScale, compileOnly) => {
     const look = lookOf(w), camera = w.camera, direct = isDirect(look);
-    if (!direct || look.environment > 0) makeFilm();
+    if (!direct) makeFilm();
+    makeEnvironment(w, look);
     rendering = w;
     // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
     const W = output.useW, H = output.useH, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
@@ -594,6 +622,7 @@ export const LOOK = String.raw`
           for (const compiled of compileWorld(w, camera)) list.add(compiled);
           w.keyLight.castShadow = true;
         }
+        if (floor && look.shadows) for (const compiled of compileFloorShadow(w)) list.add(compiled);
         compilePasses(list);
         return list;
       }

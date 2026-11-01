@@ -186,15 +186,24 @@ export const TOON = String.raw`
         }
         continue;
       }
-      const batch = inkBatch(w, geometry, n), out = batch.instanceMatrix.array;
+      const batch = inkBatch(w, geometry, n), matrices = batch.instanceMatrix, out = matrices.array;
+      // Nothing that moved means no upload, and an upload takes only the instances in use.
+      let moved = batch.count !== n || !batch.lsInkFilled;
       for (let i = 0, k = 0; i < n; i++, k += 16) {
         const e = list[i].matrixWorld.elements;
-        for (let j = 0; j < 16; j++) out[k + j] = e[j];
+        for (let j = 0; j < 16; j++) {
+          if (out[k + j] !== e[j]) { out[k + j] = e[j]; moved = true; }
+        }
         list[i].lsInkRender = inkRender;
       }
       batch.count = n;
       batch.visible = true;
-      batch.instanceMatrix.needsUpdate = true;
+      if (moved) {
+        batch.lsInkFilled = true;
+        matrices.clearUpdateRanges();
+        matrices.addUpdateRange(0, n * 16);
+        matrices.needsUpdate = true;
+      }
     }
   };
 
