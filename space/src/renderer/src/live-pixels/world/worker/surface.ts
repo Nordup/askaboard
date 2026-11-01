@@ -107,6 +107,18 @@ export const SURFACE = String.raw`
     compositeScene.add(mesh);
   };
 
+  /**
+   * A sharp picture at rest is the point of a still world. On a weak machine its size has a ceiling: one world's targets, with their samples and
+   * with film's passes, fill the memory that the device has. deviceMemory gives 2, 4 or 8 and more; Safari gives nothing, and then the middle counts.
+   */
+  const CEILING_MP_PER_GB = 2, CEILING_FROM_GB = 8;
+  const memoryGb = scope.navigator.deviceMemory || 4;
+  const ceilingShare = (crop) => {
+    if (memoryGb >= CEILING_FROM_GB) return 1;
+    const pixels = (crop.r - crop.l) * (crop.b - crop.t);
+    return Math.min(1, Math.sqrt((memoryGb * CEILING_MP_PER_GB * 1e6) / pixels));
+  };
+
   /** What world w needs for this view: its crop, or null when none of its reach is on the surface. A world there gives back its output. */
   const planWorld = (w) => {
     const place = placed(w);
@@ -120,7 +132,9 @@ export const SURFACE = String.raw`
     const old = w.drawn, same = old && Math.abs(old.s - place.s) < 1e-6;
     if (!w.stale && !w.sharpen && same && contains(old.crop, crop)) return null;
     // Quality falls only while a world moves. It renders sharp again when it rests.
-    const quality = w.moving || (old && !same) ? w.quality : 0, res = QUALITY[quality];
+    const zooming = !!old && !same;
+    if (zooming) w.movedAt = sent;
+    const quality = w.moving || zooming ? w.quality : 0, res = Math.min(QUALITY[quality], ceilingShare(crop));
     // A size stays on the grid at any resolution, so a change of crop or of quality meets the sizes that the pool already has.
     const W = Math.max(GRID, Math.ceil(((crop.r - crop.l) * res) / GRID) * GRID), H = Math.max(GRID, Math.ceil(((crop.b - crop.t) * res) / GRID) * GRID);
     const m = surface.margin * surface.dpr;
@@ -153,6 +167,7 @@ export const SURFACE = String.raw`
     w.moving = false;
     w.waited = 0;
     w.renders = (w.renders || 0) + 1;
+    nextFence.push(w, (W * H) / 1e6);
     if (meter) meter.rendered++;
     w.shownPoints = measurePoints(w);
     firstPicture(w);
@@ -262,7 +277,7 @@ export const SURFACE = String.raw`
       skipped = 0;
       if (meter) meterBegin();
       for (const plan of plans) {
-        const cost = (plan.pixels / 1e6) * msPerMegapixel;
+        const cost = costOf(plan.w, plan.pixels / 1e6);
         if (pixels > 0 && spent + cost > PICTURE_MS) { plan.w.waited++; skipped++; continue; }
         spent += cost;
         pixels += plan.pixels;
@@ -292,7 +307,8 @@ export const SURFACE = String.raw`
       sent++;
       const box = { x: x / surface.dpr - surface.margin, y: y / surface.dpr - surface.margin, width: canvasW / surface.dpr, height: canvasH / surface.dpr };
       post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, box, bitmap, points: boardPoints() }, [bitmap]);
-      picturePixels = pixels;
+      fenced = nextFence;
+      nextFence = [];
       watchGpu();
     } finally {
       painting = false;
@@ -418,39 +434,81 @@ export const SURFACE = String.raw`
   const QUALITY = [1, 1, 0.85, 0.72, 0.6, 0.5], SAMPLES = [4, 2, 2, 2, 0, 0];
   const samplesAt = (quality) => Math.min(tune.msaa ?? 4, SAMPLES[quality]);
   const GPU_HIGH = 14, DROP_AFTER = 5, RISE_AFTER = 30;
-  /** What a fence takes with no work: it reads back late. So only the time over this grows with the pixels. */
+  /** What a fence takes with no work: it reads back late. So only the time over this is work of the worlds. */
   const FENCE_FLOOR = 5;
-  let smooth = 0, slowPictures = 0, fastPictures = 0, skipped = 0, picturePixels = 0, msPerMegapixel = 3;
-  /** Fence ms of a world's picture at another share of resolution. */
-  const atShare = (ms, from, to) => FENCE_FLOOR + Math.max(0, ms - FENCE_FLOOR) * (to / from) ** 2;
+  /** A world's first guess, and the share of its time that it takes as fixed while it renders at one size only. */
+  const COST_SLOPE = 3, COST_FIXED = 0.2, COST_KEEP = 0.95;
+  /** Hysteresis: a rise must leave this share of the budget free. A drop soon after a rise doubles the wait before the next rise of that world. */
+  const RISE_ROOM = 0.85, HOLD_FIRST = 60, HOLD_MOST = 960, BOUNCE = 120;
+  let smooth = 0, slowPictures = 0, fastPictures = 0, skipped = 0;
+  /** World and megapixels of each render of the picture that the GPU works on, then of the next one. */
+  let fenced = [], nextFence = [];
+  const newCost = () => ({ n: 0, x: 0, y: 0, xx: 0, xy: 0, fixed: 0, slope: COST_SLOPE });
+  /** Ms of a render of w at mp megapixels. */
+  const costOf = (w, mp) => w.cost.fixed + w.cost.slope * mp;
   /**
-   * Each world keeps its own step. A slow stretch, or a world left waiting, lowers the largest moving world at once to what the budget allows.
-   * The time is smoothed and clamped, so a spike from another app or a shader compile moves nothing, and a rise comes only when the next step fits.
+   * What w costs: passes and geometry that no resolution changes, and a share that grows with its pixels. A fading mean of (megapixels, ms) gives
+   * the line, once the sizes differ enough to show one. Until then the line goes through the mean with a fixed share.
+   */
+  const learnCost = (w, mp, ms) => {
+    const c = w.cost;
+    c.n = c.n * COST_KEEP + 1; c.x = c.x * COST_KEEP + mp; c.y = c.y * COST_KEEP + ms; c.xx = c.xx * COST_KEEP + mp * mp; c.xy = c.xy * COST_KEEP + mp * ms;
+    const spread = c.n * c.xx - c.x * c.x;
+    if (spread > 0.01 * c.n * c.xx) {
+      c.slope = Math.max(0, (c.n * c.xy - c.x * c.y) / spread);
+      c.fixed = Math.max(0, (c.y - c.slope * c.x) / c.n);
+    } else {
+      c.fixed = (c.y / c.n) * COST_FIXED;
+      c.slope = ((c.y / c.n) * (1 - COST_FIXED)) / Math.max(c.x / c.n, 1e-3);
+    }
+  };
+  /** The time of a picture, shared over its worlds by what each should cost. */
+  const learnPicture = (ms) => {
+    const work = Math.max(0, ms - FENCE_FLOOR);
+    let whole = 0;
+    for (let i = 0; i < fenced.length; i += 2) whole += costOf(fenced[i], fenced[i + 1]);
+    for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], whole > 0 ? (work * costOf(fenced[i], fenced[i + 1])) / whole : 0);
+    fenced.length = 0;
+  };
+  /** The share of a world's megapixels at full quality. */
+  const fullMp = (w) => (w.drawn ? ((w.drawn.crop.r - w.drawn.crop.l) * (w.drawn.crop.b - w.drawn.crop.t)) / 1e6 : 0);
+  /** Ms that a world gives back between two steps of resolution. */
+  const gainOf = (w, from, to) => w.cost.slope * fullMp(w) * (QUALITY[from] ** 2 - QUALITY[to] ** 2);
+  /**
+   * Each world keeps its own step. A slow stretch, or a world left waiting, lowers the moving world whose pixels cost most, at once, to what the
+   * budget allows. A world whose time does not grow with its pixels stays sharp: a lower resolution would buy nothing. The time is smoothed and
+   * clamped, so a spike from another app or a shader compile moves nothing. A rise comes only when the next step fits with room, and a world
+   * that falls again soon after a rise waits longer each time, so no world swings between two steps.
    */
   const steer = (ms) => {
-    if (picturePixels > 0) msPerMegapixel += (ms / (picturePixels / 1e6) - msPerMegapixel) * 0.2;
+    learnPicture(ms);
     const high = tune.budget ?? GPU_HIGH;
     smooth += (Math.min(ms, high * 2) - smooth) * 0.15;
     const slow = smooth > high || skipped > 0;
     slowPictures = slow ? slowPictures + 1 : 0;
     fastPictures = slow ? 0 : fastPictures + 1;
-    const area = (w) => (w.drawn ? (w.drawn.crop.r - w.drawn.crop.l) * (w.drawn.crop.b - w.drawn.crop.t) * QUALITY[w.quality] : 0);
+    const last = QUALITY.length - 1;
     if (slowPictures >= DROP_AFTER && tune.adaptive !== 0) {
       slowPictures = 0;
-      let pick = null;
+      let pick = null, best = 0;
       // A render clears w.moving, so what moved in the last pictures counts.
-      for (const w of worlds.values()) if (sent - w.movedAt < 3 && !w.culled && w.quality < QUALITY.length - 1 && (!pick || area(w) > area(pick))) pick = w;
+      for (const w of worlds.values()) {
+        if (sent - w.movedAt >= 3 || w.culled || w.quality >= last) continue;
+        const gain = gainOf(w, w.quality, last);
+        if (gain > best) { best = gain; pick = w; }
+      }
       if (pick) {
-        const from = QUALITY[pick.quality];
+        const from = pick.quality;
         pick.quality++;
-        while (pick.quality < QUALITY.length - 1 && atShare(smooth, from, QUALITY[pick.quality]) > high) pick.quality++;
+        while (pick.quality < last && smooth - gainOf(pick, from, pick.quality) > high) pick.quality++;
+        if (sent - pick.roseAt < BOUNCE) { pick.hold = Math.min(HOLD_MOST, Math.max(HOLD_FIRST, pick.hold * 2)); pick.heldUntil = sent + pick.hold; }
       }
     }
     if (fastPictures >= RISE_AFTER) {
       fastPictures = 0;
       let pick = null;
-      for (const w of worlds.values()) if (w.quality > 0 && (!pick || area(w) < area(pick))) pick = w;
-      if (pick && atShare(smooth, QUALITY[pick.quality], QUALITY[pick.quality - 1]) < high * 0.95) pick.quality--;
+      for (const w of worlds.values()) if (w.quality > 0 && sent >= w.heldUntil && (!pick || fullMp(w) < fullMp(pick))) pick = w;
+      if (pick && smooth + gainOf(pick, pick.quality - 1, pick.quality) < high * RISE_ROOM) { pick.quality--; pick.roseAt = sent; }
     }
   };
   const watchGpu = () => {

@@ -556,7 +556,7 @@ export const REALM = String.raw`
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
       cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
-      output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1, content: 0, sharpen: false
+      output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1, content: 0, sharpen: false, cost: newCost(), roseAt: -Infinity, heldUntil: 0, hold: 0
     };
     if (w.view.step === undefined) w.view.step = null;
     for (const pin of m.pins || []) addPin(w, pin);
