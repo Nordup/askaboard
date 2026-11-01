@@ -279,8 +279,9 @@ flowchart LR
 - **Safety: the asset rule.** A world reads assets only, and never the learner's notes.
   A file must have an asset type: `glb gltf bin obj mtl fbx stl ply dae usdz hdr exr ktx2
   basis png jpg jpeg webp gif svg avif wav mp3 ogg mp4 webm ttf otf woff2 csv tsv json txt
-  wasm js mjs`. So `.md` gives 403 in every place. The files at the top of the folder,
-  all of `sessions/`, and board files (`*.board.json`) give 403 too, whatever their type.
+  wasm js mjs`. So `.md` gives 403 in every place. The file must also be in `materials/`,
+  `assets/` or `boards/` (B44), and a board file (`*.board.json`) is never read. The files
+  at the top of the folder and all other folders give 403, whatever their type.
   The rule holds for the path that was asked, also when no such file exists, and for the
   real path, so a link named `x.png` cannot reach `learner.md`. The check ignores case.
 - **Safety: the token.** Any sandboxed frame of the app has the origin `null` and can name

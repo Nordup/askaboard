@@ -53,12 +53,17 @@ const WORLD_TYPES: Record<string, string> = {
 /** What a world may read: assets of these types. The folder also holds private notes, and world code has the network and third-party libraries. */
 const WORLD_ASSETS = new Set('glb gltf bin obj mtl fbx stl ply dae usdz hdr exr ktx2 basis png jpg jpeg webp gif svg avif wav mp3 ogg mp4 webm ttf otf woff2 csv tsv json txt wasm js mjs'.split(' '))
 
-/** A path from the folder's root, with / between its names, that a world may read: an asset type, in a subfolder, not in sessions/, not a board. So no Markdown file, in any place. */
+/** The folders of the learning folder that a world may read. Every other folder can hold what the learner keeps private. */
+const WORLD_FOLDERS = new Set(['materials', 'assets', BOARDS_DIR])
+
+/** A path from the folder's root, with / between its names, that a world may read: an asset type, in a world folder, not a board. So no Markdown file, in any place. */
 function isWorldAsset(rel: string): boolean {
   const names = rel.toLowerCase().split('/')
   const name = names[names.length - 1]
-  return names.length > 1 && names[0] !== 'sessions' && !name.endsWith(BOARD_SUFFIX) && WORLD_ASSETS.has(extname(name).slice(1))
+  return names.length > 1 && WORLD_FOLDERS.has(names[0]) && !name.endsWith(BOARD_SUFFIX) && WORLD_ASSETS.has(extname(name).slice(1))
 }
+
+const worldRefusal = (rel: string): string => `A world cannot read this file: ${rel}. It reads assets in materials/, assets/ and boards/, not boards themselves, notes or sessions.`
 
 const isHiddenName = (name: string): boolean => name.startsWith('.') || name === 'node_modules'
 
@@ -412,11 +417,11 @@ export class FolderSession {
    */
   async worldFile(rel: string): Promise<{ path: string; size: number; tag: string; type: string }> {
     // Before the file system, so a refused name gives 403 also when no such file exists. After it, so a link cannot lead to a refused file.
-    if (!isWorldAsset(toPosix(relative(this.root, resolve(this.root, rel))))) throw new Error(`A world cannot read this file: ${rel}. It reads assets in subfolders of the learning folder, not notes, sessions or boards.`)
+    if (!isWorldAsset(toPosix(relative(this.root, resolve(this.root, rel))))) throw new Error(worldRefusal(rel))
     const path = await realpath(await this.resolvePath(rel))
     const real = toPosix(relative(this.root, path))
     if (real.split('/').some(isHiddenName)) throw new Error(`Path is hidden: ${rel}`)
-    if (!isWorldAsset(real)) throw new Error(`A world cannot read this file: ${rel}. It reads assets in subfolders of the learning folder, not notes, sessions or boards.`)
+    if (!isWorldAsset(real)) throw new Error(worldRefusal(rel))
     const info = await stat(path)
     if (!info.isFile()) throw Object.assign(new Error(`Not a file: ${rel}`), { code: 'ENOENT' })
     const ext = extname(path).toLowerCase()
