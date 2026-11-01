@@ -10,7 +10,7 @@
  *   node scripts/perf/render.mjs --report
  *   node scripts/perf/render.mjs --scenes film --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
  *
- * --no-pan: film without its pan phase. --dev: the dev renderer, not out/. The window opens behind the other windows, with no focus.
+ * --no-pan: film without its pan phase. --dev: the dev renderer, not out/. The window opens at its normal place, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -355,7 +355,6 @@ async function seedInk(state, cdp) {
 async function runScene(scene, { tune, label, seconds, dev, profile, noPan, identity }) {
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
-  process.env.SPACE_WINDOW_AWAY = '1'
   const state = await startInstance({ name: NAME, mcpPort: MCP_PORT, debugPort: DEBUG_PORT, built: !dev, fresh: true })
   const lines = []
   let cdp = null
@@ -432,7 +431,6 @@ function printChange(lines, before) {
 function problems(line) {
   const found = []
   const world = line.world
-  if (line.window.visibleShare > 0) found.push('the window shows on the screen')
   if (line.window.visibility !== 'visible') found.push(`the page is ${line.window.visibility}`)
   if (!line.fps) found.push('no paints')
   if (line.scene !== 'ink') {

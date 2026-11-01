@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
@@ -344,16 +344,9 @@ function sendMenuCommand(command: MenuCommand): void {
 }
 
 function createWindow(): BrowserWindow {
-  // Render benchmark: past the right edge of every display, so a run never covers the founder's screen. macOS would pull
-  // the window back at show, and enableLargerThanScreen stops that. The size is that of this window on a 13-inch Air.
-  const away =
-    remoteDebugPort !== null && process.env.SPACE_WINDOW_AWAY === '1'
-      ? { x: Math.max(...screen.getAllDisplays().map((display) => display.bounds.x + display.bounds.width)) + 100, y: 0, width: 1280, height: 770, enableLargerThanScreen: true }
-      : {}
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    ...away,
     minWidth: 960,
     minHeight: 600,
     show: false,
