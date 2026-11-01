@@ -315,12 +315,12 @@ export const SURFACE = String.raw`
       target = takeOutput(W, H, isDirect(lookOf(w)), samplesAt(0));
       // A still has no view, and s can be under the device pixel ratio: its line keeps the same width on the board.
       renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target, samplesAt(0), s);
-      const data = new Uint8Array(W * H * 4);
-      renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
+      const read = readPixels(target, W, H);
       firstPicture(w);
       const points = {};
       for (const [name, x, y, seen] of measurePoints(w)) points[name] = [x + w.w / 2 + w.moved.x, y + w.h / 2 + w.moved.y, seen];
-      return { data, W, H, s, crop, points };
+      // All that the answer says is fixed here. The world can resize or move while the pixels come back.
+      return { read, W, H, x: crop.l / s + w.w / 2 + w.moved.x, y: crop.t / s + w.h / 2 + w.moved.y, w: W / s, h: H / s, points };
     } finally {
       if (target) giveOutput(target);
       trimTargets();
@@ -328,10 +328,44 @@ export const SURFACE = String.raw`
       announce(setting);
     }
   };
-  const stillBlob = (shot) => {
-    const { data, W, H } = shot;
+  /**
+   * Copy a target's pixels on the GPU, now, and give them when the GPU is done. The copy is in the GL queue before this returns, so the
+   * target can go back to the pool at once, and all worlds keep their frames. Not three's own read: it waits with the global setTimeout, and
+   * here a global timer belongs to a world, and a paused world fires none.
+   */
+  const readPixels = (target, W, H) => {
+    const gl = renderer.getContext(), buffer = gl.createBuffer(), state = renderer.state;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, W * H * 4, gl.STREAM_READ);
+    state.bindFramebuffer(gl.FRAMEBUFFER, renderer.properties.get(target).__webglFramebuffer);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    state.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    return new Promise((resolve) => {
+      const poll = () => {
+        if (dead || gl.isContextLost()) { resolve(null); return; }
+        if (gl.getSyncParameter(sync, gl.SYNC_STATUS) !== gl.SIGNALED) { nativeSetTimeout(poll, 2); return; }
+        gl.deleteSync(sync);
+        const data = new Uint8Array(W * H * 4);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, data);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.deleteBuffer(buffer);
+        resolve(data);
+      };
+      nativeSetTimeout(poll, 2);
+    });
+  };
+  /** The picture of a still as a PNG. The rows flip in short turns, so the worlds on this worker do not wait for it. */
+  const stillBlob = async (shot) => {
+    const data = await shot.read, { W, H } = shot;
+    if (!data) return null;
     const pixels = new Uint8ClampedArray(W * H * 4);
+    let turn = realNow();
     for (let y = 0; y < H; y++) {
+      if ((y & 31) === 0 && realNow() - turn > 4) { await nextTask(); turn = realNow(); }
       const from = (H - 1 - y) * W * 4, to = y * W * 4;
       for (let x = 0; x < W * 4; x += 4) {
         const a = data[from + x + 3], k = a ? 255 / a : 0;
@@ -342,14 +376,14 @@ export const SURFACE = String.raw`
     c.getContext('2d').putImageData(new ImageData(pixels, W, H), 0, 0);
     return c.convertToBlob({ type: 'image/png' });
   };
-  /** The captures of w at this moment. The pixels are read now, in the same task as the tick. */
+  /** The captures of w at this moment. The picture is drawn now, in the same task as the tick, and all of the answer is fixed now. */
   const takeStill = (w) => {
     const requests = w.captures.splice(0);
-    const tick = w.tick;
+    const tick = w.tick, empty = emptyStill(w);
     let shot = null;
     try { shot = readStill(w); } catch (e) { fail(w, e); }
     const answer = (blob) => {
-      const still = shot ? { blob, x: shot.crop.l / shot.s + w.w / 2 + w.moved.x, y: shot.crop.t / shot.s + w.h / 2 + w.moved.y, w: shot.W / shot.s, h: shot.H / shot.s, points: shot.points } : emptyStill(w);
+      const still = shot ? { blob, x: shot.x, y: shot.y, w: shot.w, h: shot.h, points: shot.points } : empty;
       for (const request of requests) post({ type: 'frame', key: w.key, request, tick, still });
     };
     if (!shot) { answer(null); return; }

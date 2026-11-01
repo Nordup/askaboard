@@ -81,11 +81,11 @@ export const VIEW = String.raw`
   /** What a geometry holds, for the version of its positions that three draws: box, centre, radius. */
   const shapeOf = (g) => {
     let s = shapes.get(g);
-    if (!s) shapes.set(g, (s = { position: null, version: -1, box: new Float64Array(6), x: 0, y: 0, z: 0, radius: 0, empty: true, deltas: null, skin: null }));
+    if (!s) shapes.set(g, (s = { position: null, version: -1, box: new Float64Array(6), x: 0, y: 0, z: 0, radius: 0, empty: true, deltas: null, skin: null, flat: null }));
     const p = g.attributes.position, version = versionOf(p);
     if (s.position === p && s.version === version) return s;
     const changed = !!s.position, b = s.box;
-    s.position = p; s.version = version; s.deltas = null; s.skin = null;
+    s.position = p; s.version = version; s.deltas = null; s.skin = null; s.flat = null;
     measureAttribute(p, b);
     s.empty = !(b[3] >= b[0]);
     if (s.empty) return s;
