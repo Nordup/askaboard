@@ -10,8 +10,8 @@ import { coveredOf, type Covered } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
 import { itemNames } from '../agent/item-names'
 import { buildIndex, isFlowed } from '../board/scene'
-import { allObjects, compileScene, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
-import { connectFrames, cutJob, objectOf, takeFrames, type RunFrames } from './frames'
+import { allObjects, compileScene, packLines, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
+import { connectFrames, cutJob, objectOf, onFramesGrowth, takeFrames, type RunFrames } from './frames'
 import { inkIndexOf, liveSamples, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
 import { apply, multiply, scaleOf } from './timeline'
 import type { Camera, Point } from '../board/types'
@@ -334,20 +334,34 @@ export interface DraftMissing {
 }
 
 const drafts = new Map<string, CompiledDraft>()
-/** The drafts kept at most, and the bytes of their frames at most (the oldest goes first). */
+/** The drafts kept at most. */
 const MAX_DRAFTS = 8
-const MAX_DRAFT_BYTES = 256 * 1024 * 1024
+/** The bytes of the frames of the drafts and of the replay history together, at most. A stream counts as it grows. */
+const MAX_SCENE_BYTES = 128 * 1024 * 1024
+
+/**
+ * Keep the scenes' frames inside the budget, at each insert and each chunk.
+ * Finished scenes go first, the oldest first: a replay runs their program
+ * again from the record (decision B22). Then the oldest drafts. Main runs a
+ * dropped draft again. What plays now and the newest draft stay, whatever their size.
+ */
+function trimScenes(): void {
+  let bytes = scenePlayer.heldBytes()
+  for (const entry of drafts.values()) bytes += entry.frames.bytes
+  if (bytes > MAX_SCENE_BYTES) bytes -= scenePlayer.release(bytes - MAX_SCENE_BYTES)
+  for (const [old, entry] of drafts) {
+    if (drafts.size <= 1 || (drafts.size <= MAX_DRAFTS && bytes <= MAX_SCENE_BYTES)) break
+    drafts.delete(old)
+    bytes -= entry.frames.bytes
+  }
+}
+
+onFramesGrowth(trimScenes)
 
 function keepDraft(key: string, draft: CompiledDraft): void {
   drafts.delete(key)
   drafts.set(key, draft)
-  let bytes = 0
-  for (const entry of drafts.values()) bytes += entry.frames.bytes
-  for (const [old, entry] of drafts) {
-    if (drafts.size <= 1 || (drafts.size <= MAX_DRAFTS && bytes <= MAX_DRAFT_BYTES)) break
-    drafts.delete(old)
-    bytes -= entry.frames.bytes
-  }
+  trimScenes()
 }
 
 /**
@@ -464,7 +478,7 @@ function keepInkLook(object: PlayObject, s: Scene): void {
   }
   if (!lines.length) return
   const none = { x: 0, y: 0, width: 0, height: 0 }
-  object.dyn = { kind: 'ink', seeds: [], samples: [{ t: 0, bounds: none, lines, width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
+  object.dyn = { kind: 'ink', seeds: [], samples: [{ t: 0, bounds: none, lines: packLines(lines), width }], end: Number.POSITIVE_INFINITY, finalBounds: none, centered: false, ink: { color, width, tool } }
 }
 
 /** Commit a compiled scene's final state (a new undo step, or part of the keyed step `step`) and list its items. starts_in_s is filled in by the caller. */
@@ -768,6 +782,7 @@ export function runScene(ctx: RunSceneContext, args: Record<string, unknown>): (
   else startsIn = scenePlayer.enqueue(ctx.board, compiled.play, { mode: args.when === 'now' ? 'now' : 'queue', revert })
   const { record } = result
   scenePlayer.remember({ play: compiled.play, snapshot, ...(record ? { record: { id: sceneId, name, story: record.story, revert: record.revert, settle: record.settle ?? null } } : {}) })
+  trimScenes()
   forgetRestored(sceneId)
   // A playing scene (cut) started before now: its start is negative, its end is still ahead.
   result.starts_in_s = Math.max(0, startsIn)
@@ -853,7 +868,8 @@ export function sceneMemory(ctx: RunSceneContext, args: Record<string, unknown>)
     const compiled = compileScene(desc, before, sceneId, info.name, stageLookup, dynLookup(frames), frames)
     renameNodes(compiled, recordIds(compiled, info.story, info.revert.created))
     applySettle(compiled, info.settle)
-    scenePlayer.remember({ play: compiled.play, snapshot: restoredSnapshot(compiled, info.story, ctx.board) })
+    scenePlayer.remember({ play: compiled.play, snapshot: restoredSnapshot(compiled, info.story, ctx.board), record: info })
+    trimScenes()
     return { ok: true }
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) }

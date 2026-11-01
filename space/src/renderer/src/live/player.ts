@@ -8,7 +8,7 @@ import { clampZoom } from '../board/geometry'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from '../board/playback'
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
-import { allObjects, type DynSample, type PlayEdit, type PlayObject, type ScenePlay } from './compile'
+import { allObjects, sampleD, type DynSample, type PlayEdit, type PlayObject, type ScenePlay } from './compile'
 import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
@@ -173,10 +173,11 @@ function locate(samples: DynSample[], t: number): { a: DynSample; b: DynSample; 
 }
 
 const lerp = (a: number, b: number, k: number): number => a + (b - a) * k
+const NO_LINES = { xy: new Float64Array(0), ends: new Uint32Array(0) }
 const r2 = (value: number): number => Math.round(value * 100) / 100
 
 function blendD(a: DynSample, b: DynSample, k: number): string | undefined {
-  if (k <= 0 || !a.numbers || !b.numbers || !a.parts || a.parts !== b.parts || a.numbers.length !== b.numbers.length) return a.d
+  if (k <= 0 || !a.numbers || !b.numbers || !a.parts || a.parts !== b.parts || a.numbers.length !== b.numbers.length) return sampleD(a)
   const an = a.numbers
   const bn = b.numbers
   const parts = a.parts
@@ -208,54 +209,72 @@ const newInkBuffers = (): InkBuffers => ({ lines: [], lineLengths: [], strokes: 
  * grid along the length, so the number of points changes when a length
  * crosses a grid step, also for a line whose length stays the same up to
  * rounding: the blend must not depend on equal counts, or the ink holds its
- * earlier sample and lags the shapes, which always blend.
+ * earlier sample and lags the shapes, which always blend. The lines in the
+ * buffers are the only array form of a sample's strokes: a play holds them packed.
  */
 function blendLines(a: DynSample, b: DynSample, k: number, buffers: InkBuffers): Point[][] {
-  const al = a.lines ?? []
-  const bl = b.lines ?? []
-  if (k <= 0 || al.length !== bl.length) return al
+  const al = a.lines ?? NO_LINES
+  const bl = b.lines ?? NO_LINES
   const out = buffers.lines
-  out.length = al.length
-  for (let i = 0; i < al.length; i++) {
-    const line = al[i]
-    const other = bl[i]
+  const count = al.ends.length
+  out.length = count
+  const ax = al.xy
+  const blend = k > 0 && count === bl.ends.length
+  for (let i = 0; i < count; i++) {
+    const from = i ? al.ends[i - 1] : 0
+    const length = al.ends[i] - from
     const into = (out[i] ??= [])
-    into.length = line.length
-    if (line.length === other.length || other.length < 2 || line.length < 2) {
-      for (let j = 0; j < line.length; j++) {
-        const q = other[Math.min(j, other.length - 1)] ?? line[j]
+    into.length = length
+    if (!blend) {
+      for (let j = 0; j < length; j++) {
         const p = (into[j] ??= [0, 0])
-        p[0] = lerp(line[j][0], q[0], k)
-        p[1] = lerp(line[j][1], q[1], k)
+        p[0] = ax[2 * (from + j)]
+        p[1] = ax[2 * (from + j) + 1]
+      }
+      continue
+    }
+    const bx = bl.xy
+    const otherFrom = i ? bl.ends[i - 1] : 0
+    const otherLength = bl.ends[i] - otherFrom
+    const lineX = (j: number): number => ax[2 * (from + j)]
+    const lineY = (j: number): number => ax[2 * (from + j) + 1]
+    const otherX = (j: number): number => bx[2 * (otherFrom + j)]
+    const otherY = (j: number): number => bx[2 * (otherFrom + j) + 1]
+    if (length === otherLength || otherLength < 2 || length < 2) {
+      for (let j = 0; j < length; j++) {
+        const q = Math.min(j, otherLength - 1)
+        const p = (into[j] ??= [0, 0])
+        p[0] = lerp(lineX(j), otherLength ? otherX(q) : lineX(j), k)
+        p[1] = lerp(lineY(j), otherLength ? otherY(q) : lineY(j), k)
       }
       continue
     }
     // Another count: walk both strokes by length share.
     let totalA = 0
-    for (let j = 1; j < line.length; j++) totalA += Math.hypot(line[j][0] - line[j - 1][0], line[j][1] - line[j - 1][1])
+    for (let j = 1; j < length; j++) totalA += Math.hypot(lineX(j) - lineX(j - 1), lineY(j) - lineY(j - 1))
     let totalB = 0
-    for (let j = 1; j < other.length; j++) totalB += Math.hypot(other[j][0] - other[j - 1][0], other[j][1] - other[j - 1][1])
+    for (let j = 1; j < otherLength; j++) totalB += Math.hypot(otherX(j) - otherX(j - 1), otherY(j) - otherY(j - 1))
     let atA = 0
     let s = 1
     let before = 0
-    let segment = Math.hypot(other[1][0] - other[0][0], other[1][1] - other[0][1])
-    for (let j = 0; j < line.length; j++) {
-      if (j > 0) atA += Math.hypot(line[j][0] - line[j - 1][0], line[j][1] - line[j - 1][1])
-      const target = (totalA > 0 ? atA / totalA : j / (line.length - 1)) * totalB
-      while (s < other.length - 1 && before + segment < target) {
+    let segment = Math.hypot(otherX(1) - otherX(0), otherY(1) - otherY(0))
+    for (let j = 0; j < length; j++) {
+      if (j > 0) atA += Math.hypot(lineX(j) - lineX(j - 1), lineY(j) - lineY(j - 1))
+      const target = (totalA > 0 ? atA / totalA : j / (length - 1)) * totalB
+      while (s < otherLength - 1 && before + segment < target) {
         before += segment
         s++
-        segment = Math.hypot(other[s][0] - other[s - 1][0], other[s][1] - other[s - 1][1])
+        segment = Math.hypot(otherX(s) - otherX(s - 1), otherY(s) - otherY(s - 1))
       }
-      const last = j === line.length - 1
+      const last = j === length - 1
       const f = last ? 1 : segment > 0 ? Math.max(0, Math.min(1, (target - before) / segment)) : 1
-      const from = last ? other[other.length - 1] : other[s - 1]
-      const to = last ? from : other[s]
-      const qx = from[0] + (to[0] - from[0]) * f
-      const qy = from[1] + (to[1] - from[1]) * f
+      const from2 = last ? otherLength - 1 : s - 1
+      const to2 = last ? from2 : s
+      const qx = otherX(from2) + (otherX(to2) - otherX(from2)) * f
+      const qy = otherY(from2) + (otherY(to2) - otherY(from2)) * f
       const p = (into[j] ??= [0, 0])
-      p[0] = lerp(line[j][0], qx, k)
-      p[1] = lerp(line[j][1], qy, k)
+      p[0] = lerp(lineX(j), qx, k)
+      p[1] = lerp(lineY(j), qy, k)
     }
   }
   return out
@@ -1081,6 +1100,30 @@ export class ScenePlayer {
     this.history.set(memory.play.id, memory)
   }
 
+  /** The bytes of the frames that the replay history holds. */
+  heldBytes(): number {
+    let bytes = 0
+    for (const memory of this.history.values()) bytes += memory.play.size()
+    return bytes
+  }
+
+  /**
+   * Give up the play data of finished scenes, the oldest first, for at least
+   * `bytes`. From now on a replay rebuilds them, as restored scenes (decision
+   * B22). What plays or waits now stays, and so does a scene with no record. Returns the bytes freed.
+   */
+  release(bytes: number): number {
+    let freed = 0
+    for (const [id, memory] of this.history) {
+      if (freed >= bytes) break
+      if (!memory.record || this.scenes.some((scene) => scene.play.id === id || scene.play.id.startsWith(`${id}~r`))) continue
+      this.history.delete(id)
+      addRestored(memory.record)
+      freed += memory.play.size()
+    }
+    return freed
+  }
+
   /** A stream was cut: the scenes of it are no longer held, so a replay never reads a partial stream. It rebuilds them (requestRebuild, main/mcp.ts playable). What plays now plays on. */
   forgetCut(): void {
     for (const [id, memory] of this.history) {
@@ -1158,6 +1201,9 @@ export class ScenePlayer {
       }
       if (!memory) return { error: `No scene of this stage has a step "${target.step}".` }
     } else return { error: 'replay needs name, or from_step as a step name.' }
+    // The scene that plays last goes last when the history must shrink.
+    this.history.delete(memory.play.id)
+    this.history.set(memory.play.id, memory)
     const clone = this.replayClone(board, memory, `${memory.play.id}~r${++this.replays}`)
     const startsIn = this.enqueue(board, clone, { mode, revert: () => undefined, startAt: from })
     return { scene: clone.id, of: memory.play.id, from, starts_in_s: startsIn }

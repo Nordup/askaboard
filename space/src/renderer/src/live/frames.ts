@@ -1,6 +1,5 @@
-import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, joinPath, type FrameKind, type FramesChunk, type MomentsAnswer, type MomentsAsk, type MomentsFailure } from '@shared/frames'
+import { chunkBytes, F_ALL, F_D, F_FORM, F_JSON, F_LINES, F_PARAMS, F_TEXT, F_WIDTH, FLAG_MATH, FLAG_SEED, FRAME_KINDS, FRAMES_VERSION, type FrameKind, type FramesChunk, type MomentsAnswer, type MomentsAsk, type MomentsFailure } from '@shared/frames'
 import type { SceneSample } from '@shared/live-scene'
-import type { Point } from '../board/types'
 import { prepareSample, sampleHtml, splitNumbers, type DynSample, type PlayDyn } from './compile'
 import { scenePlayer } from './player'
 
@@ -150,6 +149,12 @@ export function cutJob(id: unknown, failed = false): void {
   if (job) endJob(id as number, job, { failed })
 }
 
+/** Called as a stream grows: the owner of the scene budget (run.ts) trims what no longer plays. */
+let growth: (() => void) | null = null
+export function onFramesGrowth(listener: () => void): void {
+  growth = listener
+}
+
 let port: MessagePort | null = null
 const jobs = new Map<number, JobFrames>()
 let lastAsk = 0
@@ -212,6 +217,7 @@ function onPortMessage(data: unknown): void {
       frames.ms += ms
       frames.longest = Math.max(frames.longest, ms)
       frames.bytes += chunkBytes(chunk)
+      growth?.()
       frames.next++
       frames.readyThrough = chunk.through
       if (chunk.end) endJob(job, frames, null)
@@ -251,6 +257,8 @@ function keep(list: DynSample[], sample: DynSample, seed: boolean): void {
   list.splice(at, 0, sample)
 }
 
+const NO_LINES = { xy: new Float64Array(0), ends: new Uint32Array(0) }
+
 /** Decode one chunk. Each record adds one sample to its object. */
 function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
   const { u32, f64, strings } = chunk
@@ -265,6 +273,14 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
     const value = f64[f++]
     if (!Number.isFinite(value)) throw new Error('a number that is not finite')
     return value
+  }
+  /** The next n numbers, in the chunk's own buffer: the sample holds no copy. */
+  const run = (n: number): Float64Array => {
+    if (f + n > f64.length) throw new Error('a chunk ends too early')
+    const numbers = f64.subarray(f, f + n)
+    for (let k = 0; k < n; k++) if (!Number.isFinite(numbers[k])) throw new Error('a number that is not finite')
+    f += n
+    return numbers
   }
   const S = (): string => {
     const index = U()
@@ -299,12 +315,10 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
       if (mask & F_FORM) {
         const form = S()
         const n = U()
-        const numbers: number[] = []
-        for (let k = 0; k < n; k++) numbers.push(F())
+        const numbers = run(n)
         let parts = forms.get(form)
         if (!parts) forms.set(form, (parts = form.split('#')))
         if (parts.length !== n + 1) throw new Error('a path form that does not fit its numbers')
-        next.d = joinPath(parts, numbers)
         next.parts = parts
         next.numbers = numbers
       } else if (mask & F_D) {
@@ -315,16 +329,11 @@ function decode(chunk: FramesChunk, objects: Map<number, ObjectFrames>): void {
       if (width !== undefined) next.width = width
     } else if (kind === 'ink') {
       if (mask & F_LINES) {
-        const lines: Point[][] = []
-        const n = U()
-        for (let k = 0; k < n; k++) {
-          const points = U()
-          const line: Point[] = []
-          for (let j = 0; j < points; j++) line.push([F(), F()])
-          lines.push(line)
-        }
-        next.lines = lines
-      } else next.lines = []
+        const ends = new Uint32Array(U())
+        let total = 0
+        for (let k = 0; k < ends.length; k++) ends[k] = total += U()
+        next.lines = { xy: run(total * 2), ends }
+      } else next.lines = NO_LINES
       if (width !== undefined) next.width = width
     } else if (kind === 'text') {
       if (mask & F_TEXT) next.html = sampleHtml(S(), math)

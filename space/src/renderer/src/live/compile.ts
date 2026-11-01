@@ -1,7 +1,7 @@
 import { ownSteps, stepAt } from '@shared/scene-story'
 import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
 import { mulberry32, type StageFollows, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStep, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
-import { splitPath, type FrameKind, type MomentsFailure } from '@shared/frames'
+import { joinPath, splitPath, type FrameKind, type MomentsFailure } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
 import { polylineInk } from '@shared/ink-points'
@@ -24,6 +24,30 @@ import { apply, IDENTITY, invert, isIdentity, multiply, scaleOf, Timeline, type 
  */
 
 /** One sample of a changing object, ready to show (see SceneSample). */
+/** A sample's strokes in one array: x, y of each point, and the end of each stroke in points. Decoded frames share the buffer of their chunk. */
+export interface InkLines {
+  xy: Float64Array
+  ends: Uint32Array
+}
+
+export const packLines = (lines: ReadonlyArray<ReadonlyArray<readonly number[]>>): InkLines => {
+  const ends = new Uint32Array(lines.length)
+  let total = 0
+  lines.forEach((line, i) => (ends[i] = total += line.length))
+  const xy = new Float64Array(total * 2)
+  let at = 0
+  for (const line of lines) {
+    for (const point of line) {
+      xy[at++] = point[0]
+      xy[at++] = point[1]
+    }
+  }
+  return { xy, ends }
+}
+
+/** A shape sample's path. A decoded sample keeps only its numbers: the text is made when a frame needs it. */
+export const sampleD = (sample: DynSample): string | undefined => sample.d ?? (sample.parts && sample.numbers ? joinPath(sample.parts, sample.numbers) : undefined)
+
 export interface DynSample {
   t: number
   bounds: SceneBounds
@@ -34,9 +58,9 @@ export interface DynSample {
    * with the same form share one parts array.
    */
   parts?: readonly string[]
-  numbers?: number[]
+  numbers?: ArrayLike<number>
   width?: number
-  lines?: Point[][]
+  lines?: InkLines
   html?: string
   params?: Record<string, number>
 }
@@ -135,6 +159,8 @@ export interface ScenePlay {
   quiet: PlayObject[]
   /** How far it can play now (scene time): every moment up to it is complete. Infinity for a complete scene. */
   ready: () => number
+  /** The bytes of its frames. */
+  size: () => number
   /** Makes the given moments readable; a recipe's error at one of them, or null (frames.ts RunFrames). */
   moments: (times: number[]) => Promise<MomentsFailure | null>
   /** Why its stream stopped before the end, or null. */
@@ -296,7 +322,7 @@ export function prepareSample(kind: FrameKind, math: boolean, sample: SceneSampl
     Object.assign(next, splitNumbers(sample.d, forms))
     if (sample.width !== undefined) next.width = sample.width
   } else if (kind === 'ink') {
-    next.lines = sample.lines ? sample.lines.map((line) => line.map((p) => [p[0], p[1]] as Point)) : []
+    next.lines = packLines(sample.lines ?? [])
     if (sample.width !== undefined) next.width = sample.width
   } else if (kind === 'text' && sample.text !== undefined) next.html = sampleHtml(sample.text, math)
   else if (kind === 'live' && sample.params) next.params = sample.params
@@ -312,7 +338,7 @@ export interface DynFrames {
 }
 
 /** The stream of a run (frames.ts). */
-export type SceneStream = Pick<ScenePlay, 'ready' | 'moments' | 'stopped'>
+export type SceneStream = Pick<ScenePlay, 'ready' | 'moments' | 'stopped'> & { bytes: number }
 
 /** The live form of a changing object, on the live lists of its frames. */
 function playDyn(object: SceneObjectDesc, frames: DynFrames, duration: number): PlayDyn | undefined {
@@ -1115,7 +1141,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
   return {
     base: s.nodes,
     next,
-    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: linkActions(desc.camera ?? [], desc, nodesOf, stage), pointer: linkActions(desc.pointer ?? [], desc, nodesOf, stage), cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
+    play: { id: sceneId, name, timeline, duration: desc.duration, steps: desc.steps, objects, ghosts, camera: linkActions(desc.camera ?? [], desc, nodesOf, stage), pointer: linkActions(desc.pointer ?? [], desc, nodesOf, stage), cues: desc.cues ?? [], ...(playEdits.length ? { edits: playEdits } : {}), ...(vanish.length ? { vanish } : {}), quiet, size: () => stream?.bytes ?? 0, ready: stream?.ready ?? (() => Number.POSITIVE_INFINITY), moments: stream?.moments ?? (() => Promise.resolve(null)), stopped: stream?.stopped ?? (() => null) },
     inkGroups,
     contentIds: contentIds.filter((id) => !untouched.has(id)),
     centers,

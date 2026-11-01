@@ -894,7 +894,7 @@ export function App() {
       },
       /** Live-scene playback (play_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
       get scene() {
-        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), frame: () => scenePlayer.debugFrame(), snap: () => { const s = scenePlayer.snapshot(); return s && { overrides: [...s.frame.overrides], inks: s.frame.inks } } }
+        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), release: () => scenePlayer.release(Number.POSITIVE_INFINITY), frame: () => scenePlayer.debugFrame(), snap: () => { const s = scenePlayer.snapshot(); return s && { overrides: [...s.frame.overrides], inks: s.frame.inks } } }
       },
       /** Worlds (dev checks): add one, list them with status and frame counts, check code. */
       live: {
