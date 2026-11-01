@@ -344,9 +344,16 @@ function sendMenuCommand(command: MenuCommand): void {
 }
 
 function createWindow(): BrowserWindow {
+  // Render benchmark: past the right edge of every display, so a run never covers the founder's screen. macOS would pull
+  // the window back at show, and enableLargerThanScreen stops that. The size is that of this window on a 13-inch Air.
+  const away =
+    remoteDebugPort !== null && process.env.SPACE_WINDOW_AWAY === '1'
+      ? { x: Math.max(...screen.getAllDisplays().map((display) => display.bounds.x + display.bounds.width)) + 100, y: 0, width: 1280, height: 770, enableLargerThanScreen: true }
+      : {}
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    ...away,
     minWidth: 960,
     minHeight: 600,
     show: false,
@@ -364,10 +371,6 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  // Render benchmark: past the right edge of every display before it shows, so a run never covers the founder's screen.
-  if (remoteDebugPort !== null && process.env.SPACE_WINDOW_AWAY === '1') {
-    win.setPosition(Math.max(...screen.getAllDisplays().map((display) => display.bounds.x + display.bounds.width)) + 100, 0)
-  }
   win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
 
   // Links that open a new window go to the system browser, never to a new app window.

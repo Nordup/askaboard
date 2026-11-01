@@ -294,6 +294,7 @@ function printChange(lines, before) {
 function problems(line) {
   const found = []
   const world = line.world
+  if (line.window.visibleShare > 0) found.push('the window shows on the screen')
   if (line.window.visibility !== 'visible') found.push(`the page is ${line.window.visibility}`)
   if (!line.fps) found.push('no paints')
   if (line.scene !== 'ink') {

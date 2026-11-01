@@ -54,7 +54,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 
 `GPU ms` can be larger than `wall ms`: it was 45 ms against 25 ms for `three`, at 43 pictures per second. So `GPU ms` is not a share of the frame budget. The cause is not confirmed. Use `wall ms` for the budget, and `GPU ms` to compare runs.
 
-A run must never take the founder's screen. The window opens with no focus, away from the visible area (`SPACE_WINDOW_AWAY=1`). `seen` records this as a plain fact, and `util%` then holds no window server work for this window.
+A run must never take the founder's screen. With `SPACE_WINDOW_AWAY=1` the window opens with no focus, 100 points past the right edge of every display, at 1280 x 770 points. It pins nothing. A `PROBLEM` line says when any of it shows on a display. `seen` is then 0, and this is a plain fact and no fault. In this state the page still paints at 60 per second, and wheel input moves the camera. `GPU ms`, `wall ms` and `pict/s` were the same as for a window in front (`film` 12.8 and 12.5 ms, `plain` 2.9 and 3.1 ms). `util%` holds no window server work for this window: compare it only between runs with the same `seen`. The window in front and the window away gave a difference inside the noise of `util%` in 2 scenes, and one other reading of `plain` was 55%. The cause of that reading is not confirmed.
 
 `SPACE_WORLD_TUNE` holds JSON with measuring switches. An absent key changes nothing. They are not settings for users. `node scripts/lab/lab.mjs start --tune '<json>'` passes them to a lab app.
 
