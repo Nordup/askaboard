@@ -5,14 +5,21 @@
  *
  * Pick has a time limit. three-mesh-bvh is not a dependency of the app and its
  * build needs a bare `three`, so a pick walks typed arrays with plain loops:
- * about 10 ms for a million instances. At the limit it stops and gives the best
- * hit so far. An event computes e.hit only when the code reads it, so a world
- * that only follows the pointer pays nothing.
+ * about 10 ms for a million instances. It tests what is drawn: the draw range, the
+ * groups, the side of a material, morphed and skinned vertices. Objects come nearest
+ * first, and a hit ends the walk when nothing can be nearer. At the limit it stops
+ * and gives the best hit so far. An event computes e.hit only when the code reads
+ * it, so a world that only follows the pointer pays nothing.
  */
 export const TOUCH = String.raw`
   /** A pick stops after this time. */
   const PICK_MS = 10;
-  /** Instances that a pick tests triangle by triangle, nearest first. */
+  /**
+   * The nearest objects, and the nearest instances of a round, that a pick tests at any cost. The clock must stop a huge world and not the
+   * first touch, when this code still runs cold and a small world can use up the limit.
+   */
+  const PICK_ALWAYS = 8;
+  /** Instances that one round of a pick tests triangle by triangle, nearest first. */
   const PICK_CANDIDATES = 32;
   /** Board points of tolerance for points and lines. */
   const PICK_TOLERANCE = 6;
@@ -47,20 +54,71 @@ export const TOUCH = String.raw`
     return caster.ray;
   };
 
-  /** Triangles of a geometry against a local ray. The t of the nearest hit below 'best', or best. Null: the clock ran out first. */
-  const hitTriangles = (g, ray, best, deadline) => {
-    const position = g.attributes.position;
-    if (!position || !position.array || position.isInterleavedBufferAttribute || position.itemSize !== 3) return best;
-    const v = position.array, index = g.index ? g.index.array : null, count = index ? index.length : position.count;
+  /** The positions of a geometry as tight x, y, z numbers. */
+  const flatPositions = (g, s) => {
+    const p = g.attributes.position;
+    if (!p.isInterleavedBufferAttribute && !p.normalized && p.itemSize === 3) return p.array;
+    if (s.flat) return s.flat;
+    const out = (s.flat = new Float32Array(p.count * 3));
+    for (let i = 0; i < p.count; i++) { out[i * 3] = p.getX(i); out[i * 3 + 1] = p.getY(i); out[i * 3 + 2] = p.itemSize > 2 ? p.getZ(i) : 0; }
+    return out;
+  };
+
+  const shaped = new WeakMap();
+  /** Where the vertices of a morphed or skinned mesh are drawn now, in the mesh's own space. Null when the clock runs out first. */
+  const drawnPositions = (o, g, s, deadline) => {
+    const base = flatPositions(g, s), n = base.length / 3;
+    let out = shaped.get(o);
+    if (!out || out.length !== base.length) shaped.set(o, (out = new Float32Array(base.length)));
+    const morphs = g.morphAttributes.position, influences = o.morphTargetInfluences;
+    let keep = 1;
+    if (morphs && influences && !g.morphTargetsRelative) for (let t = 0; t < morphs.length; t++) keep -= influences[t] || 0;
+    for (let i = 0; i < base.length; i++) out[i] = base[i] * keep;
+    if (morphs && influences) {
+      for (let t = 0; t < morphs.length; t++) {
+        const v = influences[t], a = morphs[t];
+        if (!v) continue;
+        if (n > 4095 && realNow() > deadline) return null;
+        const flat = !a.isInterleavedBufferAttribute && !a.normalized && a.itemSize === 3 ? a.array : null;
+        for (let i = 0, k = 0; i < n; i++, k += 3) {
+          out[k] += v * (flat ? flat[k] : a.getX(i)); out[k + 1] += v * (flat ? flat[k + 1] : a.getY(i)); out[k + 2] += v * (flat ? flat[k + 2] : a.getZ(i));
+        }
+      }
+    }
+    const index = g.attributes.skinIndex, weight = g.attributes.skinWeight;
+    if (!o.isSkinnedMesh || !index || !weight) return out;
+    o.skeleton.update();
+    const bones = o.skeleton.boneMatrices, b = o.bindMatrix.elements, c = o.bindMatrixInverse.elements;
+    const flatIndex = !index.isInterleavedBufferAttribute && !index.normalized ? index.array : null, flatWeight = !weight.isInterleavedBufferAttribute && !weight.normalized ? weight.array : null;
+    for (let i = 0, k = 0; i < n; i++, k += 3) {
+      if ((i & 4095) === 4095 && realNow() > deadline) return null;
+      const x = out[k], y = out[k + 1], z = out[k + 2];
+      const px = b[0] * x + b[4] * y + b[8] * z + b[12], py = b[1] * x + b[5] * y + b[9] * z + b[13], pz = b[2] * x + b[6] * y + b[10] * z + b[14];
+      let sx = 0, sy = 0, sz = 0;
+      for (let j = 0; j < 4; j++) {
+        const u = flatWeight ? flatWeight[i * 4 + j] : weight.getComponent(i, j);
+        if (!u) continue;
+        const m = (flatIndex ? flatIndex[i * 4 + j] : index.getComponent(i, j)) * 16;
+        sx += u * (bones[m] * px + bones[m + 4] * py + bones[m + 8] * pz + bones[m + 12]);
+        sy += u * (bones[m + 1] * px + bones[m + 5] * py + bones[m + 9] * pz + bones[m + 13]);
+        sz += u * (bones[m + 2] * px + bones[m + 6] * py + bones[m + 10] * pz + bones[m + 14]);
+      }
+      out[k] = c[0] * sx + c[4] * sy + c[8] * sz + c[12]; out[k + 1] = c[1] * sx + c[5] * sy + c[9] * sz + c[13]; out[k + 2] = c[2] * sx + c[6] * sy + c[10] * sz + c[14];
+    }
+    return out;
+  };
+
+  /** Triangles from..to of an index or of positions v against a local ray. side: 1 front faces, -1 back faces, 0 both. The t of the nearest hit below 'best', or best. */
+  const hitRange = (v, index, from, to, ray, best, deadline, side) => {
     const ox = ray.origin.x, oy = ray.origin.y, oz = ray.origin.z, dx = ray.direction.x, dy = ray.direction.y, dz = ray.direction.z;
-    for (let i = 0; i + 2 < count; i += 3) {
-      if ((i & (CLOCK_EVERY - 1)) === 0 && i > 0 && realNow() > deadline) return best;
+    for (let i = from - from % 3; i + 2 < to; i += 3) {
+      if ((i & (CLOCK_EVERY - 1)) === 0 && realNow() > deadline) return best;
       const a = (index ? index[i] : i) * 3, b = (index ? index[i + 1] : i + 1) * 3, c = (index ? index[i + 2] : i + 2) * 3;
       const ax = v[a], ay = v[a + 1], az = v[a + 2];
       const e1x = v[b] - ax, e1y = v[b + 1] - ay, e1z = v[b + 2] - az, e2x = v[c] - ax, e2y = v[c + 1] - ay, e2z = v[c + 2] - az;
       const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
       const det = e1x * px + e1y * py + e1z * pz;
-      if (det > -1e-12 && det < 1e-12) continue;
+      if ((det > -1e-12 && det < 1e-12) || det * side < 0) continue;
       const inv = 1 / det, tx = ox - ax, ty = oy - ay, tz = oz - az;
       const u = (tx * px + ty * py + tz * pz) * inv;
       if (u < 0 || u > 1) continue;
@@ -72,104 +130,153 @@ export const TOUCH = String.raw`
     }
     return best;
   };
+  /** Which faces a material draws. flip: a mirrored matrix turns the faces. */
+  const sideOf = (m, flip) => (m.side === THREE.DoubleSide ? 0 : (m.side === THREE.FrontSide) !== flip ? 1 : -1);
+  /** What a mesh draws against a local ray: its draw range, and with several materials its groups. */
+  const hitMesh = (o, g, v, ray, best, deadline, flip) => {
+    const index = g.index ? g.index.array : null, count = index ? index.length : v.length / 3, range = g.drawRange, material = o.material;
+    const from = Math.max(0, range.start), to = Math.min(count, range.start + range.count);
+    if (!Array.isArray(material)) return material.visible === false ? best : hitRange(v, index, from, to, ray, best, deadline, sideOf(material, flip));
+    for (const group of g.groups) {
+      const m = material[group.materialIndex];
+      if (m && m.visible !== false) best = hitRange(v, index, Math.max(group.start, from), Math.min(group.start + group.count, to), ray, best, deadline, sideOf(m, flip));
+    }
+    return best;
+  };
 
   /** The nearest hit of a ray in world space. Null when none. It keeps its time limit at any size. */
   const pickRay = (w, ray) => {
     const end = realNow() + PICK_MS;
     let deadline = end;
-    const inverse = new THREE.Matrix4(), instance = new THREE.Matrix4(), local = new THREE.Ray(), inner = new THREE.Ray(), at = new THREE.Vector3();
+    const inverse = new THREE.Matrix4(), instance = new THREE.Matrix4(), toInstance = new THREE.Matrix4(), local = new THREE.Ray(), inner = new THREE.Ray(), at = new THREE.Vector3();
     let best = null;
     const take = (o, point, instanceId) => {
       const distance = point.distanceTo(ray.origin);
       if (!best || distance < best.distance) best = { object: o, point: point.clone(), distance, instanceId };
     };
     const tolerance = (PICK_TOLERANCE / w.h) * 2 * Math.tan(THREE.MathUtils.degToRad(w.camera.fov || 24) / 2);
+    const lineRoom = tolerance * Math.max(1, ray.origin.length());
+    /** Lines, sprites, batches, fat lines and text: their own raycast. */
+    const viaThree = (o) => {
+      const caster = new THREE.Raycaster(ray.origin, ray.direction), found = [];
+      caster.camera = w.camera;
+      caster.params.Line.threshold = lineRoom;
+      o.raycast(caster, found);
+      let near = null;
+      for (const hit of found) if (!near || hit.distance < near.distance) near = hit;
+      if (near) take(o, near.point, near.instanceId);
+    };
     const visit = (o) => {
       const g = o.geometry;
-      if (g && g.attributes && g.attributes.position) {
-        inverse.copy(o.matrixWorld).invert();
-        local.copy(ray).applyMatrix4(inverse);
-        local.direction.normalize();
-        if (o.isInstancedMesh) visitInstances(o, g);
-        else if (o.isPoints) visitPoints(o, g);
-        else if (o.isMesh) {
-          if (!g.boundingSphere) g.computeBoundingSphere();
-          const t = local.intersectsSphere(g.boundingSphere) || g.attributes.position.version ? hitTriangles(g, local, Infinity, deadline) : Infinity;
-          if (t < Infinity) take(o, at.copy(local.direction).multiplyScalar(t).add(local.origin).applyMatrix4(o.matrixWorld), undefined);
-        } else {
-          const lines = new THREE.Raycaster(ray.origin, ray.direction);
-          lines.params.Line.threshold = tolerance * Math.max(1, ray.origin.length());
-          const found = [];
-          o.raycast(lines, found);
-          if (found.length) take(o, found[0].point, undefined);
-        }
-      } else if (o.isSprite) {
-        const lines = new THREE.Raycaster(ray.origin, ray.direction);
-        lines.camera = w.camera;
-        const found = [];
-        o.raycast(lines, found);
-        if (found.length) take(o, found[0].point, undefined);
+      if (o.isSprite || o.isBatchedMesh || o.isLine || (g && g.isInstancedBufferGeometry && !o.isInstancedMesh)) { viaThree(o); return; }
+      inverse.copy(o.matrixWorld).invert();
+      local.copy(ray).applyMatrix4(inverse);
+      local.direction.normalize();
+      const s = shapeOf(g), flip = o.matrixWorld.determinant() < 0;
+      if (o.isInstancedMesh) visitInstances(o, g, s, flip);
+      else if (o.isPoints) visitPoints(o, g);
+      else if (o.isMesh) {
+        const deformed = o.isSkinnedMesh || (o.morphTargetInfluences && g.morphAttributes.position);
+        const v = (deformed && drawnPositions(o, g, s, deadline)) || flatPositions(g, s);
+        const t = hitMesh(o, g, v, local, Infinity, deadline, flip);
+        if (t < Infinity) take(o, at.copy(local.direction).multiplyScalar(t).add(local.origin).applyMatrix4(o.matrixWorld), undefined);
       }
     };
-    const visitInstances = (o, g) => {
-      if (!g.boundingSphere) g.computeBoundingSphere();
-      const m = o.instanceMatrix.array, n = o.count, gs = g.boundingSphere, reach = gs.radius + gs.center.length();
+    /**
+     * Instances in rounds. A scan keeps the PICK_CANDIDATES that the ray enters first, a sorted short list and no sort of all, and those are
+     * tested by their triangles. A next round is needed only when a kept hit lies past the last place tested.
+     */
+    const visitInstances = (o, g, s, flip) => {
+      const m = o.instanceMatrix.array, n = o.count, material = o.material, v = flatPositions(g, s), mine = Math.max(deadline, realNow() + PICK_MS);
+      const sx = s.x, sy = s.y, sz = s.z, r = s.radius;
       const ox = local.origin.x, oy = local.origin.y, oz = local.origin.z, dx = local.direction.x, dy = local.direction.y, dz = local.direction.z;
-      const near = [];
-      for (let i = 0, k = 0; i < n; i++, k += 16) {
-        if ((i & 65535) === 65535 && realNow() > deadline) break;
-        const cx = m[k + 12] - ox, cy = m[k + 13] - oy, cz = m[k + 14] - oz, along = cx * dx + cy * dy + cz * dz;
-        const off = cx * cx + cy * cy + cz * cz - along * along, scale = m[k] * m[k] + m[k + 1] * m[k + 1] + m[k + 2] * m[k + 2], r2 = reach * reach * scale;
-        if (off <= r2 && along + Math.sqrt(r2) >= 0) near.push(along, i);
-      }
-      const order = [];
-      for (let i = 0; i < near.length; i += 2) order.push(i);
-      order.sort((a, b) => near[a] - near[b]);
-      const count = Math.min(PICK_CANDIDATES, order.length);
-      // The nearest candidates get their own time, so a scan that used up the limit still gives a hit.
-      const exact = realNow() + PICK_MS / 2;
-      for (let i = 0; i < count && realNow() < exact; i++) {
-        const id = near[order[i] + 1];
-        instance.fromArray(m, id * 16);
-        inner.copy(local).applyMatrix4(instance.clone().invert());
-        const length = inner.direction.length();
-        inner.direction.divideScalar(length);
-        const t = hitTriangles(g, inner, Infinity, exact);
-        if (t < Infinity) {
-          take(o, at.copy(inner.direction).multiplyScalar(t).add(inner.origin).applyMatrix4(instance).applyMatrix4(o.matrixWorld), id);
-          return;
+      const enters = new Float64Array(PICK_CANDIDATES), ids = new Int32Array(PICK_CANDIDATES);
+      let after = -Infinity, near = Infinity, hit = -1;
+      const point = new THREE.Vector3();
+      for (;;) {
+        let kept = 0, more = false;
+        for (let i = 0, k = 0; i < n; i++, k += 16) {
+          if ((i & 65535) === 65535 && realNow() > mine) break;
+          const cx = m[k] * sx + m[k + 4] * sy + m[k + 8] * sz + m[k + 12] - ox, cy = m[k + 1] * sx + m[k + 5] * sy + m[k + 9] * sz + m[k + 13] - oy, cz = m[k + 2] * sx + m[k + 6] * sy + m[k + 10] * sz + m[k + 14] - oz;
+          const a = m[k] * m[k] + m[k + 1] * m[k + 1] + m[k + 2] * m[k + 2], b = m[k + 4] * m[k + 4] + m[k + 5] * m[k + 5] + m[k + 6] * m[k + 6], c = m[k + 8] * m[k + 8] + m[k + 9] * m[k + 9] + m[k + 10] * m[k + 10];
+          const r2 = r * r * (a > b ? (a > c ? a : c) : b > c ? b : c);
+          if (r2 === 0) continue;
+          const along = cx * dx + cy * dy + cz * dz, off = cx * cx + cy * cy + cz * cz - along * along;
+          if (off > r2) continue;
+          const reach = Math.sqrt(r2 - off), enter = along - reach;
+          if (along + reach < 0 || enter <= after || enter >= near) continue;
+          if (kept === PICK_CANDIDATES && enter >= enters[kept - 1]) { more = true; continue; }
+          if (kept === PICK_CANDIDATES) { more = true; kept--; }
+          let place = kept++;
+          for (; place > 0 && enters[place - 1] > enter; place--) { enters[place] = enters[place - 1]; ids[place] = ids[place - 1]; }
+          enters[place] = enter; ids[place] = i;
         }
+        for (let i = 0; i < kept && enters[i] < near && (i < PICK_ALWAYS || realNow() < mine); i++) {
+          instance.fromArray(m, ids[i] * 16);
+          toInstance.copy(instance).invert();
+          inner.copy(local).applyMatrix4(toInstance);
+          inner.direction.normalize();
+          const t = hitMesh(o, g, v, inner, Infinity, mine, (instance.determinant() < 0) !== flip);
+          if (t === Infinity) continue;
+          at.copy(inner.direction).multiplyScalar(t).add(inner.origin).applyMatrix4(instance);
+          const along = at.clone().sub(local.origin).dot(local.direction);
+          if (along < near) { near = along; hit = ids[i]; point.copy(at); }
+        }
+        if (!more || !kept || realNow() >= mine || (hit >= 0 && near <= enters[kept - 1])) break;
+        after = enters[kept - 1];
       }
+      if (hit >= 0) take(o, point.applyMatrix4(o.matrixWorld), hit);
     };
     const visitPoints = (o, g) => {
-      const position = g.attributes.position;
-      if (!position.array || position.isInterleavedBufferAttribute) return;
-      const v = position.array, stride = position.itemSize, n = position.count;
+      const position = g.attributes.position, s = shapeOf(g), v = flatPositions(g, s), range = g.drawRange;
       const ox = local.origin.x, oy = local.origin.y, oz = local.origin.z, dx = local.direction.x, dy = local.direction.y, dz = local.direction.z;
       let id = -1, near = Infinity;
-      const t2 = tolerance * tolerance;
-      for (let i = 0, k = 0; i < n; i++, k += stride) {
+      const t2 = tolerance * tolerance, to = Math.min(position.count, range.start + range.count);
+      for (let i = Math.max(0, range.start); i < to; i++) {
         if ((i & 65535) === 65535 && realNow() > deadline) break;
-        const cx = v[k] - ox, cy = v[k + 1] - oy, cz = v[k + 2] - oz, along = cx * dx + cy * dy + cz * dz;
+        const k = i * 3, cx = v[k] - ox, cy = v[k + 1] - oy, cz = v[k + 2] - oz, along = cx * dx + cy * dy + cz * dz;
         if (along > 0 && along < near && cx * cx + cy * cy + cz * cz - along * along <= along * along * t2) { near = along; id = i; }
       }
-      if (id >= 0) { take(o, at.fromBufferAttribute(position, id).applyMatrix4(o.matrixWorld), id); best.pointIndex = id; }
+      if (id >= 0) take(o, at.set(v[id * 3], v[id * 3 + 1], v[id * 3 + 2]).applyMatrix4(o.matrixWorld), id);
+    };
+    /** Where the ray enters what o can draw, or -1 when it passes by. 0: only o's own test can say. */
+    const center = new THREE.Vector3();
+    const enterOf = (o) => {
+      const g = o.geometry;
+      if (o.isSprite || o.isBatchedMesh || o.isSkinnedMesh || (g.isInstancedBufferGeometry && !o.isInstancedMesh) || (o.morphTargetInfluences && g.morphAttributes.position)) return 0;
+      const s = shapeOf(g);
+      if (s.empty) return -1;
+      if (o.isInstancedMesh) instanceBox(o, s);
+      const sphere = o.isInstancedMesh ? o.boundingSphere : null;
+      if (o.isInstancedMesh && !sphere) return -1;
+      if (sphere) center.copy(sphere.center); else center.set(s.x, s.y, s.z);
+      center.applyMatrix4(o.matrixWorld).sub(ray.origin);
+      const r = (sphere ? sphere.radius : s.radius) * o.matrixWorld.getMaxScaleOnAxis() + (o.isMesh ? 0 : lineRoom * (1 + center.length()));
+      const along = center.dot(ray.direction), off = center.lengthSq() - along * along;
+      if (off > r * r) return -1;
+      const reach = Math.sqrt(r * r - off);
+      return along + reach < 0 ? -1 : Math.max(0, along - reach);
     };
     w.scene.updateMatrixWorld();
-    // Small objects first, and each one gets its share of the time left, so one huge object cannot hide the others.
+    // Nearest first, so a hit can end the walk. Each object gets its share of the time left, so one huge object cannot hide the others.
     const targets = [];
     const collect = (o) => {
       if (!o.visible || o === w.stage) return;
-      if ((o.geometry && o.geometry.attributes && o.geometry.attributes.position) || o.isSprite) targets.push(o);
+      if (o.layers.test(w.camera.layers) && ((o.geometry && o.geometry.attributes && o.geometry.attributes.position) || o.isSprite)) {
+        const enter = enterOf(o);
+        if (enter >= 0) targets.push({ o, enter });
+      }
       for (const child of o.children) collect(child);
     };
     for (const child of w.scene.children) collect(child);
-    const size = (o) => (o.isInstancedMesh ? o.count * 16 : o.geometry ? o.geometry.attributes.position.count : 0);
-    targets.sort((a, b) => size(a) - size(b));
-    targets.forEach((o, i) => {
-      deadline = realNow() + Math.max(0, end - realNow()) / (targets.length - i);
-      visit(o);
-    });
+    targets.sort((a, b) => a.enter - b.enter);
+    for (let i = 0; i < targets.length; i++) {
+      if (best && targets[i].enter >= best.distance) break;
+      const now = realNow();
+      if (i >= PICK_ALWAYS && now > end) break;
+      deadline = now + Math.max(0, end - now) / (targets.length - i);
+      visit(targets[i].o);
+    }
     if (!best) return null;
     // The nearest published ancestor names the part.
     for (let o = best.object; o && !best.partName; o = o.parent) for (const [name, part] of w.parts) if (part.target === o) { best.partName = name; best.partObject = o; break; }

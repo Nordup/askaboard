@@ -185,8 +185,9 @@ flowchart LR
   the place ahead of time, so an attached item stores `follows: {world, point,
   offset}` and the page moves it each frame. An arrow stores both ends, and the
   page rebuilds its path.
-- **Hand in.** Board forwards the pointer. `pick` gives a named part and a local
-  point. A mark stores that pin, and the world publishes it as a point, so a mark
+- **Hand in.** Board forwards the pointer. `pick` tests what is drawn (draw range,
+  groups, material side, morphs, bones), nearest object first, and gives the closest
+  hit within its time limit, a named part and a local point. A mark stores that pin, and the world publishes it as a point, so a mark
   stays on the part as it turns.
 
 ## 6. Replay, preview and failure
@@ -198,7 +199,9 @@ flowchart LR
   `clock.ts`.
 - **Preview and screenshots.** `withStepHost` makes a `WorldHost` with a private
   headless surface. So stills use the same runtime. A still can be larger than the
-  placeholder, so each still carries its box (`stillBoxes`).
+  placeholder, so each still carries its box (`stillBoxes`). A capture draws in the
+  tick and fixes all of its answer there. The pixels come back from a GPU buffer and
+  flip in short turns, so other worlds on the worker keep their frames.
 - **Errors.** Each tick of a world runs in a try block. An error stops that world
   only and shows the usual note.
 - **Endless loops.** `pong` names the world that was running. If the worker stops
