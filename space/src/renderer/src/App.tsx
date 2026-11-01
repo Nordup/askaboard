@@ -80,7 +80,7 @@ interface CacheEntry {
   stale?: boolean
 }
 
-/** About the bytes that a board holds in memory. Its undo and its change log share node objects with the document. */
+/** About the bytes that a board holds in memory. Its undo and its change log share node objects, and point arrays, with the document. */
 function entryBytes({ doc, history, log }: CacheEntry): number {
   const nodes = new Set<BoardNode>(doc.nodes)
   const add = (node: BoardNode): void => void nodes.add(node)

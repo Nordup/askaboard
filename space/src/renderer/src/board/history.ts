@@ -144,14 +144,24 @@ export class BoardHistory {
   }
 }
 
-/** About how many bytes the nodes of a board hold in memory: the points of ink, and the text of the rest. */
+/**
+ * About how many bytes the nodes of a board hold in memory: the points of ink, and the text of
+ * the rest. A move or a restyle makes a new node over the same points and text, and undo holds
+ * both nodes: each array of points and each text counts once.
+ */
 export function boardBytes(nodes: Iterable<BoardNode>): number {
+  const counted = new Set<unknown>()
+  const once = (value: unknown, size: number): number => {
+    if (counted.has(value)) return 0
+    counted.add(value)
+    return size
+  }
   let bytes = 0
   for (const node of nodes) {
-    if (isInk(node)) bytes += 200 + node.points.length * 48
+    if (isInk(node)) bytes += 200 + once(node.points, node.points.length * 48)
     else {
       const { text, markup } = node as { text?: unknown; markup?: unknown }
-      bytes += 400 + (typeof text === 'string' ? text.length : 0) + (typeof markup === 'string' ? markup.length : 0)
+      bytes += 400 + (typeof text === 'string' ? once(text, text.length) : 0) + (typeof markup === 'string' ? once(markup, markup.length) : 0)
     }
   }
   return bytes
