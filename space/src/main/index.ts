@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
@@ -364,12 +364,11 @@ function createWindow(): BrowserWindow {
     }
   })
 
-  win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
-  // Render benchmark: the window stays in front with no focus, so its numbers are those of a visible window.
-  if (remoteDebugPort !== null && process.env.SPACE_ON_TOP === '1') {
-    win.setAlwaysOnTop(true, 'floating')
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  // Render benchmark: past the right edge of every display before it shows, so a run never covers the founder's screen.
+  if (remoteDebugPort !== null && process.env.SPACE_WINDOW_AWAY === '1') {
+    win.setPosition(Math.max(...screen.getAllDisplays().map((display) => display.bounds.x + display.bounds.width)) + 100, 0)
   }
+  win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {

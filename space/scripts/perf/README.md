@@ -18,7 +18,7 @@ node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"ada
 node scripts/perf/render.mjs --report                           # writes .lab/perf/render-report.md, a table over commits
 ```
 
-Other options: `--seconds 10`, `--dev` (the dev renderer, slower than `out/`), `--covered` (see below).
+Other options: `--seconds 10`, `--dev` (the dev renderer, slower than `out/`).
 
 One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
 
@@ -54,7 +54,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 
 `GPU ms` can be larger than `wall ms`: it was 45 ms against 25 ms for `three`, at 43 pictures per second. So `GPU ms` is not a share of the frame budget. The cause is not confirmed. Use `wall ms` for the budget, and `GPU ms` to compare runs.
 
-`util%` needs a visible window. A covered window gives the same `GPU ms`, but the window server does no work for it: `plain` gave 55% in front of the other windows and 24% behind them. So the bench sets `SPACE_ON_TOP=1`, and the window floats over the founder's apps with no keyboard focus. This also shows it over a full-screen app, and it can change the Dock icon for the time of a run. `--covered` turns this off. The run reports a `PROBLEM` when the window is less than 95% visible.
+A run must never take the founder's screen. The window opens with no focus, away from the visible area (`SPACE_WINDOW_AWAY=1`). `seen` records this as a plain fact, and `util%` then holds no window server work for this window.
 
 `SPACE_WORLD_TUNE` holds JSON with measuring switches. An absent key changes nothing. They are not settings for users. `node scripts/lab/lab.mjs start --tune '<json>'` passes them to a lab app.
 

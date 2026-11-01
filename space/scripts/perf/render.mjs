@@ -5,11 +5,11 @@
  * a table with the change against the last run of the same scene, tune and mode.
  * What each number means: scripts/perf/README.md.
  *
- *   node scripts/perf/render.mjs [--scenes film,plain] [--tune <json>] [--label x] [--seconds 10] [--dev] [--covered]
+ *   node scripts/perf/render.mjs [--scenes film,plain] [--tune <json>] [--label x] [--seconds 10] [--dev]
  *   node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"adaptive":0}]'
  *   node scripts/perf/render.mjs --report
  *
- * --dev: the dev renderer, not out/. --covered: the window does not stay in front.
+ * --dev: the dev renderer, not out/. The window opens behind the other windows, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -49,19 +49,21 @@ const topProcesses = async () => {
 
 /** The share of the app's window that is on screen and in no other window's shade, 0 to 1, on a grid. Null: this Mac gave no answer. */
 const COVER_SCRIPT = `
-ObjC.import('CoreGraphics'); ObjC.import('Foundation');
+ObjC.import('AppKit'); ObjC.import('CoreGraphics');
 function run(argv) {
   const pids = argv.map(Number), list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0)));
   const at = list.findIndex((w) => pids.includes(w.kCGWindowOwnerPID) && w.kCGWindowLayer <= 3);
   if (at < 0) return JSON.stringify({ share: 0 });
   const r = list[at].kCGWindowBounds, front = list.slice(0, at).filter((w) => w.kCGWindowLayer <= 3 && w.kCGWindowAlpha > 0.5).map((w) => w.kCGWindowBounds);
+  const screens = ObjC.deepUnwrap($.NSScreen.screens).map((s) => s.frame), top = screens[0].size.height;
+  const onScreen = (x, y) => screens.some((s) => x >= s.origin.x && x < s.origin.x + s.size.width && y >= top - s.origin.y - s.size.height && y < top - s.origin.y);
   let open = 0, all = 0;
   for (let i = 0; i < 40; i++) for (let j = 0; j < 25; j++) {
     const x = r.X + ((i + 0.5) * r.Width) / 40, y = r.Y + ((j + 0.5) * r.Height) / 25;
     all++;
-    if (!front.some((f) => x >= f.X && x < f.X + f.Width && y >= f.Y && y < f.Y + f.Height)) open++;
+    if (onScreen(x, y) && !front.some((f) => x >= f.X && x < f.X + f.Width && y >= f.Y && y < f.Y + f.Height)) open++;
   }
-  return JSON.stringify({ share: open / all, width: r.Width, height: r.Height });
+  return JSON.stringify({ share: open / all, x: r.X, y: r.Y, width: r.Width, height: r.Height });
 }`
 
 async function windowShare(pids) {
@@ -213,11 +215,10 @@ async function seedInk(state, cdp) {
   await sleep(1000)
 }
 
-async function runScene(scene, { tune, label, seconds, dev, covered, identity }) {
+async function runScene(scene, { tune, label, seconds, dev, identity }) {
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
-  if (covered) delete process.env.SPACE_ON_TOP
-  else process.env.SPACE_ON_TOP = '1'
+  process.env.SPACE_WINDOW_AWAY = '1'
   const state = await startInstance({ name: NAME, mcpPort: MCP_PORT, debugPort: DEBUG_PORT, built: !dev, fresh: true })
   const lines = []
   let cdp = null
@@ -228,7 +229,7 @@ async function runScene(scene, { tune, label, seconds, dev, covered, identity })
     const motion = (ms) => panAndZoom(cdp, ms)
     const size = await cdp.evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, visibility: document.visibilityState, zoom: window.__spaceDev.state().zoom })')
     const windowAt = await windowShare(state.pids)
-    const base = { at: new Date().toISOString(), scene, label, mode: dev ? 'dev' : 'built', tune: tune ?? null, ...identity, window: { ...size, visibleShare: windowAt?.share ?? null, width: windowAt?.width ?? size.width, height: windowAt?.height ?? size.height } }
+    const base = { at: new Date().toISOString(), scene, label, mode: dev ? 'dev' : 'built', tune: tune ?? null, ...identity, window: { ...size, visibleShare: windowAt?.share ?? null, x: windowAt?.x ?? null, y: windowAt?.y ?? null, width: windowAt?.width ?? size.width, height: windowAt?.height ?? size.height } }
     lines.push({ ...base, phase: scene === 'ink' ? 'pan' : 'hold', ...(await measure(cdp, seconds, scene === 'ink' ? motion : null)) })
     if (scene === 'film') lines.push({ ...base, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
     await cdp.evaluate('window.__spaceDev.perf.stop()')
@@ -290,7 +291,6 @@ function printChange(lines, before) {
 function problems(line) {
   const found = []
   const world = line.world
-  if (line.window.visibleShare !== null && line.window.visibleShare < 0.95) found.push(`the window is only ${fixed(line.window.visibleShare * 100, 0)}% visible`)
   if (line.window.visibility !== 'visible') found.push(`the page is ${line.window.visibility}`)
   if (!line.fps) found.push('no paints')
   if (line.scene !== 'ink') {
@@ -322,7 +322,7 @@ async function main() {
   if (matrix && scenes.length !== 1) throw new Error('--matrix runs one scene: give one with --scenes.')
   const tune = option('--tune', null)
   const tunes = matrix ? JSON.parse(matrix) : [tune ? JSON.parse(tune) : null]
-  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), covered: flag('--covered'), identity: codeIdentity() }
+  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), identity: codeIdentity() }
   const done = guardRun(NAME, 'render')
   mkdirSync(OUT, { recursive: true })
   const before = readHistory()
