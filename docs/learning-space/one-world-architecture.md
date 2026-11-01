@@ -111,7 +111,11 @@ sequenceDiagram
   page sets the canvas size and transform in the paint that adopts the picture.
 - **Tick and render are separate.** A camera move or a change in another world
   composites again. It does not advance a paused world.
-- **On demand.** With nothing to tick and no change, nothing renders.
+- **On demand.** With nothing to tick and no change, nothing renders. The check in
+  `picture.ts` reads identities and versions of buffers and textures, groups and the
+  look's own material flag, in place, so a tick allocates nothing.
+- **No pixels left behind.** A world that leaves the picture or joins it counts as a
+  change with no render, so the page gets one more picture.
 
 ## 4. One world's view: no frame, no stretch
 
@@ -141,6 +145,8 @@ flowchart LR
   visible edge. Culling uses reach, not the placeholder, so a world with an anchor
   outside the view still shows what reaches into the view. Samples of the points
   serve only the fit of the floor and the focus.
+- The floor's shadow pass borrows the world's layers and `scene.overrideMaterial`, and
+  gives them back after the pass, also after an error.
 - Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
   real alpha. The last pass writes premultiplied colour.
 - Toon and plain: the direct path. The scene renders once into the world's 8-bit

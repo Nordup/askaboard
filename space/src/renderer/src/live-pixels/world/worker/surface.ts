@@ -218,6 +218,8 @@ export const SURFACE = String.raw`
    * and a world that waits shows its last output. At least one world renders per picture.
    */
   const PICTURE_MS = 26;
+  /** The worlds of the last picture. */
+  let pictured = [];
   const paint = () => {
     if (!surface.camera || dead) return;
     let changed = surface.dirty;
@@ -252,9 +254,12 @@ export const SURFACE = String.raw`
         try { renderPlan(plan); changed = true; } catch (e) { fail(plan.w, e); }
       }
       trimTargets();
-      if (!changed) { if (meter) meterDrop(); return; }
       const list = [];
       for (const w of worlds.values()) if (w.placement && w.placement.shown && w.output && w.drawn && !w.culled) list.push(w);
+      // An output that left or joined the picture is a change with no render: the page must not keep its pixels.
+      if (list.length !== pictured.length || list.some((w) => !pictured.includes(w))) changed = true;
+      if (!changed) { if (meter) meterDrop(); return; }
+      pictured = list;
       list.sort((a, b) => a.placement.z - b.placement.z);
       const cover = coverOf(list);
       fitCanvas(cover ? cover.r - cover.l : 1, cover ? cover.b - cover.t : 1);
