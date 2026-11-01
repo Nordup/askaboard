@@ -409,13 +409,15 @@ export const SURFACE = String.raw`
       steer(gpu.ms);
       kick();
     };
-    nativeSetTimeout(poll, 1);
+    // One wait for most of the time that the last fences took. A chain of short timers would pay for it twice: a poll per
+    // millisecond, and after five nested timers the browser's clamp of 4 ms, which can make a picture miss the display's beat.
+    nativeSetTimeout(poll, Math.max(1, smooth * 0.5));
   };
 
   // The frame loop.
-  let loop = false, busyFrame = false;
+  let loop = false, busyFrame = false, ticket = 0;
   const wanted = () => {
-    if (waiting || gpuBusy || !renderer || dead) return false;
+    if (waiting || gpuBusy || busyFrame || !renderer || dead) return false;
     if (surface.dirty && surface.camera) return true;
     for (const w of worlds.values()) {
       if (due(w)) return true;
@@ -438,8 +440,8 @@ export const SURFACE = String.raw`
   const schedule = () => {
     if (loop || !wanted()) return;
     loop = true;
-    let done = false;
-    const go = () => { if (done) return; done = true; loop = false; frame(); };
+    const mine = ++ticket;
+    const go = () => { if (mine !== ticket) return; ticket++; loop = false; frame(); };
     if (uncapped) { nativeSetTimeout(go, 0); return; }
     nativeRaf(go);
     nativeSetTimeout(go, 100);
@@ -452,8 +454,8 @@ export const SURFACE = String.raw`
     return { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs ? renderer.info.programs.length : 0, targets: shared.size, renders };
   };
 
-  /** Start the next frame now. The page showed the last picture, so the next one reaches its next paint. */
-  const kick = () => { if (!loop && wanted()) frame(); };
+  /** Start the next frame now, in place of any wait: the page showed the last picture, so the next one reaches its next paint. */
+  const kick = () => { if (!wanted()) return; ticket++; loop = false; frame(); };
 
   const handle = (m) => {
     if (m.type === 'view') {
