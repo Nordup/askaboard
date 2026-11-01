@@ -32,7 +32,9 @@ const MCP_PORT = 47882
 const DEBUG_PORT = 9482
 const PAN_SECONDS = 5
 /** Scenes with a file in render-scenes/. ink has none: it seeds the busy board. */
-const ALL_SCENES = ['film', 'plain', 'toon', 'many', 'three', 'ink']
+const ALL_SCENES = ['film', 'plain', 'toon', 'many', 'three', 'ink', 'three-film', 'many-film', 'shapes']
+/** The default run. The others are for one question: the film look with many worlds, or how a style looks. */
+const DEFAULT_SCENES = ['film', 'plain', 'toon', 'many', 'three', 'ink']
 
 const run = promisify(execFile)
 const { option, flag } = args()
@@ -382,7 +384,7 @@ async function seedInk(state, cdp) {
   await sleep(1000)
 }
 
-async function runScene(scene, { tune: given, label, seconds, dev, profile, burst, noPan, capped, identity }) {
+async function runScene(scene, { tune: given, label, seconds, dev, profile, burst, noPan, capped, shots, identity }) {
   const tune = capped ? given : { uncapped: 1, ...given }
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
@@ -401,6 +403,7 @@ async function runScene(scene, { tune: given, label, seconds, dev, profile, burs
       await profileScene(scene, state, cdp)
       return []
     }
+    if (shots) await cdp.screenshot(join(shots, `${scene}${label ? `-${label}` : ''}.png`))
     const motion = (ms) => panAndZoom(cdp, ms)
     const size = await cdp.evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, visibility: document.visibilityState, zoom: window.__spaceDev.state().zoom })')
     const windowAt = await windowShare(state.pids)
@@ -491,13 +494,13 @@ function writeReport(history) {
 
 async function main() {
   if (flag('--report')) return writeReport(readHistory())
-  const scenes = option('--scenes', ALL_SCENES.join(',')).split(',').filter(Boolean)
+  const scenes = option('--scenes', DEFAULT_SCENES.join(',')).split(',').filter(Boolean)
   for (const scene of scenes) if (!ALL_SCENES.includes(scene)) throw new Error(`Unknown scene "${scene}". Scenes: ${ALL_SCENES.join(', ')}`)
   const matrix = option('--matrix', null)
   if (matrix && scenes.length !== 1) throw new Error('--matrix runs one scene: give one with --scenes.')
   const tune = option('--tune', null)
   const tunes = matrix ? JSON.parse(matrix) : [tune ? JSON.parse(tune) : null]
-  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), burst: flag('--burst'), capped: flag('--capped'), noPan: flag('--no-pan'), identity: codeIdentity() }
+  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), burst: flag('--burst'), capped: flag('--capped'), shots: option('--shots', null), noPan: flag('--no-pan'), identity: codeIdentity() }
   const done = guardRun(NAME, 'render')
   mkdirSync(OUT, { recursive: true })
   const before = readHistory()

@@ -1,5 +1,9 @@
 /**
- * The look of a world: the port of the film look of
+ * The looks of a world. toon.ts holds the default. The direct path of toon and
+ * plain has one render call into the world's output. Nothing of the film look
+ * exists before a world uses it.
+ *
+ * The film look is the port of
  * docs/learning-space/drafts/library-landscape-2026-10-31/proofs/3d/lib/film.js.
  * Environment light, ACES tone mapping, soft shadows, a floor that catches a soft
  * shadow and a fading reflection, bloom, a shallow depth of field. Each part can
@@ -26,6 +30,7 @@ export const LOOK = String.raw`
   const PLAIN = { name: 'plain', exposure: 1, bloom: 0, threshold: 1.1, glowRadius: 0.32, dof: 0, shadows: false, shadow: 0.55, softness: 0.22, environment: 0, tone: false };
   /** The scale the numbers of film.js were tuned at: 2 pixels per board point. */
   const FILM_SCALE = 2;
+  const FILM_KEY = 2.6;
   /**
    * The look's bloom: radii in board points and their weights, measured against UnrealBloomPass of film.js at 2 pixels per point.
    * look.glowRadius 0.32 is that size; another value scales the radii. BLOOM_LEVELS: the most levels of the pyramid.
@@ -66,10 +71,19 @@ export const LOOK = String.raw`
     if (tune.env === 0) forced.environment = 0;
     tuned = Object.keys(forced).length ? forced : null;
   };
-  const lookOf = (w) => (tuned ? Object.assign({}, w.look, tuned) : w.look);
+  const lookOf = (w) => {
+    const toon = w.look.name === 'toon';
+    return tuned || toon ? Object.assign({}, w.look, tuned, toon ? TOON_NEVER : null) : w.look;
+  };
+  /** One render call into the output: no pass after the scene. Materials write display colours, premultiplied by blending. */
+  const isDirect = (look) => look.name === 'toon' || (look.name === 'plain' && !(look.bloom > 0) && !(look.dof > 0));
   const noTone = () => ({ toneMapped: false, depthTest: false, depthWrite: false, transparent: false, blending: THREE.NoBlending });
 
-  const makeLook = () => {
+  let filmMade = false;
+  /** What the film path shares: made once, when the first world needs it, so a board of toon worlds never pays for it. */
+  const makeFilm = () => {
+    if (filmMade) return;
+    filmMade = true;
     const pm = new THREE.PMREMGenerator(renderer);
     environment = pm.fromScene(envScene(), 0.03).texture;
     pm.dispose();
@@ -189,14 +203,27 @@ export const LOOK = String.raw`
     camera.position.set(5, 2.2, 9);
     camera.lookAt(0, 0, 0);
 
-    const key = new THREE.DirectionalLight('#e8efff', 2.6);
+    const key = new THREE.DirectionalLight('#e8efff', FILM_KEY);
     key.position.set(4, 10, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     key.shadow.radius = 3; key.shadow.bias = -0.0005; key.shadow.normalBias = 0.02;
     const rim = new THREE.DirectionalLight('#ffd0ae', 1.4);
     rim.position.set(-6, 3, -7);
+    const stage = new THREE.Group();
+    stage.add(key, key.target, rim);
+    scene.add(stage);
 
+    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2() });
+    w.look = Object.assign({ key, rim }, materials);
+    w.floor = true;
+    dressToon(w);
+    setLook(w, 'toon');
+  };
+
+  /** The floor of a world, the first time the world shows one. */
+  const dressFloor = (w) => {
+    makeFilm();
     // The floor: a black mirror that fades out, plus soft shadow. Nothing past its fade, so the board shows.
     const reflection = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, toneMapped: false,
@@ -237,20 +264,15 @@ export const LOOK = String.raw`
     shadowMesh.renderOrder = -1;
     const lightView = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
     lightView.layers.set(SHADOW_LAYER);
-    const stage = new THREE.Group();
     const floorGroup = new THREE.Group();
     floorGroup.add(shadowMesh, floorMesh);
-    stage.add(key, key.target, rim, floorGroup);
-    scene.add(stage);
-
-    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, floorGroup, floorMesh, reflection, catcher, lightView, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2() });
-    w.look = Object.assign({ key, rim }, FILM, materials);
-    w.floor = true;
+    w.stage.add(floorGroup);
+    Object.assign(w, { floorGroup, floorMesh, reflection, catcher, lightView });
   };
 
   /** Free what a world holds on the GPU. Shared textures stay: the environment, the floor's mask, the pool's targets. */
   const undressWorld = (w) => {
-    const seen = new Set();
+    const seen = new Set([inkMaterial, inkGeometry]);
     const freeTexture = (t) => {
       if (!t || !t.isTexture || seen.has(t) || t === floorMask || t === environment || t.isRenderTargetTexture) return;
       seen.add(t);
@@ -274,13 +296,18 @@ export const LOOK = String.raw`
     w.drawn = null;
   };
 
-  /** world.look = "plain", "film", or an object of changes. */
+  /** world.look = "toon", "plain", "film", or an object of changes. */
   const setLook = (w, value) => {
-    if (value === 'plain') Object.assign(w.look, PLAIN);
+    if (value === 'toon') Object.assign(w.look, TOON_LOOK);
+    else if (value === 'plain') Object.assign(w.look, PLAIN);
     else if (value === 'film') Object.assign(w.look, FILM);
     else if (value && typeof value === 'object') Object.assign(w.look, value);
-    else throw new Error('world.look: "film", "plain", or an object of changes');
+    else throw new Error('world.look: "toon", "film", "plain", or an object of changes');
     if (value === 'plain') w.floor = false;
+    if (value === 'toon') { w.keyLight.color.set('#ffffff'); w.keyLight.intensity = TOON_KEY; }
+    if (value === 'film') { w.keyLight.color.set('#e8efff'); w.keyLight.intensity = FILM_KEY; }
+    // A program holds the look, so what was compiled in another look compiles again.
+    w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
     w.stale = true;
   };
   /** world.floor = false, true, or an object: y, the height of the floor. */
@@ -289,7 +316,7 @@ export const LOOK = String.raw`
     w.floorBuilt = false;
     w.stale = true;
   };
-  const floorOn = (w) => !!w.floor && tune.floor !== 0;
+  const floorOn = (w) => !!w.floor && tune.floor !== 0 && w.look.name !== 'toon';
 
   /**
    * Fit the floor and the key light to the world. film.js does this once. A world here can grow or travel after that,
@@ -304,6 +331,7 @@ export const LOOK = String.raw`
     buildFloor(w, grown, w.floorY);
   };
   const buildFloor = (w, box, keepY) => {
+    if (!w.floorGroup) dressFloor(w);
     const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() * 0.5;
     const given = typeof w.floor === 'object' && typeof w.floor.y === 'number';
     const y = keepY !== undefined ? keepY : given ? w.floor.y : box.min.y - (box.max.y - box.min.y) * 0.1;
@@ -422,7 +450,8 @@ export const LOOK = String.raw`
 
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
   const renderWorld = (w, s, crop, inner, output) => {
-    const look = lookOf(w), camera = w.camera;
+    const look = lookOf(w), camera = w.camera, direct = isDirect(look);
+    if (!direct || look.environment > 0) makeFilm();
     rendering = w;
     // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
     const W = output.width, H = output.height, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
@@ -442,14 +471,21 @@ export const LOOK = String.raw`
       renderer.shadowMap.type = THREE.PCFShadowMap;
       w.scene.environment = look.environment > 0 ? environment : null;
       w.scene.environmentIntensity = look.environment;
-      const lit = look.name !== 'plain';
-      w.keyLight.visible = lit; w.rimLight.visible = lit;
+      w.keyLight.visible = look.name !== 'plain'; w.rimLight.visible = look.name === 'film'; w.toonFill.visible = look.name === 'toon';
       w.keyLight.castShadow = !!look.shadows;
 
       const on = floorOn(w);
       const floor = on && w.floorBuilt;
-      w.floorGroup.visible = floor;
+      if (w.floorGroup) w.floorGroup.visible = floor;
       aimCamera(w, s, inner);
+      w.inkPass.visible = false;
+
+      if (direct) {
+        if (look.name === 'toon') beginToon(w, look, W, H, surface.dpr * res);
+        renderer.setRenderTarget(output);
+        renderer.render(w.scene, camera);
+        return;
+      }
 
       if (floor) {
         w.catcher.visible = !!look.shadows;
@@ -484,7 +520,7 @@ export const LOOK = String.raw`
         r.spread.value.set(((12 * s) / FILM_SCALE) / iw, ((12 * s) / FILM_SCALE) / ih);
       }
 
-      const scene = sceneTarget(IW, IH, look.name === 'plain');
+      const scene = sceneTarget(IW, IH, look.name !== 'film');
       renderer.setRenderTarget(scene);
       renderer.clear();
       renderer.render(w.scene, camera);
@@ -510,6 +546,7 @@ export const LOOK = String.raw`
       u.display.value = look.name === 'plain' ? 1 : 0;
       pass(finalMat, output);
     } finally {
+      endToon();
       rendering = null;
       renderer.setRenderTarget(saved.target);
       renderer.autoClear = saved.autoClear;

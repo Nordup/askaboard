@@ -6,6 +6,7 @@ import { PICTURE } from './picture'
 import { REALM } from './realm'
 import { STATS } from './stats'
 import { SURFACE } from './surface'
+import { TOON } from './toon'
 import { TOUCH } from './touch'
 import { VIEW } from './view'
 
@@ -22,7 +23,8 @@ import { VIEW } from './view'
  * - view.ts: what a world really draws (reach), the crop, the render targets.
  * - touch.ts: pick, pins, ink, the hand's events, the anchor.
  * - picture.ts: whether a tick changed what a render would show.
- * - look.ts: the film look of one world into its private output.
+ * - toon.ts: the toon look, the default.
+ * - look.ts: the looks of one world into its private output, and the film look.
  * - stats.ts: what one second of rendering cost, while the page asks for it.
  * - surface.ts: compositing, pictures, the frame loop, the messages.
  */
@@ -64,6 +66,7 @@ ${REALM}
 ${VIEW}
 ${TOUCH}
 ${PICTURE}
+${TOON}
 ${LOOK}
 ${STATS}
 ${SURFACE}

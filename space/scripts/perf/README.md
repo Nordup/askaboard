@@ -20,7 +20,7 @@ node scripts/perf/render.mjs --report                           # writes .lab/pe
 
 A run is uncapped by default (tune key `uncapped: 1`): no picture waits for a page paint or a display frame, and Chromium starts with `--disable-frame-rate-limit` and `--disable-gpu-vsync`. So `pict/s` and `fps` show headroom, and they can pass 60 on a 60 Hz screen. `--capped` runs as a normal user does. Each history line has `uncapped`, and a run compares only with a run of the same state. History lines before 2026-11-01 have no `uncapped` field: they are capped.
 
-Other options: `--seconds 10`, `--no-pan`, `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
+Other options: `--seconds 10`, `--no-pan`, `--shots <folder>` (a screenshot of each scene after it plays), `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
 
 One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
 
@@ -28,10 +28,12 @@ One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its
 | --- | --- |
 | `film` | One molecule of 24 meshes in the film look. |
 | `plain` | The same molecule in the plain look. |
-| `toon` | The plain look with toon materials and a hull for each mesh. |
-| `many` | One world with 400 separate meshes, turning. |
-| `three` | Three worlds side by side, turning. |
+| `toon` | The same molecule in the default look, with its ink. |
+| `many` | One world with 400 separate meshes, turning, in the default look. |
+| `three` | Three worlds side by side, turning, in the default look. |
 | `ink` | The busy board, no world. |
+| `three-film`, `many-film` | `three` and `many` in the film look. Not in the default run. Runs before 2026-11-01 of `three`, `many` and `toon` are film or hand-made: compare them with these, or with care. |
+| `shapes` | Not in the default run. One world with a torus knot, a box, a texture, a glow, glass, instances and a line: for looking at a style. |
 
 Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has the window size and pixel ratio, the camera zoom, the top 5 processes, the commit and dirty flag, the three.js and Electron versions, the machine, the tune and the label. A table column with `-` has no value: `ink` has no world numbers. A line `PROBLEM` means that the run is not valid, and the exit code is 1.
 

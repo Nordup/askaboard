@@ -2,7 +2,7 @@
 const code = `
 const g = new THREE.Group()
 const ball = new THREE.SphereGeometry(0.11, 16, 12)
-const material = world.look.gloss({ color: "#5b7fd6" })
+const material = world.look.gloss("#5b7fd6")
 for (let i = 0; i < 400; i++) {
   const y = 1 - (2 * i + 1) / 400
   const r = Math.sqrt(1 - y * y)

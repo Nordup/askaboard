@@ -96,9 +96,10 @@ export const SURFACE = String.raw`
 
   const renderPlan = (plan) => {
     const { w, place, crop, res, W, H } = plan;
-    if (!w.output || w.output.width !== W || w.output.height !== H) {
+    const direct = isDirect(lookOf(w));
+    if (!w.output || w.output.width !== W || w.output.height !== H || w.output.direct !== direct) {
       if (w.output) giveOutput(w.output);
-      w.output = takeOutput(W, H);
+      w.output = takeOutput(W, H, direct);
     }
     renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output);
     w.drawn = { s: place.s, crop, res };
@@ -266,7 +267,7 @@ export const SURFACE = String.raw`
       const crop = snapped((reach.l - glow) * s, (reach.t - glow) * s, (reach.r + glow) * s, (reach.b + glow) * s);
       if (!crop) return null;
       const W = crop.r - crop.l, H = crop.b - crop.t;
-      target = takeOutput(W, H);
+      target = takeOutput(W, H, isDirect(lookOf(w)));
       renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target);
       const data = new Uint8Array(W * H * 4);
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
@@ -493,7 +494,7 @@ export const SURFACE = String.raw`
       setTune(m.tune);
       uncapped = !!tune.uncapped;
       sizeSurface(m);
-      makeLook();
+      makeToon();
       makeSurface();
       core = false;
       booted = true;

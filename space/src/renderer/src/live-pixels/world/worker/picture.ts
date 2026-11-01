@@ -70,7 +70,7 @@ export const PICTURE = String.raw`
 
     const LIGHT = ['intensity', 'distance', 'decay', 'angle', 'penumbra', 'width', 'height', 'power'];
     const object = (o) => {
-      if (o === w.floorGroup) return;
+      if (o === w.floorGroup || o === w.inkPass) return;
       put(o.id); put(o.visible);
       if (o.isCamera && o !== w.camera) { for (const n of o.matrixWorld.elements) put(n); }
       else if (!o.isCamera) for (const n of o.matrixWorld.elements) put(n);
@@ -100,7 +100,7 @@ export const PICTURE = String.raw`
     for (const key of ['fov', 'near', 'far', 'zoom', 'left', 'right', 'top', 'bottom', 'filmGauge', 'filmOffset', 'focus']) value(c[key], 0);
     value(s.background, 0); value(s.fog, 0); put(s.environmentIntensity); put(s.backgroundIntensity); put(s.backgroundBlurriness);
     if (s.overrideMaterial) material(s.overrideMaterial);
-    for (const key of Object.keys(w.look)) { const v = w.look[key]; if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') { put(key); put(v); } }
+    for (const key of Object.keys(w.look)) { const v = w.look[key]; if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') { put(key); put(v); } else if (Array.isArray(v)) value(v, 0); }
     value(typeof w.floor === 'object' ? { ...w.floor } : w.floor, 0);
     value(typeof w.reachSet === 'number' || typeof w.reachSet === 'string' ? w.reachSet : null, 0);
     for (const child of s.children) if (child !== c) object(child);

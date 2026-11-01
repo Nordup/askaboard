@@ -8,7 +8,6 @@ function atom(p, r, m) {
   const a = new THREE.Mesh(ball, m)
   a.position.copy(p)
   a.scale.setScalar(r)
-  a.userData.grow = new THREE.Vector3(1.07, 1.07, 1.07)
   g.add(a)
   parts.push(a)
 }
@@ -17,7 +16,6 @@ function bond(a, b, m) {
   c.position.copy(a).add(b).multiplyScalar(0.5)
   c.scale.y = a.distanceTo(b)
   c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize())
-  c.userData.grow = new THREE.Vector3(1.5, 1, 1.5)
   g.add(c)
   parts.push(c)
 }
@@ -32,16 +30,6 @@ function molecule(carbon, hydrogen, link) {
     atom(h, 0.26, hydrogen)
     bond(c, n, link)
     bond(c, h, link)
-  }
-}
-function hull(color) {
-  const m = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide })
-  for (const p of parts.slice()) {
-    const h = new THREE.Mesh(p.geometry, m)
-    h.position.copy(p.position)
-    h.quaternion.copy(p.quaternion)
-    h.scale.copy(p.scale).multiply(p.userData.grow)
-    g.add(h)
   }
 }
 function studyLights() {
