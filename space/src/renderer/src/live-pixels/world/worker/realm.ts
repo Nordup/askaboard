@@ -39,7 +39,7 @@ export const REALM = String.raw`
   let core = false;
   const owner = () => (core ? null : current || setting || last);
   // Who runs, for the page: a worker in an endless loop answers no ping, so the page keeps the last of these.
-  // Only changes go out. The runtime's own work counts as nobody.
+  // Only changes go out. A paint does not reset it, so a world alone on a board costs no message per tick.
   let announced = null;
   const announce = (w) => {
     if (w === announced) return;

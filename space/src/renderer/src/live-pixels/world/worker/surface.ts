@@ -32,15 +32,18 @@ export const SURFACE = String.raw`
    * A pan keeps the size: it grows at once in steps of GRID, and it shrinks only after SHRINK_AFTER pictures that all fit a smaller one.
    */
   const SHRINK_AFTER = 60;
-  let canvasW = 0, canvasH = 0, roomy = 0;
+  let canvasW = 0, canvasH = 0, roomy = 0, peakW = 0, peakH = 0;
   const fitCanvas = (W, H) => {
     const needW = Math.max(GRID, Math.ceil(W / GRID) * GRID), needH = Math.max(GRID, Math.ceil(H / GRID) * GRID);
-    const small = needW < canvasW || needH < canvasH;
-    roomy = small ? roomy + 1 : 0;
-    if (needW <= canvasW && needH <= canvasH && !(small && roomy >= SHRINK_AFTER)) return;
+    peakW = roomy ? Math.max(peakW, needW) : needW;
+    peakH = roomy ? Math.max(peakH, needH) : needH;
+    roomy++;
+    if (needW > canvasW || needH > canvasH) {
+      canvasW = Math.max(canvasW, needW); canvasH = Math.max(canvasH, needH);
+    } else if (roomy < SHRINK_AFTER) return;
+    else if (peakW === canvasW && peakH === canvasH) { roomy = 0; return; }
+    else { canvasW = peakW; canvasH = peakH; }
     roomy = 0;
-    canvasW = small ? needW : Math.max(needW, canvasW);
-    canvasH = small ? needH : Math.max(needH, canvasH);
     renderer.setSize(canvasW, canvasH, false);
   };
 
@@ -217,7 +220,6 @@ export const SURFACE = String.raw`
   const PICTURE_MS = 26;
   const paint = () => {
     if (!surface.camera || dead) return;
-    announce(null);
     let changed = surface.dirty;
     core = true;
     try {
@@ -274,7 +276,6 @@ export const SURFACE = String.raw`
       watchGpu();
     } finally {
       core = false;
-      announce(setting);
     }
   };
 
