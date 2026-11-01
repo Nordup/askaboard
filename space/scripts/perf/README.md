@@ -50,6 +50,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `long` | Long tasks of the main thread in the phase. |
 | `draws`, `tris`, `pass` | Draw calls, triangles and `renderer.render` calls per picture, over all passes. |
 | `MP` | Output pixels of the worlds rendered per picture, in millions. A pass inside a world can use more pixels than this. |
+| `bmp` | Pixels of the bitmap that goes to the page per picture, in millions: the canvas that covers the worlds, and more than `MP` when worlds stand apart. |
 | `res` | The lowest resolution share of a shown world in the phase. 1 is full resolution. Dynamic resolution lowers it while worlds move. |
 | `util%` | `Device Utilization %` of `ioreg`, median over the phase. It is the whole GPU: this app, the window server and the other apps. |
 | `load` | The 1-minute load average at the end of the phase. |

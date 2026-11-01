@@ -17,8 +17,9 @@ import * as worker from './worker'
  * for, and the page shows the picture in its own paint (`sync`), with the CSS
  * transform from that camera to the camera of the paint. So a world moves with
  * the ink in the same paint, and a slow page gets fewer pictures, not late ones.
- * The canvas is larger than the board by WORLD_MARGIN on each side, so a pan
- * shows no empty edge before the next picture.
+ * A picture covers only what worlds reach, up to WORLD_MARGIN past the board on
+ * each side, so a pan shows no empty edge before the next picture. It says where
+ * it lies (`box`), and the canvas takes that place and size in the same paint.
  *
  * The frame and the worker start with the first world. A board with no world
  * pays one map lookup per paint.
@@ -169,7 +170,10 @@ export class WorldSurface {
   private waiting: Picture | null = null
   /** The camera of the picture on the canvas. */
   private shownCamera: WorldCamera | null = null
+  /** Where that picture lies, in CSS pixels from the board's top-left corner at its camera. */
+  private shownBox: Picture['box'] | null = null
   private size = ''
+  private boxSize = ''
   private transform = ''
   private lastView = ''
   private seq = 0
@@ -387,13 +391,13 @@ export class WorldSurface {
     const [vw, vh] = viewport
     if (!this.canvas || !this.context || vw < 2 || vh < 2) return
     const view: WorldCamera = { x: camera.center[0] - vw / 2 / camera.zoom, y: camera.center[1] - vh / 2 / camera.zoom, zoom: camera.zoom }
-    this.resize(this.canvas, vw, vh)
+    this.resize(vw, vh)
     this.adopt(this.context)
     this.follow(this.canvas, view)
     this.sendView(view)
   }
 
-  private resize(canvas: HTMLCanvasElement, vw: number, vh: number): void {
+  private resize(vw: number, vh: number): void {
     const dpr = Math.min(window.devicePixelRatio || 1, tune.dpr ?? Infinity)
     const size = `${vw}x${vh}@${dpr}`
     if (size === this.size) return
@@ -401,12 +405,6 @@ export class WorldSurface {
     this.size = size
     if (first) this.begin({ type: 'init', width: vw, height: vh, dpr, margin: margin() })
     else this.post({ type: 'resize', width: vw, height: vh, dpr })
-    const m = margin()
-    canvas.style.left = `${-m}px`
-    canvas.style.top = `${-m}px`
-    canvas.style.width = `${vw + m * 2}px`
-    canvas.style.height = `${vh + m * 2}px`
-    canvas.style.transformOrigin = `${m}px ${m}px`
   }
 
   private adopt(context: ImageBitmapRenderingContext): void {
@@ -421,6 +419,7 @@ export class WorldSurface {
     if (!picture) return
     context.transferFromImageBitmap(picture.bitmap)
     this.shownCamera = picture.camera
+    this.shownBox = picture.box
     for (const member of this.members.values()) member.showPoints(picture.points[member.key.node])
     this.board?.points(picture.points)
     this.settle(picture)
@@ -432,11 +431,18 @@ export class WorldSurface {
     this.post({ type: 'presented', n: picture.n })
   }
 
-  /** The transform from the picture's camera to the camera of this paint, around the board's top-left corner. */
+  /** The picture's place: its box at its camera, then the transform from that camera to the camera of this paint, around the board's top-left corner. */
   private follow(canvas: HTMLCanvasElement, view: WorldCamera): void {
     const shown = this.shownCamera
-    if (!shown) return
-    const transform = `translate(${(shown.x - view.x) * view.zoom}px, ${(shown.y - view.y) * view.zoom}px) scale(${view.zoom / shown.zoom})`
+    const box = this.shownBox
+    if (!shown || !box) return
+    const size = `${box.width}x${box.height}`
+    if (size !== this.boxSize) {
+      this.boxSize = size
+      canvas.style.width = `${box.width}px`
+      canvas.style.height = `${box.height}px`
+    }
+    const transform = `translate(${(shown.x - view.x) * view.zoom}px, ${(shown.y - view.y) * view.zoom}px) scale(${view.zoom / shown.zoom}) translate(${box.x}px, ${box.y}px)`
     if (transform === this.transform) return
     this.transform = transform
     canvas.style.transform = transform

@@ -18,7 +18,7 @@ export const STATS = String.raw`
   const perPicture = (total, pictures) => (pictures ? total / pictures : null);
 
   const clearWindow = (m) => {
-    Object.assign(m, { from: realNow(), pictures: 0, gpu: [], fence: [], wall: [], cpu: [], pixels: 0, calls: 0, triangles: 0, passes: 0, worlds: 0, waited: 0 });
+    Object.assign(m, { from: realNow(), pictures: 0, gpu: [], fence: [], wall: [], cpu: [], pixels: 0, calls: 0, triangles: 0, passes: 0, worlds: 0, waited: 0, bitmap: 0 });
   };
 
   /** The answers of finished timer queries. A disjoint period makes a result useless, so that result is dropped. */
@@ -52,7 +52,7 @@ export const STATS = String.raw`
       gpuSource: !gpu.length ? null : gpu === m.fence ? 'fence' : 'timer',
       gpuMsMedian: middle(gpu, 0.5), gpuMsP95: middle(gpu, 0.95), fenceMsMedian: middle(m.fence, 0.5),
       pictureMsMedian: middle(m.wall, 0.5), cpuMsMedian: middle(m.cpu, 0.5), resolution: share,
-      megapixels: perPicture(m.pixels / 1e6, n), drawCalls: perPicture(m.calls, n), triangles: perPicture(m.triangles, n), passes: perPicture(m.passes, n),
+      megapixels: perPicture(m.pixels / 1e6, n), bitmapMegapixels: perPicture(m.bitmap / 1e6, n), drawCalls: perPicture(m.calls, n), triangles: perPicture(m.triangles, n), passes: perPicture(m.passes, n),
       programs: memory.programs, textures: memory.textures, geometries: memory.geometries, targets: memory.targets,
       crops, worldsAlive: alive, worldsRendered: perPicture(m.worlds, n), worldsWaited: perPicture(m.waited, n)
     } });
@@ -105,7 +105,7 @@ export const STATS = String.raw`
     m.query = null;
   };
   /** The picture is on its way. pixels: of the worlds rendered for it; a picture that only composites again has none. */
-  const meterEnd = (pixels, waited) => {
+  const meterEnd = (pixels, waited, bitmap) => {
     const m = meter;
     const info = renderer.info.render;
     m.cpu.push(realNow() - m.began);
@@ -116,6 +116,7 @@ export const STATS = String.raw`
     m.passes += info.frame - m.frameAt;
     m.worlds += m.rendered;
     m.waited += waited;
+    m.bitmap += bitmap;
   };
   /** The fence of a picture signalled. */
   const meterFence = (ms, wall) => {

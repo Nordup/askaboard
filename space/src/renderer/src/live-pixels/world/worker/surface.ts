@@ -23,18 +23,52 @@ export const SURFACE = String.raw`
     if (typeof m.margin === 'number') surface.margin = m.margin;
     surface.width = Math.max(1, Math.round((m.width + 2 * surface.margin) * m.dpr));
     surface.height = Math.max(1, Math.round((m.height + 2 * surface.margin) * m.dpr));
-    renderer.setPixelRatio(1);
-    renderer.setSize(surface.width, surface.height, false);
     surface.dirty = true;
   };
 
-  /** Draw a world's output onto the canvas: premultiplied, with its opacity and its wipe. */
-  const compositeWorld = (w) => {
+  /**
+   * The canvas holds only what worlds cover. surface.width and height stay the space that crops and placements use, and a picture says
+   * where it lies in that space. So a small world on a large board costs a small bitmap: here, on the page and in the window server.
+   * A pan keeps the size: it grows at once in steps of GRID, and it shrinks only after SHRINK_AFTER pictures that all fit a smaller one.
+   */
+  const SHRINK_AFTER = 60;
+  let canvasW = 0, canvasH = 0, roomy = 0;
+  const fitCanvas = (W, H) => {
+    const needW = Math.max(GRID, Math.ceil(W / GRID) * GRID), needH = Math.max(GRID, Math.ceil(H / GRID) * GRID);
+    const small = needW < canvasW || needH < canvasH;
+    roomy = small ? roomy + 1 : 0;
+    if (needW <= canvasW && needH <= canvasH && !(small && roomy >= SHRINK_AFTER)) return;
+    roomy = 0;
+    canvasW = small ? needW : Math.max(needW, canvasW);
+    canvasH = small ? needH : Math.max(needH, canvasH);
+    renderer.setSize(canvasW, canvasH, false);
+  };
+
+  /** Where the outputs of these worlds fall on the surface, in whole pixels, or null when nowhere. */
+  const coverOf = (list) => {
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const w of list) {
+      const d = w.drawn, p = placed(w), k = p.s / d.s;
+      for (let i = 0; i < 4; i++) {
+        const qx = (i & 1 ? d.crop.r : d.crop.l) * k, qy = (i & 2 ? d.crop.b : d.crop.t) * k;
+        const x = p.cx + p.a * qx + p.c * qy, y = p.cy + p.b * qx + p.d * qy;
+        if (x < l) l = x;
+        if (x > r) r = x;
+        if (y < t) t = y;
+        if (y > b) b = y;
+      }
+    }
+    l = Math.max(0, Math.floor(l)); t = Math.max(0, Math.floor(t)); r = Math.min(surface.width, Math.ceil(r)); b = Math.min(surface.height, Math.ceil(b));
+    return r > l && b > t ? { l, t, r, b } : null;
+  };
+
+  /** Draw a world's output onto the canvas, whose top-left is (x, y) on the surface: premultiplied, with its opacity and its wipe. */
+  const compositeWorld = (w, x, y) => {
     const d = w.drawn, p = placed(w), u = compositeMat.uniforms;
     const ox = d.crop.l, oy = d.crop.t, qw = d.crop.r - d.crop.l, qh = d.crop.b - d.crop.t;
     const scale = p.s / d.s;
-    const toClipX = 2 / surface.width, toClipY = -2 / surface.height;
-    u.origin.value.set((p.cx + (p.a * ox + p.c * oy) * scale) * toClipX - 1, (p.cy + (p.b * ox + p.d * oy) * scale) * toClipY + 1);
+    const toClipX = 2 / canvasW, toClipY = -2 / canvasH;
+    u.origin.value.set((p.cx - x + (p.a * ox + p.c * oy) * scale) * toClipX - 1, (p.cy - y + (p.b * ox + p.d * oy) * scale) * toClipY + 1);
     u.axisX.value.set(p.a * qw * scale * toClipX, p.b * qw * scale * toClipY);
     u.axisY.value.set(p.c * qh * scale * toClipX, p.d * qh * scale * toClipY);
     u.t.value = w.output.texture;
@@ -219,18 +253,22 @@ export const SURFACE = String.raw`
       const list = [];
       for (const w of worlds.values()) if (w.placement && w.placement.shown && w.output && w.drawn && !w.culled) list.push(w);
       list.sort((a, b) => a.placement.z - b.placement.z);
+      const cover = coverOf(list);
+      fitCanvas(cover ? cover.r - cover.l : 1, cover ? cover.b - cover.t : 1);
+      const x = cover ? cover.l : 0, y = cover ? cover.t : 0;
       renderer.setRenderTarget(null);
       renderer.autoClear = false;
       renderer.setClearColor(0x000000, 0);
       renderer.clear();
-      for (const w of list) compositeWorld(w);
+      if (cover) for (const w of list) compositeWorld(w, x, y);
       if (meter) meterStop();
       const bitmap = canvas.transferToImageBitmap();
-      if (meter) meterEnd(pixels, skipped);
+      if (meter) meterEnd(pixels, skipped, canvasW * canvasH);
       surface.dirty = false;
       waiting = !uncapped;
       sent++;
-      post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, bitmap, points: boardPoints() }, [bitmap]);
+      const box = { x: x / surface.dpr - surface.margin, y: y / surface.dpr - surface.margin, width: canvasW / surface.dpr, height: canvasH / surface.dpr };
+      post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, box, bitmap, points: boardPoints() }, [bitmap]);
       picturePixels = pixels;
       watchGpu();
     } finally {
@@ -491,6 +529,7 @@ export const SURFACE = String.raw`
         if (at) fail(at, error); else console.error(error);
       };
       renderer.setClearColor(0x000000, 0);
+      renderer.setPixelRatio(1);
       setTune(m.tune);
       uncapped = !!tune.uncapped;
       sizeSurface(m);

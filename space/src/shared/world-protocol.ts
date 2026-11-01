@@ -129,6 +129,8 @@ export interface WorldStats {
   resolution: number
   /** Output pixels rendered per picture, in millions. */
   megapixels: number | null
+  /** Pixels of the bitmap sent per picture, in millions. */
+  bitmapMegapixels: number | null
   drawCalls: number | null
   triangles: number | null
   /** renderer.render calls per picture. */
@@ -209,6 +211,8 @@ export type WorldToPage =
       /** The view it was rendered for. */
       seq: number
       camera: WorldCamera
+      /** Where the bitmap lies, in CSS pixels from the board's top-left corner at that camera. */
+      box: { x: number; y: number; width: number; height: number }
       bitmap: ImageBitmap
       /** Board positions of published points by node, name: [x, y, visible], for exactly the state in this picture. */
       points: Record<string, Record<string, [number, number, boolean]>>
