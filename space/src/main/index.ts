@@ -281,6 +281,9 @@ function registerIpc(): void {
   ipcMain.on(IPC.devCloseAnswer, (_event, button: unknown) => {
     if (remoteDebugPort !== null && typeof button === 'number') answerCloseDialog?.(button)
   })
+  ipcMain.on(IPC.worldLog, (_event, level: unknown, text: unknown) => {
+    if (typeof level === 'string' && typeof text === 'string') agentServer.worldLog(level, text)
+  })
   ipcMain.on(IPC.worldTune, (event) => {
     event.returnValue = worldTune
   })
@@ -585,7 +588,7 @@ void app.whenReady().then(async () => {
     }
   })
   registerAssetProtocol()
-  registerLiveItemProtocol()
+  registerLiveItemProtocol(() => session)
   // Disk work runs beside the first paint, not before it.
   firstFolder = openInitialFolder().then(() => {
     setFolderOpen(session !== null)

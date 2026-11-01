@@ -1,6 +1,6 @@
 # One world: the architecture
 
-> **Status (2026-11-01):** all slices are built. GPT-6.1 Sol
+> **Status (2026-11-01):** all slices are built, and worlds read files (section 7). GPT-6.1 Sol
 > reviewed slices 1 to 4 twice. A world is the only way to run code on the board
 > (decision P19). This file says how [`one-world-design.md`](one-world-design.md)
 > is built. Terms:
@@ -61,6 +61,7 @@ The `world/` paths are under `space/src/renderer/src/live-pixels/`.
 | `world/host.ts` | `WorldHost`: one world's link to the surface |
 | `world/surface.ts` | The iframe, the port, placements, the CSS transform |
 | `world/worker/realm.ts` | Time and `Math.random` per world, the clock, the API for a world's code |
+| `world/worker/files.ts` | Files of the learning folder for a world's code, loads, a world's console |
 | `world/worker/view.ts` | Reach and its bounds, the crop, the pool of render targets |
 | `world/worker/toon.ts` | The toon look, the default: bands of light and an ink line |
 | `world/worker/look.ts` | The direct path of toon and plain, and the film look: environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`). The film parts are made when the first world needs them |
@@ -220,6 +221,9 @@ flowchart LR
   page shows the new generation and removes the old one. Results that depend on
   display intervals, the network or the learner's input keep the limits of
   `clock.ts`.
+- **Files.** A relative path in world code reads the learning folder (section 7). A
+  seek runs the code again and reads again. Step time waits for each load, so a
+  replay and a still get the same content.
 - **Preview and screenshots.** `withStepHost` makes a `WorldHost` with a private
   headless surface. So stills use the same runtime. A still can be larger than the
   placeholder, so each still carries its box (`stillBoxes`). A capture draws in the
@@ -233,8 +237,62 @@ flowchart LR
   answering, the surface ends it, starts a new one, adds all worlds again, and
   keeps the named world stopped with a note.
 - **Context loss.** The surface restarts the same way.
+- **A world's console.** `console.log`, `info`, `debug`, `warn` and `error` also reach
+  the agent, as late notes (T31) in the next tool result. A generation sends at most 40
+  lines of 400 characters, and a line then says that the rest is left out. In main, a
+  line comes once per board until the next `write_scene`, because previews, pictures
+  and replays run the world again. At most 100 notes wait per board.
 
-## 7. Build slices
+## 7. Files and modules
+
+```mermaid
+flowchart LR
+  W["World code: fetch, Request, XMLHttpRequest, ImageLoader, import"] --> F["world/worker/files.ts"]
+  F -- "live-item://host/file?path=" --> M["main/live-item-protocol.ts"]
+  W -- "live-item://host/module/generation/path" --> M
+  M --> G["FolderSession.worldFile: the path check"]
+  G --> S["createReadStream: async, in chunks of 1 MiB"]
+```
+
+- **The route.** The worker's script is a data: URL, so a relative URL has no base.
+  `files.ts` changes a path with no scheme into a URL of the protocol that already
+  serves the libraries. The bytes come to the worker as a stream. They pass neither the
+  page nor IPC, so neither the board nor the main process waits for a large file, and
+  there is no size limit. An http or https URL behaves as before.
+- **What a world gets.** A normal `Response`. Three's loaders work with a path, because
+  `Request` changes too. `ImageLoader` needs an `img` element, which a worker does not
+  have, so it fetches, decodes and gives an `OffscreenCanvas`. A canvas follows `flipY`
+  as an image does, and an `ImageBitmap` does not.
+- **Safety.** `FolderSession.worldFile` uses the path check of the folder, after
+  symlinks. A path that leaves the folder, an absolute path, and a hidden name on the
+  real path give 403. So `.learning-space/` is out. A missing file and a directory give
+  404. A write gives 405. A `file:` URL fails in the browser. World code can use the
+  network, so it can send out what it reads. No rule stops this.
+- **Keeping reads.** The worker keeps a read as a Blob while a world that read it lives,
+  and 10 s more. Each read sends the tag of the kept Blob, and main answers 304 while size
+  and time stay the same. So a seek reads no bytes again, and a file changed on disk
+  reads as it is now: **a replay does not snapshot files.** A scene record holds no
+  binary. After a change on disk, a replay can differ from what the learner saw.
+- **Modules.** `import` and `import()` with a relative path start at `boards/scenes/`.
+  Each generation has its own URL prefix, so its modules run again, as its code does,
+  also after a change of a helper. Bare names in a module go through the same table as
+  in world code. A computed `import(name)` resolves when it runs. **World modules are
+  read at run time, not at `write_scene`:** the stage knows a world's source only when
+  the program runs, and a snapshot needs a second record of what ran (B34). A worker
+  frees module instances only when it ends, so each seek of a world with helpers adds a
+  little memory.
+- **Loads and hangs.** A load is a read or an item of three's default `LoadingManager`,
+  which lasts to the end of a loader's parse. A step world waits for loads, also between
+  ticks, so a still shows what loaded. While loads run, and after them for 20 s plus 1 s
+  per 5 MB, the page does not take a silent worker as hung. A step host waits the same
+  time. A parse that blocks the worker past that limit still ends the worker. A loader
+  with its own `LoadingManager` counts only for the time of its reads.
+- **The picture after a load.** After the last load each world gets three picture
+  checks, at 30, 200 and 800 ms. A check renders only what changed. So a model shows with
+  no `world.redraw()`, also from `scene.add` or a texture. A `parse()` that ends later
+  than the last check still needs `world.redraw()` in a world with no frame loop.
+
+## 8. Build slices
 
 ```mermaid
 flowchart LR
@@ -247,7 +305,7 @@ flowchart LR
 Slice 5 removed `shader`, `canvas` and `program` (P19). An older item keeps its data
 in the board file and shows a note at its place.
 
-## 8. Decisions in this build
+## 9. Decisions in this build
 
 - The toon look is the default (P21). `world.look = "film"` gives the film look with
   its floor and soft shadow, and every part can change (`world.look = "plain"`,

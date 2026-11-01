@@ -1,6 +1,7 @@
 import { BLEND_GAP, paramsAtTime } from '../../../live/params'
-import { LOCAL_LIBRARIES, programBody, resolveLiveSpecifier } from '@shared/live-libs'
+import { LIVE_ORIGIN, LOCAL_LIBRARIES, programBody, resolveLiveSpecifier } from '@shared/live-libs'
 import { WORLD_TICK_HZ } from '@shared/world-protocol'
+import { FILES } from './files'
 import { LOOK } from './look'
 import { PICTURE } from './picture'
 import { REALM } from './realm'
@@ -20,6 +21,7 @@ import { VIEW } from './view'
  *
  * - realm.ts: time, Math.random and timers per world, the clock, the API that
  *   a world's code gets.
+ * - files.ts: files of the learning folder, loads, a world's console.
  * - view.ts: what a world really draws (reach), the crop, the render targets.
  * - touch.ts: pick, pins, ink, the hand's events, the anchor.
  * - picture.ts: whether a tick changed what a render would show.
@@ -53,9 +55,13 @@ function source(): string {
   const hz = ${WORLD_TICK_HZ};
   const paramsAtTime = ${paramsAtTime.toString()};
   const BLEND_GAP = ${BLEND_GAP};
+  const LIVE_ORIGIN = ${JSON.stringify(LIVE_ORIGIN)};
   const LIBS = ${JSON.stringify(librariesTable())};
+  // A relative import starts here: boards/scenes/ of the world that compiles or calls import() now.
+  let importBase = '';
   const ${resolveLiveSpecifier.name} = (spec) => {
-    if (/^(\\.{0,2}\\/|[a-z][a-z0-9+.-]*:)/i.test(spec)) return spec;
+    if (/^\\.{1,2}\\//.test(spec)) return new URL(spec, importBase).href;
+    if (/^(\\/|[a-z][a-z0-9+.-]*:)/i.test(spec)) return spec;
     if (LIBS.exact[spec]) return LIBS.exact[spec];
     for (const [head, url] of LIBS.prefix) if (spec.startsWith(head)) return url + spec.slice(head.length);
     return 'https://esm.sh/' + spec;
@@ -63,6 +69,7 @@ function source(): string {
   const resolveLibrary = ${resolveLiveSpecifier.name};
   const compileBody = ${programBody.toString()};
 ${REALM}
+${FILES}
 ${VIEW}
 ${TOUCH}
 ${PICTURE}

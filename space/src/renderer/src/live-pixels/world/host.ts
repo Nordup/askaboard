@@ -65,6 +65,8 @@ export interface HostEvents {
   onProgress?(tick: number): void
   onInput?(mode: LiveInput): void
   onReport?(values: unknown): void
+  /** The worker loads files: it can stay silent for this long and not be hung. */
+  onLoading?(ms: number): void
 }
 
 function blobUrl(blob: unknown): Promise<string | null> {
@@ -205,6 +207,9 @@ export class WorldHost implements WorldMember {
       case 'report':
         this.events.onReport?.(m.values)
         break
+      case 'log':
+        window.space?.worldLog(m.level, m.text)
+        break
     }
   }
 
@@ -218,6 +223,10 @@ export class WorldHost implements WorldMember {
     if (this.shown || !this.startsLive || this.stopped) return
     this.show()
     this.events.onAlive(1, 0)
+  }
+
+  loading(ms: number): void {
+    this.events.onLoading?.(ms)
   }
 
   /** The points of the picture on the surface. */

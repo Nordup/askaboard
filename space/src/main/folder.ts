@@ -37,6 +37,18 @@ const IMAGE_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml'
 }
 
+/** Types of the other files that worlds read. */
+const WORLD_TYPES: Record<string, string> = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json'
+}
+
 /** Names the listing and the watcher skip: dotfiles, dot-dirs, node_modules. */
 const isHiddenName = (name: string): boolean => name.startsWith('.') || name === 'node_modules'
 
@@ -381,6 +393,20 @@ export class FolderSession {
     } finally {
       await handle.close()
     }
+  }
+
+  /**
+   * A file for a world's code (main/live-item-protocol.ts): a regular file in the
+   * folder, with no hidden name on its real path, so .learning-space/ stays apart.
+   * A missing file throws ENOENT, as a directory does; any other refused path throws too.
+   */
+  async worldFile(rel: string): Promise<{ path: string; size: number; tag: string; type: string }> {
+    const path = await realpath(await this.resolvePath(rel))
+    if (relative(this.root, path).split(sep).some(isHiddenName)) throw new Error(`Path is hidden: ${rel}`)
+    const info = await stat(path)
+    if (!info.isFile()) throw Object.assign(new Error(`Not a file: ${rel}`), { code: 'ENOENT' })
+    const ext = extname(path).toLowerCase()
+    return { path, size: info.size, tag: `${info.size}-${info.mtimeMs}`, type: IMAGE_TYPES[ext] ?? WORLD_TYPES[ext] ?? 'application/octet-stream' }
   }
 
   /**

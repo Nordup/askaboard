@@ -168,10 +168,14 @@ export const REALM = String.raw`
 
   /** Lines that new AsyncFunction puts before the code. */
   const HEADER_LINES = 2;
+  /** A text with the protocol's URLs as the paths that an agent wrote. */
+  const readable = (text) => text
+    .split(LIVE_ORIGIN + '/module/').map((part, i) => (i ? part.replace(/^\d+\//, '') : part)).join('')
+    .split(FILE_URL).map((part, i) => (i ? part.replace(/^[^\s"')]*/, (path) => decodeURIComponent(path.split('&')[0])) : part)).join('');
   /** A clean message: positions in the world's lines, no frames of the runtime. */
   const messageOf = (error) => {
     const text = error && error.stack ? String(error.stack) : error && error.message ? String(error.message) : String(error);
-    return text
+    return readable(text)
       .replace(/world\.js:(\d+):(\d+)/g, (_, line, col) => 'line ' + (Number(line) - HEADER_LINES) + ':' + col)
       .split('\n')
       .filter((line) => !/^\s+at .*(data:text|<anonymous>)/.test(line))
@@ -368,6 +372,7 @@ export const REALM = String.raw`
   // Step mode: the world's setup first, until it asks for a frame or a timer, or its top level ends (imports load in real time).
   const setupDone = async (w) => {
     while (!w.callbacks.size && !w.frames.length && !w.timers.size && !w.setUp && !w.failed) await new Promise((resolve) => nativeSetTimeout(resolve, 10));
+    await filesDone(w);
   };
   const advance = async (w, request, to, wantStill) => {
     await setupDone(w);
@@ -376,6 +381,8 @@ export const REALM = String.raw`
     while (!w.failed) {
       const next = w.tick < 0 ? Math.min(w.from, to) : w.tick + 1;
       if (next > to) break;
+      // A file is real time: step time waits for it, so a still shows what loaded.
+      if (filesBusy()) await filesDone(w);
       if (next === to && wantStill) { w.captures.push(request); queued = true; }
       await runTick(w, next);
       await null;
@@ -482,7 +489,7 @@ export const REALM = String.raw`
   });
 
   const AsyncFunction = (async () => {}).constructor;
-  const WORLD_ARGS = ['THREE', 'world', 'params', 'scene', 'item', 'colors', 'on', 'input', 'report', 'publish'];
+  const WORLD_ARGS = ['THREE', 'world', 'params', 'scene', 'item', 'colors', 'on', 'input', 'report', 'publish', '__lsImportFile'];
 
   /** Top levels run one at a time. A top level that waits longer than this lets the next one start. */
   const SETUP_TURN_MS = 3000;
@@ -511,11 +518,13 @@ export const REALM = String.raw`
       if (!target || !(target.isObject3D || target.isVector3 || typeof target === 'function')) throw new Error('publish(name, target): target is an Object3D, a Vector3 or a function that gives [x, y, z]');
       partOf(w, name).target = target;
     };
-    const args = [THREE, worldApi(w), w.params, sceneApi, itemApi, Object.freeze(w.colors), on, input, (values) => report(w, values), publish];
+    const importFile = (spec) => { importBase = moduleBase(w); return import(resolveLibrary(String(spec))); };
+    const args = [THREE, worldApi(w), w.params, sceneApi, itemApi, Object.freeze(w.colors), on, input, (values) => report(w, values), publish, importFile];
     setting = w;
     announce(w);
     let turn = 0;
     try {
+      importBase = moduleBase(w);
       const code = new AsyncFunction(...WORLD_ARGS, "'use strict';" + compileBody(w.code) + '\n//# sourceURL=world.js');
       const main = inside(w, () => code(...args));
       main.then(
@@ -554,7 +563,7 @@ export const REALM = String.raw`
       timers: new Map(), timerHeap: [], callbacks: new Map(), callbacksNext: new Map(), framesNow: [], frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
-      reportTimer: 0, reportValue: undefined, lastReport: 0,
+      reportTimer: 0, reportValue: undefined, lastReport: 0, logLines: 0, files: new Set(),
       cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: weakGpu ? 1 : 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1, content: 0, sharpen: false, prepared: false, compiling: false, cost: newCost(), roseAt: -Infinity, heldUntil: 0, hold: 0
     };
@@ -579,6 +588,7 @@ export const REALM = String.raw`
     if (setting === w) setting = null;
     if (announced === w) announce(setting);
     if (w.reportTimer) nativeClearTimeout(w.reportTimer);
+    releaseFiles(w);
     w.timers.clear(); w.timerHeap.length = 0; w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear(); w.pins.clear(); w.strokes.length = 0;
     core = true;
     try { undressWorld(w); } finally { core = false; }
@@ -586,5 +596,8 @@ export const REALM = String.raw`
     schedule();
   };
 
-  nativeSetInterval(() => { for (const w of worlds.values()) post({ type: 'alive', key: w.key, frames: w.count, tick: w.tick }); }, 250);
+  nativeSetInterval(() => {
+    for (const w of worlds.values()) post({ type: 'alive', key: w.key, frames: w.count, tick: w.tick });
+    if (loads) post({ type: 'files', bytes: loadBytes });
+  }, 250);
 `

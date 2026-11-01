@@ -654,6 +654,8 @@ export interface SpaceApi {
   snapshotReady(reply: SnapshotReply): void
   /** Board window only: a scene's playback event, for the session trace (main/trace.ts scene_event). */
   sceneEvent(event: SceneEvent): void
+  /** A line of a world's console: it reaches the agent in the next tool result. */
+  worldLog(level: string, text: string): void
   /**
    * Board window only: ask for a port to the stage page, for the frames of
    * scenes (renderer/live/frames.ts). The port comes as a window message
@@ -711,6 +713,7 @@ export const IPC = {
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready',
   sceneEvent: 'space:scene-event',
+  worldLog: 'space:world-log',
   framesPort: 'space:frames-port',
   openSceneRecords: 'space:open-scene-records',
   sceneStories: 'space:scene-stories',

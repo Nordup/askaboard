@@ -86,8 +86,9 @@ export function programBody(source: string): string {
     if (rest) parts.push(`const ${rest} = ${m}.default;`)
     return `${lead}${indent}${parts.join(' ')}${pad}`
   })
-  // Dynamic import() calls keep their place; only their bare names change. `export` has no meaning here.
+  // Dynamic import() calls keep their place; only their names change. A computed name resolves when it runs. `export` has no meaning here.
   return body
     .replace(/(\bimport\s*\(\s*)(['"])([^'"\n]+)\2/g, (_, head: string, quote: string, spec: string) => `${head}${quote}${resolveLiveSpecifier(spec)}${quote}`)
+    .replace(/(?<![.\w$])import\s*\(\s*(?!['"])/g, '__lsImportFile(')
     .replace(/(^|\n)([ \t]*)export\s+(default\s+)?(?=(const|let|var|function|class|async)\b)/g, '$1$2')
 }

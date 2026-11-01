@@ -693,6 +693,7 @@ export const SURFACE = String.raw`
     booting = true;
     try {
       THREE = await import(resolveLibrary('three'));
+      watchLoaders();
       // Its own canvas, not the frame's: pictures reach the page by message, so nothing here is on screen.
       canvas = new OffscreenCanvas(1, 1);
       // No restore in place: the page starts a new worker and adds its worlds again.

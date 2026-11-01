@@ -40,6 +40,8 @@ const PING_MS = 500
 const HANG_MS = 2000
 /** A world's setup can take this long: a molecule or a model is a lot of work. */
 const SETUP_MS = 20000
+/** After a file, its parse can block the worker: this many milliseconds per byte more than a setup. */
+const PARSE_MS_PER_BYTE = 1 / 5000
 
 /** How a world stands on the board now, from the board's state. */
 export interface WorldPlace {
@@ -77,6 +79,8 @@ export interface WorldMember {
   showPoints(points: Record<string, [number, number, boolean]> | undefined): void
   /** Its code ran and gave the turn back: a world with no frame loop has only this to show that it is there. */
   settled(): void
+  /** The worker loads files, and it can stay silent for this long and not be hung. */
+  loading(ms: number): void
   receive(message: Extract<WorldToPage, { key: WorldKey }>): void
   failed(message: string): void
   lost(): void
@@ -206,6 +210,8 @@ export class WorldSurface {
   private pings = 0
   /** The world that runs now in the worker, as it last said. */
   private running: WorldKey | null = null
+  /** Until this time, a silent worker parses what it loaded. */
+  private loadingUntil = 0
   /** After a recovery: the view with the first world shown. Pictures before it do not show. */
   private recovering: { seq: number } | null = null
 
@@ -262,7 +268,7 @@ export class WorldSurface {
     this.checkedAt = now
     if (!this.answeredAt || this.outbox) return
     if (late || document.visibilityState === 'hidden' || !this.members.size) this.answeredAt = now
-    else if (now - this.answeredAt > ([...this.members.values()].some((member) => member.settingUp) ? SETUP_MS : HANG_MS)) {
+    else if (now >= this.loadingUntil && now - this.answeredAt > ([...this.members.values()].some((member) => member.settingUp) ? SETUP_MS : HANG_MS)) {
       this.recover(this.running)
       return
     }
@@ -345,6 +351,11 @@ export class WorldSurface {
       this.running = m.running
     }
     else if (m.type === 'lost') this.recover(null)
+    else if (m.type === 'files') {
+      const ms = SETUP_MS + m.bytes * PARSE_MS_PER_BYTE
+      this.loadingUntil = this.answeredAt + ms
+      for (const member of this.members.values()) member.loading(ms)
+    }
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }
 

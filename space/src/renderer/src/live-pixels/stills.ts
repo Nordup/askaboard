@@ -81,7 +81,10 @@ async function withStepHost<T>(
           failed = true
           options.onError?.(message)
         },
-        onLost: () => undefined
+        onLost: () => undefined,
+        onLoading: (ms) => {
+          moved = Math.max(moved, absNow() + ms - PROGRESS_MS)
+        }
       },
       null
     )

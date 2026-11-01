@@ -63,6 +63,8 @@ const WRITE_TIMEOUT_MS = 45_000
 /** A large scene can take a while to turn into board items; this only frees a renderer that never answers. */
 /** Scenes have no cap on their size: the board takes as long as it needs to compile one. */
 const SCENE_TIMEOUT_MS = Infinity
+/** Late notes on one board, past which a line of a world's console waits for none. */
+const WORLD_LOG_NOTES = 100
 /** How long the stage stays idle before work that no call waits for starts (a board's restore, an idle rebuild). */
 const STAGE_IDLE_MS = 300
 const MAX_BODY_BYTES = 64 * 1024 * 1024
@@ -772,6 +774,20 @@ export class AgentServer {
     const same = notes.find((note) => note.text === text)
     if (same) same.times++
     else notes.push({ text, times: 1 })
+  }
+
+  /** The console lines of each board since its last write_scene. A preview, a picture or a replay runs a world again, and the same line is no news. */
+  private readonly worldLogs = new Map<string, Set<string>>()
+
+  /** A new line of a world's console waits for the next tool result, as a late note. At most WORLD_LOG_NOTES wait per board, so replays with no agent to read them add no more. */
+  worldLog(level: string, text: string): void {
+    const board = this.boardKey()
+    const line = `World console${level === 'log' ? '' : ` ${level}`}: ${text.replace(/\s*\n\s*/g, ' ')}`
+    let lines = this.worldLogs.get(board)
+    if (!lines) this.worldLogs.set(board, (lines = new Set()))
+    if (lines.has(line) || (this.lateNotes.get(board)?.length ?? 0) >= WORLD_LOG_NOTES) return
+    lines.add(line)
+    this.addLateNote(board, line)
   }
 
   /** The late notes of the shown board, one line each, or ''. */
@@ -1505,6 +1521,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       this.tool(session, 'write_scene', async ({ name, code, file }, extra, trace) => {
         if ((code === undefined) === (file === undefined)) return failure(new Error('write_scene takes code or file: one of them, not both.'))
         const board = this.boardKey()
+        this.worldLogs.delete(board)
         const before = this.draftsOf(board).get(name)
         const seq = ++this.draftSeq
         // Its sweep has no more use: this write does not wait for it.
