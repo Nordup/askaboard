@@ -78,7 +78,7 @@ limits scripts and images.
 - **Rendering:** the content layer is real DOM under one CSS camera transform
   (`src/renderer/src/board/content.tsx`); ink is drawn on a canvas above it
   with the same camera (`paint.ts`; static ink comes from cached tiles,
-  `ink-tiles.ts`, decisions B28 and B40). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
+  `ink-tiles.ts`, decisions B28 and B40; stroke geometry has its own budget, decision B48). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
   history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Each kind of drag ends in one table, `dragEnds`, for a pointer up and for `settle` alike (decision B45). Undo: `history.ts`, a full snapshot on top of sparse changes between snapshots (decision B43). An agent edit is a change from the

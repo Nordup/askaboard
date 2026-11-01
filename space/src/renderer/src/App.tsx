@@ -24,6 +24,7 @@ import { dropTracker, moveTracker } from './agent/groups'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
 import { BoardHistory, boardBytes } from './board/history'
+import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { Sidebar, type BoardEntry } from './components/Sidebar'
@@ -1008,10 +1009,10 @@ export function App() {
         resources: () => liveResources(),
         validate: (code: string, params?: Record<string, number>) => validateWorld(code, params)
       },
-      /** What the memory bounds hold now: the frames of the replay history, the ink tiles, and the open board's change log and bytes. */
+      /** What the memory bounds hold now: the frames of the replay history, the ink tiles, the open board's change log and bytes, and the kept stroke geometry. */
       memory: () => {
         const entry = openRef.current ? cacheRef.current.get(openRef.current.path) : undefined
-        return { sceneBytes: scenePlayer.heldBytes(), tiles: boardRef.current?.tileStats() ?? null, revisions: entry?.log.revisionCount() ?? null, boardBytes: entry ? entryBytes(entry) : null }
+        return { sceneBytes: scenePlayer.heldBytes(), tiles: boardRef.current?.tileStats() ?? null, revisions: entry?.log.revisionCount() ?? null, boardBytes: entry ? entryBytes(entry) : null, strokeShapeBytes: strokeShapeBytes() }
       },
       /** The render meter (scripts/perf/render.mjs): start(), stop(), read(). */
       perf: perfMeter,
