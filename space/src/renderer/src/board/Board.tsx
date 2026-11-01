@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import type { ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
@@ -499,8 +499,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       }
       const box = mine ? restLayoutRef.current.get(id) : null
       const origin: Point = box ? [box.x, box.y] : [(node as ContentNode).x, (node as ContentNode).y]
-      const opacity = Number((node as ContentNode).style?.opacity ?? '1')
-      applyElementOverride(element, override, origin, Number.isFinite(opacity) ? opacity : 1)
+      applyElementOverride(element, override, origin, nodeOpacity(node as ContentNode))
       applied.set(id, element)
     }
     if (changed) for (const id of changed) show(id)

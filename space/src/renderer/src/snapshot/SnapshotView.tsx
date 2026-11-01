@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isLive, isOldLive, type BoardNode } from '@shared/board-format'
+import { isLive, isOldLive, nodeOpacity, type BoardNode } from '@shared/board-format'
 import type { SnapshotMark, SnapshotOverlays, SnapshotRequest } from '@shared/space-api'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
@@ -204,7 +204,7 @@ async function showWorlds(layer: HTMLDivElement | null, root: HTMLElement, index
     image.style.top = `${box.y + place.y}px`
     image.style.width = `${place.w}px`
     image.style.height = `${place.h}px`
-    const opacity = Number(node.style?.opacity ?? '1') || 1
+    const opacity = nodeOpacity(node)
     image.style.opacity = String(opacity)
     layer.appendChild(image)
     await image.decode().catch(() => undefined)
@@ -257,8 +257,7 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
         const element = elements.current.get(id)
         const box = layout.get(id)
         if (!element || !box) continue
-        const node = cell.index.byId.get(id) as { style?: { opacity?: string } } | undefined
-        applyElementOverride(element, override, [box.x, box.y], Number(node?.style?.opacity ?? '1') || 1)
+        applyElementOverride(element, override, [box.x, box.y], nodeOpacity(cell.index.byId.get(id) as { style?: { opacity?: unknown } } | undefined))
       }
       await showWorlds(worldsRef.current, root, cell.index, layout, overrides)
       const inks = inkPaintOrder(cell.index).map((node) => {

@@ -24,8 +24,11 @@ const BACKGROUND = '#111113'
 const capturePath = process.env.SPACE_CAPTURE
 /** Dev hook: quit after the capture. */
 const captureQuit = process.env.SPACE_CAPTURE_QUIT === '1'
-/** Dev hook: milliseconds between page load and capture (default 1000). */
-const captureDelay = Number(process.env.SPACE_CAPTURE_DELAY ?? 1000) || 1000
+/** Dev hook: milliseconds between page load and capture (default 1000; 0 is valid). */
+const captureDelay = (() => {
+  const delay = Number(process.env.SPACE_CAPTURE_DELAY ?? 1000)
+  return Number.isFinite(delay) ? delay : 1000
+})()
 /** Dev hook: open this learning folder at launch (overrides the last folder). */
 const launchFolder = process.env.SPACE_FOLDER
 /** Dev hook: a file (relative to the folder) to show in the preview at launch. */

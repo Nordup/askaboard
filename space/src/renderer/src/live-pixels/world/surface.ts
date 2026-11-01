@@ -1,4 +1,4 @@
-import type { LiveNode } from '@shared/board-format'
+import { nodeOpacity, type LiveNode } from '@shared/board-format'
 import { LIVE_ORIGIN } from '@shared/live-libs'
 import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldStats, WorldToPage } from '@shared/world-protocol'
 import type { WorldTune } from '@shared/world-tune'
@@ -121,7 +121,6 @@ function placement(member: WorldMember, place: WorldPlace): WorldPlacement {
   const cx = x + node.w / 2
   const cy = y + node.h / 2
   const matrix: WorldPlacement['matrix'] = m ? [m[0], m[1], m[2], m[3], m[0] * cx + m[2] * cy + m[4] - cx, m[1] * cx + m[3] * cy + m[5] - cy] : IDENTITY
-  const own = Number(node.style?.opacity ?? '1')
   return {
     ...member.key,
     x,
@@ -129,7 +128,7 @@ function placement(member: WorldMember, place: WorldPlace): WorldPlacement {
     w: node.w,
     h: node.h,
     matrix,
-    opacity: (Number.isFinite(own) ? own : 1) * (override?.opacity ?? 1),
+    opacity: nodeOpacity(node) * (override?.opacity ?? 1),
     reveal: override?.reveal ?? 1,
     z: node.z,
     shown: member.shown

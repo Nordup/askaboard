@@ -563,6 +563,14 @@ export function reconcileBoard(previous: BoardDoc, incoming: BoardDoc): { doc: B
   return { doc: { ...(incoming.id ? { id: incoming.id } : {}), nextSeq: seq, nodes, extra: incoming.extra }, removed, revisions }
 }
 
+/** An item's own opacity as a number. The one conversion: the board, the world surface and the screenshot read it here, so 0 stays 0 in all three. */
+export function nodeOpacity(node: { style?: { opacity?: unknown } } | undefined): number {
+  const raw = node?.style?.opacity
+  if (raw === undefined || raw === null || raw === '') return 1
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : 1
+}
+
 /** A short random node id, for example `s_k3j2x9qa`. */
 export function newItemId(prefix = 's'): string {
   const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
