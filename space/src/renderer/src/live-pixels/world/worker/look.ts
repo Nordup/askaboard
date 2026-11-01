@@ -59,6 +59,32 @@ export const LOOK = String.raw`
   let environment = null;
   /** The world whose passes run now. A failure in a pass belongs to it. */
   let rendering = null;
+  /** The world whose scene three walks now. What goes to the GPU in that walk belongs to this world. */
+  let holding = null;
+  /** The runtime's own parts: a scene pass meets them too, and no world owns them. */
+  const commonParts = new Set();
+  const owners = new WeakMap();
+  /**
+   * Who owns what is on the GPU. three listens for 'dispose' on all it allocates, geometry, material, texture, render target, at the first use.
+   * So that listener marks each resource once, also one that a world made and took out of its scene later, and nothing else needs a scan.
+   * When a resource goes while another world still draws it, three uploads it again for that world, and that world then owns it.
+   */
+  const watchResources = () => {
+    const dispatcher = THREE.EventDispatcher.prototype, on = dispatcher.addEventListener, off = dispatcher.removeEventListener;
+    dispatcher.addEventListener = function (type, fn) {
+      if (type === 'dispose' && holding && !owners.has(this) && !commonParts.has(this)) { owners.set(this, holding); holding.held.add(this); }
+      return on.call(this, type, fn);
+    };
+    dispatcher.removeEventListener = function (type, fn) {
+      const w = type === 'dispose' ? owners.get(this) : null;
+      if (w) { owners.delete(this); w.held.delete(this); }
+      return off.call(this, type, fn);
+    };
+  };
+  const drawWorld = (w, camera) => {
+    holding = w;
+    try { renderer.render(w.scene, camera); } finally { holding = null; }
+  };
   let quadScene = null, quadCam = null, quad = null, dofMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
   /** The measuring switches (SPACE_WORLD_TUNE), read once at boot. tuned: what they force on every look; null when they force nothing. */
   let tune = {}, tuned = null;
@@ -87,6 +113,7 @@ export const LOOK = String.raw`
     const pm = new THREE.PMREMGenerator(renderer);
     environment = pm.fromScene(envScene(), 0.03).texture;
     pm.dispose();
+    commonParts.add(environment);
     quadScene = new THREE.Scene();
     quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
@@ -177,6 +204,7 @@ export const LOOK = String.raw`
     for (const [p, col] of [[0, '#fff'], [0.55, '#aaa'], [1, '#000']]) r.addColorStop(p, col);
     g.fillStyle = r; g.fillRect(0, 0, 512, 512);
     floorMask = new THREE.CanvasTexture(c);
+    commonParts.add(floorMask).add(heightMat);
   };
 
   const pass = (mat, target) => {
@@ -214,7 +242,7 @@ export const LOOK = String.raw`
     stage.add(key, key.target, rim);
     scene.add(stage);
 
-    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2() });
+    Object.assign(w, { scene, root, camera, stage, keyLight: key, rimLight: rim, bounds: new THREE.Box3(), floorY: 0, lightSlope: new THREE.Vector2(), held: new Set() });
     w.look = Object.assign({ key, rim }, materials);
     w.floor = true;
     dressToon(w);
@@ -270,28 +298,18 @@ export const LOOK = String.raw`
     Object.assign(w, { floorGroup, floorMesh, reflection, catcher, lightView });
   };
 
-  /** Free what a world holds on the GPU. Shared textures stay: the environment, the floor's mask, the pool's targets. */
+  /** Free what a world holds on the GPU, by owner: also what left its scene before this. The pool's targets and the common parts stay. */
   const undressWorld = (w) => {
-    const seen = new Set([inkMaterial, inkGeometry]);
-    const freeTexture = (t) => {
-      if (!t || !t.isTexture || seen.has(t) || t === floorMask || t === environment || t.isRenderTargetTexture) return;
-      seen.add(t);
-      t.dispose();
-    };
     w.scene.traverse((o) => {
-      if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); o.geometry.dispose(); }
-      for (const m of [].concat(o.material || [])) {
-        if (seen.has(m)) continue;
-        seen.add(m);
-        for (const value of Object.values(m)) freeTexture(value);
-        if (m.uniforms) for (const u of Object.values(m.uniforms)) freeTexture(u.value);
-        m.dispose();
-      }
       if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose();
-      if ((o.isInstancedMesh || o.isLight) && o.dispose) o.dispose();
+      if (o.isLight && o.dispose) o.dispose();
     });
-    freeTexture(w.scene.background);
-    freeTexture(w.scene.environment);
+    for (const resource of [...w.held]) {
+      // A render target frees its own textures.
+      if (resource.isRenderTargetTexture) continue;
+      if (resource.dispose) resource.dispose(); else resource.dispatchEvent({ type: 'dispose' });
+    }
+    w.held.clear();
     if (w.output) { giveOutput(w.output); w.output = null; }
     w.drawn = null;
   };
@@ -446,7 +464,7 @@ export const LOOK = String.raw`
     try {
       renderer.setRenderTarget(target);
       renderer.clear();
-      renderer.render(scene, view);
+      drawWorld(w, view);
     } finally {
       scene.overrideMaterial = own;
       for (let i = 0; i < marks.length; i += 2) marks[i].layers.mask = marks[i + 1];
@@ -493,7 +511,7 @@ export const LOOK = String.raw`
       if (direct) {
         if (look.name === 'toon') beginToon(w, look, W, H, inkScale * res);
         renderer.setRenderTarget(output);
-        renderer.render(w.scene, camera);
+        drawWorld(w, camera);
         return;
       }
 
@@ -514,7 +532,7 @@ export const LOOK = String.raw`
         try {
           renderer.setRenderTarget(mirror);
           renderer.clear();
-          renderer.render(w.scene, camera);
+          drawWorld(w, camera);
         } finally {
           renderer.shadowMap.autoUpdate = saved.autoUpdate;
           w.keyLight.castShadow = castShadow;
@@ -533,7 +551,7 @@ export const LOOK = String.raw`
       const scene = sceneTarget(IW, IH, look.name !== 'film', samples);
       renderer.setRenderTarget(scene);
       renderer.clear();
-      renderer.render(w.scene, camera);
+      drawWorld(w, camera);
 
       let sharp = scene.texture;
       if (look.dof > 0 && camera.isPerspectiveCamera) {

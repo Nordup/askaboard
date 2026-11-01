@@ -76,6 +76,11 @@ world's time. After an `await` that link can be lost, so agents use `world.time`
 Each world pass sets its own renderer state and restores it, also after an error:
 size, pixel ratio, exposure, tone mapping, shadows, render target and clearing.
 
+A world owns what first reached the GPU in its scene pass: three listens for
+`dispose` on each resource at its first use, and `look.ts` marks the resource there.
+So teardown frees also what a world took out of its scene, and the runtime's common
+parts stay. A resource that another world still draws comes back on its next render.
+
 ## 3. One frame
 
 A review by GPT-6.1 Sol found that a message cannot prove which pixels are on
@@ -202,6 +207,8 @@ flowchart LR
   placeholder, so each still carries its box (`stillBoxes`). A capture draws in the
   tick and fixes all of its answer there. The pixels come back from a GPU buffer and
   flip in short turns, so other worlds on the worker keep their frames.
+- **Timers.** A world's timers wait in a heap, and a waiting timer costs no ticks. With
+  nothing else to do, the worker sleeps until the next deadline in real time.
 - **Errors.** Each tick of a world runs in a try block. An error stops that world
   only and shows the usual note.
 - **Endless loops.** `pong` names the world that was running. If the worker stops

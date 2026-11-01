@@ -597,6 +597,7 @@ export const SURFACE = String.raw`
       uncapped = !!tune.uncapped;
       sizeSurface(m);
       makeToon();
+      watchResources();
       makeSurface();
       core = false;
       booted = true;

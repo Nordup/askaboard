@@ -176,6 +176,7 @@ export const TOON = String.raw`
     inkGeometry = new THREE.BufferGeometry();
     inkGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
     inkGeometry.setDrawRange(0, 0);
+    commonParts.add(inkMaterial).add(inkGeometry);
   };
 
   /** The world's parts of the look. */
