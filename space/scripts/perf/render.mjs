@@ -8,6 +8,7 @@
  *   node scripts/perf/render.mjs [--scenes film,plain] [--tune <json>] [--label x] [--seconds 10] [--dev]
  *   node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"adaptive":0}]'
  *   node scripts/perf/render.mjs --report
+ *   node scripts/perf/render.mjs --scenes film --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
  *
  * --dev: the dev renderer, not out/. The window opens behind the other windows, with no focus.
  */
@@ -18,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { busyPieces } from '../bench/busy.mjs'
-import { args, cdpConnect, drive, guardRun, resultText, sceneHook, sleep, SPACE, startInstance, stopInstance, withMcp } from '../lab/common.mjs'
+import { args, cdpConnect, childPids, drive, guardRun, resultText, sceneHook, sleep, SPACE, startInstance, stopInstance, withMcp } from '../lab/common.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const OUT = join(SPACE, '.lab/perf')
@@ -183,6 +184,134 @@ async function measure(cdp, seconds, work) {
   }
 }
 
+// ---------- Where the CPU goes ----------
+
+/** CPU seconds so far of the app's processes, and of the window server. */
+async function processTimes(main) {
+  const { stdout } = await run('ps', ['-Ao', 'pid=,ppid=,time=,comm='])
+  const seconds = (text) => text.split(':').reduce((sum, part) => sum * 60 + Number(part), 0)
+  const family = new Set([main, ...childPids(main)])
+  const times = {}
+  for (const line of stdout.trim().split('\n')) {
+    const [pid, ppid, time, ...name] = line.trim().split(/\s+/)
+    const comm = name.join(' ').split('/').at(-1)
+    if (family.has(Number(pid)) || family.has(Number(ppid)) || comm === 'WindowServer') times[pid] = { name: comm, seconds: seconds(time) }
+  }
+  return times
+}
+
+/** Self time per function of one CPU profile, the top 10, in ms and as a share of the wall time. */
+function selfTimes(profile) {
+  const nodes = new Map(profile.nodes.map((node) => [node.id, node]))
+  const self = new Map()
+  profile.samples.forEach((id, i) => {
+    const { functionName, url, lineNumber } = nodes.get(id).callFrame
+    const key = `${functionName || '(anonymous)'} ${url.startsWith('data:') ? 'worker' : url.split('/').slice(-2).join('/')}:${lineNumber + 1}`
+    self.set(key, (self.get(key) ?? 0) + profile.timeDeltas[i] / 1000)
+  })
+  const wall = [...self.values()].reduce((a, b) => a + b, 0)
+  return { wallMs: Math.round(wall), top: [...self].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([name, ms]) => ({ name, ms: Math.round(ms), share: Math.round((ms / wall) * 1000) / 10 })) }
+}
+
+/** The page, and every frame and worker under it, through flat sessions. A frame gets the same auto-attach, so a worker in a sandboxed frame is found. */
+async function profileTargets(cdp, ms) {
+  const targets = [{ type: 'page', url: 'app page', session: undefined }]
+  const auto = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }
+  cdp.on((method, params) => {
+    if (method !== 'Target.attachedToTarget') return
+    const info = params.targetInfo
+    targets.push({ type: info.type, url: info.url.slice(0, 80), session: params.sessionId })
+    if (info.type !== 'worker') cdp.send('Target.setAutoAttach', auto, params.sessionId).catch(() => undefined)
+  })
+  await cdp.send('Target.setAutoAttach', auto)
+  await sleep(1000)
+  const profiled = targets.filter((target) => target.type === 'page' || target.type === 'worker' || target.type === 'iframe')
+  for (const target of profiled) {
+    await cdp.send('Profiler.enable', {}, target.session)
+    await cdp.send('Profiler.setSamplingInterval', { interval: 1000 }, target.session)
+    await cdp.send('Profiler.start', {}, target.session)
+  }
+  await sleep(ms)
+  const result = []
+  for (const target of profiled) {
+    const { profile } = await cdp.send('Profiler.stop', {}, target.session)
+    result.push({ type: target.type, url: target.url, ...selfTimes(profile) })
+  }
+  return { targets: targets.map(({ type, url }) => ({ type, url })), profiles: result }
+}
+
+/** A Chromium trace from the browser target: total ms per event name and thread, for what no JavaScript profile shows. Nested events count twice. */
+async function traceThreads(ms) {
+  const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()
+  const socket = new WebSocket(webSocketDebuggerUrl)
+  await new Promise((ok, fail) => {
+    socket.onopen = ok
+    socket.onerror = fail
+  })
+  const events = []
+  let ended
+  const over = new Promise((ok) => (ended = ok))
+  socket.onmessage = (message) => {
+    const data = JSON.parse(message.data)
+    if (data.method === 'Tracing.dataCollected') events.push(...data.params.value)
+    if (data.method === 'Tracing.tracingComplete') ended()
+  }
+  socket.send(JSON.stringify({ id: 1, method: 'Tracing.start', params: { transferMode: 'ReportEvents', traceConfig: { includedCategories: ['v8', 'v8.gc', 'v8.compile', 'disabled-by-default-v8.gc', 'devtools.timeline', 'toplevel', 'cc', 'viz', 'gpu', 'blink'] } } }))
+  await sleep(ms)
+  socket.send(JSON.stringify({ id: 2, method: 'Tracing.end' }))
+  await over
+  socket.close()
+  const threads = new Map()
+  for (const event of events) if (event.ph === 'M' && event.name === 'thread_name') threads.set(`${event.pid}:${event.tid}`, event.args.name)
+  const totals = new Map()
+  for (const event of events) {
+    if (event.ph !== 'X' || !event.dur) continue
+    const key = `${(threads.get(`${event.pid}:${event.tid}`) ?? 'thread').replace(/\/\d+$/, '')} | ${event.name}`
+    totals.set(key, (totals.get(key) ?? 0) + event.dur / 1000)
+  }
+  return [...totals].sort((a, b) => b[1] - a[1]).map(([name, total]) => ({ name, ms: Math.round(total) }))
+}
+
+/** Which process and thread uses the CPU, with no profiler on, and then the JavaScript of each thread that CDP can reach. */
+async function profileScene(scene, state, cdp) {
+  const main = state.pids[0]
+  await cdp.screenshot(join(OUT, `shot-${scene}.png`))
+  const from = await processTimes(main)
+  const start = Date.now()
+  await sleep(6000)
+  const to = await processTimes(main)
+  const wall = (Date.now() - start) / 1000
+  const processes = Object.entries(to)
+    .map(([pid, { name, seconds }]) => ({ pid: Number(pid), name, percent: Math.round(((seconds - (from[pid]?.seconds ?? seconds)) / wall) * 1000) / 10 }))
+    .sort((a, b) => b.percent - a.percent)
+  const busiest = processes.find((p) => p.name.includes('Renderer'))
+  const sampleFile = join(OUT, `sample-${scene}.txt`)
+  if (busiest) await run('sample', [String(busiest.pid), '5', '1', '-file', sampleFile]).catch(() => undefined)
+  const later = []
+  for (let i = 0; i < 3; i++) {
+    await sleep(20_000)
+    const a = await processTimes(main)
+    await sleep(5000)
+    const b = await processTimes(main)
+    later.push(Object.entries(b).filter(([pid]) => a[pid]).map(([pid, p]) => [p.name, Math.round((p.seconds - a[pid].seconds) * 20)]).sort((x, y) => y[1] - x[1]).slice(0, 3).join(' '))
+  }
+  console.log('later, 5 s windows:', later.join(' // '))
+  const trace = await traceThreads(5000)
+  const js = await profileTargets(cdp, 10_000)
+  const file = join(OUT, `profile-${scene}.json`)
+  writeFileSync(file, JSON.stringify({ processes, sampleFile, trace, ...js }, null, 1))
+  console.log('trace, ms in 5 s:')
+  for (const row of [...trace.slice(0, 8), ...trace.filter((t) => /Pool/.test(t.name)).slice(0, 14)]) console.log(`  ${String(row.ms).padStart(6)}  ${row.name}`)
+  console.log(`processes, % of one core over ${wall.toFixed(0)} s:`)
+  for (const p of processes.slice(0, 8)) console.log(`  ${String(p.percent).padStart(6)}  ${p.name} (${p.pid})`)
+  console.log(`targets: ${js.targets.map((t) => t.type).join(', ')}`)
+  for (const profile of js.profiles) {
+    console.log(`${profile.type} ${profile.url}: ${profile.wallMs} ms`)
+    for (const row of profile.top) console.log(`  ${String(row.ms).padStart(6)} ms ${String(row.share).padStart(5)}%  ${row.name}`)
+  }
+  console.log(`written: ${file}, ${sampleFile}`)
+}
+
 // ---------- One run ----------
 
 async function playScene(scene, state, cdp) {
@@ -218,7 +347,7 @@ async function seedInk(state, cdp) {
   await sleep(1000)
 }
 
-async function runScene(scene, { tune, label, seconds, dev, identity }) {
+async function runScene(scene, { tune, label, seconds, dev, profile, identity }) {
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
   process.env.SPACE_WINDOW_AWAY = '1'
@@ -229,6 +358,10 @@ async function runScene(scene, { tune, label, seconds, dev, identity }) {
     cdp = await cdpConnect(DEBUG_PORT)
     if (scene === 'ink') await seedInk(state, cdp)
     else await playScene(scene, state, cdp)
+    if (profile) {
+      await profileScene(scene, state, cdp)
+      return []
+    }
     const motion = (ms) => panAndZoom(cdp, ms)
     const size = await cdp.evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, visibility: document.visibilityState, zoom: window.__spaceDev.state().zoom })')
     const windowAt = await windowShare(state.pids)
@@ -326,7 +459,7 @@ async function main() {
   if (matrix && scenes.length !== 1) throw new Error('--matrix runs one scene: give one with --scenes.')
   const tune = option('--tune', null)
   const tunes = matrix ? JSON.parse(matrix) : [tune ? JSON.parse(tune) : null]
-  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), identity: codeIdentity() }
+  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), identity: codeIdentity() }
   const done = guardRun(NAME, 'render')
   mkdirSync(OUT, { recursive: true })
   const before = readHistory()
@@ -340,6 +473,7 @@ async function main() {
     }
   }
   done()
+  if (!lines.length) return
   printTable(lines)
   printChange(lines, before)
   const failed = lines.flatMap((line) => problems(line).map((text) => `${line.scene}:${line.phase}: ${text}`))

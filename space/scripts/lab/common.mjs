@@ -58,7 +58,7 @@ export function args(argv = process.argv.slice(2)) {
   }
   return { option, flag, positional }
 }
-const BOOLEAN_FLAGS = new Set(['--video', '--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
+const BOOLEAN_FLAGS = new Set(['--video', '--profile', '--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
 
 // ---------- Processes ----------
 
@@ -366,7 +366,7 @@ export async function cdpConnect(port) {
   socket.onmessage = (message) => {
     const data = JSON.parse(message.data)
     if (data.id === undefined) {
-      for (const fn of listeners) fn(data.method, data.params)
+      for (const fn of listeners) fn(data.method, data.params, data.sessionId)
       return
     }
     const entry = pending.get(data.id)
@@ -375,7 +375,7 @@ export async function cdpConnect(port) {
     if (data.error) entry.reject(new Error(`${entry.method}: ${data.error.message}`))
     else entry.resolve(data.result)
   }
-  const send = (method, params = {}) =>
+  const send = (method, params = {}, sessionId) =>
     new Promise((ok, fail) => {
       if (socket.readyState !== WebSocket.OPEN) {
         fail(new Error(`${method}: the debug socket is closed`))
@@ -383,7 +383,7 @@ export async function cdpConnect(port) {
       }
       const id = ++nextId
       pending.set(id, { resolve: ok, reject: fail, method })
-      socket.send(JSON.stringify({ id, method, params }))
+      socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
     })
   const evaluate = async (expression) => {
     const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
