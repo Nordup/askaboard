@@ -112,7 +112,7 @@ export interface BoardChange {
   deleted: boolean
 }
 
-export type MenuCommand = 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
+export type MenuCommand = 'open-folder' | 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -560,18 +560,19 @@ export interface SpaceApi {
   readonly frameLimitOff: number | null
 
   getInitialState(): Promise<Snapshot>
-  /** Show the system folder picker. Resolves null when the user cancels. */
-  openFolderDialog(): Promise<Snapshot | null>
-  /** Open a folder from the recent list. Other paths are refused. */
-  openRecent(path: string): Promise<Snapshot>
+  /** Ask the learner for a folder. Nothing opens yet: openFolder does that, after the renderer saved. */
+  pickFolder(): Promise<string | null>
+  /** Make this folder (a picked or a recent one) the open one. The renderer calls it inside its folder switch, after its saves. */
+  openFolder(path: string): Promise<Snapshot>
   listFiles(): Promise<FileTree>
 
-  readBoard(path: string): Promise<string>
+  /** Reads and writes name their folder (`root`): they go to that folder, whichever folder is open by then. */
+  readBoard(root: string, path: string): Promise<string>
   /**
    * Atomic write (temp file + rename). Only `*.board.json` paths. `info` carries the
    * learner's changes in this save (for the learner-edit log) and the serialise time (for the save log).
    */
-  writeBoard(path: string, text: string, info?: BoardSaveInfo): Promise<void>
+  writeBoard(root: string, path: string, text: string, info?: BoardSaveInfo): Promise<void>
   /** Create `boards/Untitled N.board.json`, or `<folder>/<name>.board.json` when given. Resolves the new path. */
   createBoard(name?: string, folder?: string): Promise<string>
   /** Rename the file. Resolves the new path. */
@@ -601,8 +602,8 @@ export interface SpaceApi {
   onGuideOverrides(listener: (overrides: GuideOverrides) => void): Unsubscribe
 
   getCamera(path: string): Promise<Camera | null>
-  setCamera(path: string, camera: Camera): void
-  setLastBoard(path: string | null): void
+  setCamera(root: string, path: string, camera: Camera): void
+  setLastBoard(root: string, path: string | null): void
   /** The board at path opened (its id from the file, or null): its scene stories, and the id it must have (main/scene-store.ts). */
   openSceneRecords(path: string, id: string | null): Promise<BoardStories>
   /** The open board's scene stories after a new record line. */
@@ -610,7 +611,6 @@ export interface SpaceApi {
   /** Board window only: run these scenes, restored from the board's records after a restart, again on the stage, so the player can replay them (main/mcp.ts ensureMemories). Resolves when it is done. */
   rebuildScenes(sceneIds: string[]): Promise<void>
 
-  onFolderOpened(listener: (snapshot: Snapshot) => void): Unsubscribe
   onFilesChanged(listener: (tree: FileTree) => void): Unsubscribe
   onBoardChanged(listener: (change: BoardChange) => void): Unsubscribe
   onMenuCommand(listener: (command: MenuCommand) => void): Unsubscribe
@@ -655,8 +655,8 @@ export const IPC = {
   worldTune: 'space:world-tune',
   frameLimitOff: 'space:frame-limit-off',
   getInitialState: 'space:get-initial-state',
-  openFolderDialog: 'space:open-folder-dialog',
-  openRecent: 'space:open-recent',
+  pickFolder: 'space:pick-folder',
+  openFolder: 'space:open-folder',
   listFiles: 'space:list-files',
   readBoard: 'space:read-board',
   writeBoard: 'space:write-board',
@@ -677,7 +677,6 @@ export const IPC = {
   getCamera: 'space:get-camera',
   setCamera: 'space:set-camera',
   setLastBoard: 'space:set-last-board',
-  folderOpened: 'space:folder-opened',
   filesChanged: 'space:files-changed',
   boardChanged: 'space:board-changed',
   menuCommand: 'space:menu-command',

@@ -46,7 +46,12 @@ const SAVE_DELAY_MS = 400
 const SAVE_MAX_WAIT_MS = 2000
 const CAMERA_SAVE_DELAY_MS = 500
 
+/** A board's key across folders. */
+const saveKey = (root: string, path: string): string => `${root}\0${path}`
+
 interface OpenBoard {
+  /** The folder the board came from: its saves go there, whichever folder is open by then. */
+  root: string
   path: string
   /** Changes when the Board must remount: a board switch or a reload from disk. */
   key: number
@@ -116,21 +121,23 @@ export function App() {
   const openTokenRef = useRef(0)
   const openingRef = useRef(false)
   const preferredBoardRef = useRef<string | null>(null)
+  /** The folder the renderer shows: reads and new boards belong to it. */
+  const rootRef = useRef<string | null>(null)
 
   // ---------- Saving ----------
 
-  const pendingRef = useRef<{ path: string; doc: BoardDoc } | null>(null)
+  const pendingRef = useRef<{ root: string; path: string; doc: BoardDoc } | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** When the oldest unsaved change was made, or null when all is saved. */
   const unsavedSinceRef = useRef<number | null>(null)
   const saveChainRef = useRef<Promise<void>>(Promise.resolve())
-  /** nextSeq per board path at the last read or save: learner nodes at or past it go to the learner-edit log. */
+  /** nextSeq per board (saveKey) at the last read or save: learner nodes at or past it go to the learner-edit log. */
   const learnerSeqRef = useRef(new Map<string, number>())
 
   /** Read and parse a board from disk, and set its learner-edit baseline. */
-  const readBoardDoc = async (path: string): Promise<BoardDoc> => {
-    const doc = parseBoard(await space.readBoard(path))
-    learnerSeqRef.current.set(path, doc.nextSeq)
+  const readBoardDoc = async (root: string, path: string): Promise<BoardDoc> => {
+    const doc = parseBoard(await space.readBoard(root, path))
+    learnerSeqRef.current.set(saveKey(root, path), doc.nextSeq)
     return doc
   }
 
@@ -147,10 +154,11 @@ export function App() {
       const start = performance.now()
       const text = serializeBoard(pending.doc)
       const serializeMs = performance.now() - start
-      const since = learnerSeqRef.current.get(pending.path)
+      const key = saveKey(pending.root, pending.path)
+      const since = learnerSeqRef.current.get(key)
       const learnerEdit = since === undefined ? null : learnerEditSince(pending.doc, since)
-      await space.writeBoard(pending.path, text, { learnerEdit, serializeMs })
-      learnerSeqRef.current.set(pending.path, pending.doc.nextSeq)
+      await space.writeBoard(pending.root, pending.path, text, { learnerEdit, serializeMs })
+      learnerSeqRef.current.set(key, pending.doc.nextSeq)
       if (!pendingRef.current) setSaveStatus('saved')
     } catch (error) {
       console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
@@ -173,8 +181,8 @@ export function App() {
   }, [writePending])
 
   const scheduleSave = useCallback(
-    (path: string, doc: BoardDoc) => {
-      pendingRef.current = { path, doc }
+    (root: string, path: string, doc: BoardDoc) => {
+      pendingRef.current = { root, path, doc }
       setSaveStatus('unsaved')
       const now = Date.now()
       unsavedSinceRef.current ??= now
@@ -185,9 +193,12 @@ export function App() {
     [flushSave]
   )
 
+  /** There are unsaved edits for this board of the folder on show. */
+  const isPending = (path: string): boolean => pendingRef.current?.path === path && pendingRef.current.root === rootRef.current
+
   /** Drop unsaved edits for a path (the board is gone or replaced). */
   const dropPending = (path: string): void => {
-    if (pendingRef.current?.path !== path) return
+    if (!isPending(path)) return
     pendingRef.current = null
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = null
@@ -197,20 +208,20 @@ export function App() {
 
   // ---------- Camera persistence ----------
 
-  const cameraRef = useRef<{ path: string; camera: Camera } | null>(null)
+  const cameraRef = useRef<{ root: string; path: string; camera: Camera } | null>(null)
   const cameraTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flushCamera = useCallback(() => {
     if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current)
     cameraTimerRef.current = null
-    if (cameraRef.current) space.setCamera(cameraRef.current.path, cameraRef.current.camera)
+    if (cameraRef.current) space.setCamera(cameraRef.current.root, cameraRef.current.path, cameraRef.current.camera)
   }, [])
 
   const onCameraChange = useCallback(
     (camera: Camera) => {
-      const path = openRef.current?.path
-      if (!path) return
-      cameraRef.current = { path, camera }
+      const current = openRef.current
+      if (!current) return
+      cameraRef.current = { root: current.root, path: current.path, camera }
       setZoom(camera.zoom)
       if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current)
       cameraTimerRef.current = setTimeout(flushCamera, CAMERA_SAVE_DELAY_MS)
@@ -228,31 +239,34 @@ export function App() {
     })
 
   /** The board that mounts now takes its records: the stories, and its new id (saved at once). Returns the doc to mount. */
-  const mountRecords = (path: string, doc: BoardDoc, records: BoardStories | null): BoardDoc => {
+  const mountRecords = (root: string, path: string, doc: BoardDoc, records: BoardStories | null): BoardDoc => {
     setStories(records)
     if (!records?.id || records.id === doc.id) return doc
     const next = { ...doc, id: records.id }
-    scheduleSave(path, next)
+    scheduleSave(root, path, next)
     return next
   }
 
   const openBoard = useCallback(
     async (path: string) => {
+      const root = rootRef.current
+      if (!root) return
       const token = ++openTokenRef.current
       openingRef.current = true
       try {
+        boardRef.current?.settle()
         await flushSave()
         flushCamera()
         let entry = cacheRef.current.get(path)
         if (!entry || entry.stale) {
           let doc: BoardDoc
           try {
-            doc = await readBoardDoc(path)
+            doc = await readBoardDoc(root, path)
           } catch (error) {
             if (token !== openTokenRef.current) return
             setOpen(null)
             setBoardError({ path, message: errorMessage(error) })
-            space.setLastBoard(path)
+            space.setLastBoard(root, path)
             return
           }
           if (entry) {
@@ -271,12 +285,12 @@ export function App() {
         if (token !== openTokenRef.current) return
         const [camera, records] = await Promise.all([space.getCamera(path).catch(() => null), boardRecords(path, entry.doc)])
         if (token !== openTokenRef.current) return
-        entry.doc = mountRecords(path, entry.doc, records)
-        cameraRef.current = camera ? { path, camera } : null
+        entry.doc = mountRecords(root, path, entry.doc, records)
+        cameraRef.current = camera ? { root, path, camera } : null
         setZoom(camera?.zoom ?? 1)
         setBoardError(null)
-        setOpen({ path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
-        space.setLastBoard(path)
+        setOpen({ root, path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
+        space.setLastBoard(root, path)
       } finally {
         if (token === openTokenRef.current) openingRef.current = false
       }
@@ -298,31 +312,27 @@ export function App() {
       if (!current) return
       const entry = cacheRef.current.get(current.path)
       if (entry) entry.doc = doc
-      scheduleSave(current.path, doc)
+      scheduleSave(current.root, current.path, doc)
     },
     [scheduleSave]
   )
 
-  /** Show a new folder (or none). */
-  const applySnapshot = useCallback(
-    async (next: Snapshot) => {
-      await flushSave()
-      flushCamera()
-      cacheRef.current.clear()
-      openTokenRef.current++
-      openingRef.current = false
-      setOpen(null)
-      setBoardError(null)
-      setRenaming(null)
-      setMenuSetup(false)
-      setOfferDismissed(false)
-      setPreviewPath(next.devOpen ?? null)
-      preferredBoardRef.current = next.folder?.lastBoard ?? null
-      setTree(next.folder?.tree ?? null)
-      setSnapshot(next)
-    },
-    [flushCamera, flushSave]
-  )
+  /** Show a new folder (or none). Edits made after the last save stay pending under the folder they belong to. */
+  const applySnapshot = useCallback((next: Snapshot) => {
+    rootRef.current = next.folder?.root ?? null
+    cacheRef.current.clear()
+    openTokenRef.current++
+    openingRef.current = false
+    setOpen(null)
+    setBoardError(null)
+    setRenaming(null)
+    setMenuSetup(false)
+    setOfferDismissed(false)
+    setPreviewPath(next.devOpen ?? null)
+    preferredBoardRef.current = next.folder?.lastBoard ?? null
+    setTree(next.folder?.tree ?? null)
+    setSnapshot(next)
+  }, [])
 
   // Open a board automatically: the last one, else the first one.
   useEffect(() => {
@@ -335,25 +345,57 @@ export function App() {
 
   // ---------- Folder actions ----------
 
-  const openFolderDialog = useCallback(async () => {
-    try {
-      const next = await space.openFolderDialog()
-      if (next) await applySnapshot(next)
-    } catch (error) {
-      showError(errorMessage(error))
-    }
-  }, [applySnapshot])
+  /**
+   * The one folder switch, for every route (the menu, the dialog, the recent list). It runs in
+   * the save chain, so no save or board change interleaves with it:
+   *   1. the open editor commits, and the pending save is written to the folder it belongs to;
+   *      a failed save fails the switch (nothing is changed);
+   *   2. the main process makes the new folder the open one;
+   *   3. here the new folder replaces the old one.
+   * An edit that comes in during step 2 stays pending under the old folder, and the save below
+   * writes it there.
+   */
+  const switchFolder = useCallback(
+    async (path: string): Promise<void> => {
+      boardRef.current?.settle()
+      flushCamera()
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+      unsavedSinceRef.current = null
+      const run = saveChainRef.current.then(async () => {
+        await writePending(true)
+        boardRef.current?.settle()
+        applySnapshot(await space.openFolder(path))
+      })
+      saveChainRef.current = run.catch(() => undefined)
+      try {
+        await run
+      } finally {
+        void flushSave()
+      }
+    },
+    [applySnapshot, flushCamera, flushSave, writePending]
+  )
 
   const openRecent = useCallback(
     async (path: string) => {
       try {
-        await applySnapshot(await space.openRecent(path))
+        await switchFolder(path)
       } catch (error) {
         showError(errorMessage(error))
       }
     },
-    [applySnapshot]
+    [switchFolder]
   )
+
+  const openFolderDialog = useCallback(async () => {
+    try {
+      const path = await space.pickFolder()
+      if (path) await switchFolder(path)
+    } catch (error) {
+      showError(errorMessage(error))
+    }
+  }, [switchFolder])
 
   // ---------- Board actions ----------
 
@@ -389,14 +431,15 @@ export function App() {
         if (target === from) return { path: from, wasOpen }
         const entry = cacheRef.current.get(from)
         cacheRef.current.delete(from)
-        const seq = learnerSeqRef.current.get(from)
-        learnerSeqRef.current.delete(from)
+        const root = rootRef.current as string
+        const seq = learnerSeqRef.current.get(saveKey(root, from))
+        learnerSeqRef.current.delete(saveKey(root, from))
         if (target) {
           if (entry) cacheRef.current.set(target, entry)
-          if (seq !== undefined) learnerSeqRef.current.set(target, seq)
+          if (seq !== undefined) learnerSeqRef.current.set(saveKey(root, target), seq)
           moveTracker(from, target)
           // Edits made while the file moved are saved under the new path.
-          if (pendingRef.current?.path === from) pendingRef.current = { ...pendingRef.current, path: target }
+          if (isPending(from)) pendingRef.current = { ...(pendingRef.current as NonNullable<typeof pendingRef.current>), path: target }
           if (cameraRef.current?.path === from) cameraRef.current = { ...cameraRef.current, path: target }
           if (openRef.current?.path === from) {
             openRef.current = { ...openRef.current, path: target }
@@ -405,7 +448,7 @@ export function App() {
           setBoardError((error) => (error?.path === from ? { ...error, path: target } : error))
         } else {
           dropTracker(from)
-          if (pendingRef.current?.path === from) {
+          if (isPending(from)) {
             pendingRef.current = null
             setSaveStatus('saved')
           }
@@ -428,7 +471,7 @@ export function App() {
         return await run
       } finally {
         // Edits still pending (made while the operation ran, or a save that failed) are saved again now, under the current path.
-        if (pendingRef.current) scheduleSave(pendingRef.current.path, pendingRef.current.doc)
+        if (pendingRef.current) scheduleSave(pendingRef.current.root, pendingRef.current.path, pendingRef.current.doc)
       }
     },
     [flushCamera, scheduleSave, writePending]
@@ -566,7 +609,7 @@ export function App() {
       setOpen(null)
       return
     }
-    if (pendingRef.current?.path === path) {
+    if (isPending(path)) {
       // Last writer wins: keep the local edits and save over the disk version.
       console.warn(`${path} changed on disk while local edits were unsaved; keeping the local version`)
       await flushSave()
@@ -574,17 +617,17 @@ export function App() {
     }
     let doc: BoardDoc
     try {
-      doc = await readBoardDoc(path)
+      doc = await readBoardDoc(current.root, path)
     } catch (error) {
       console.error(`${path} changed on disk but cannot be read: ${errorMessage(error)}`)
       showError(`“${boardName(path)}” changed on disk but cannot be read. Showing the last good version.`)
       return
     }
-    if (openRef.current?.path !== path || pendingRef.current?.path === path) return
+    if (openRef.current?.path !== path || isPending(path)) return
     // A file that replaced the open board's mounts as any board does: its records, and the duplicate-id check.
     const token = openTokenRef.current
     const records = await boardRecords(path, doc)
-    if (token !== openTokenRef.current || openRef.current?.path !== path || pendingRef.current?.path === path) return
+    if (token !== openTokenRef.current || openRef.current?.path !== path || isPending(path)) return
     const history = current.history
     history.clear()
     const entry = cacheRef.current.get(path)
@@ -597,10 +640,10 @@ export function App() {
     )
     log.record(reconciled.removed)
     log.revise(reconciled.revisions)
-    doc = mountRecords(path, reconciled.doc, records)
+    doc = mountRecords(current.root, path, reconciled.doc, records)
     cacheRef.current.set(path, { doc, history, log })
     console.log(`${path} reloaded from disk`)
-    setOpen({ path, key: ++keyRef.current, doc, history, camera: cameraRef.current?.camera ?? current.camera })
+    setOpen({ root: current.root, path, key: ++keyRef.current, doc, history, camera: cameraRef.current?.camera ?? current.camera })
   }
 
   // The reading panel and the scene pill belong to the open board (live/reading.ts).
@@ -616,6 +659,7 @@ export function App() {
 
   const flushRef = useRef<() => Promise<void>>(async () => undefined)
   flushRef.current = async () => {
+    boardRef.current?.settle()
     await flushSave()
     flushCamera()
   }
@@ -623,10 +667,9 @@ export function App() {
   useEffect(() => {
     let active = true
     void space.getInitialState().then((initial) => {
-      if (active) void applySnapshot(initial)
+      if (active) applySnapshot(initial)
     })
     const offs = [
-      space.onFolderOpened((next) => void applySnapshot(next)),
       space.onFilesChanged((next) => {
         setTree(next)
         setPreviewVersion((version) => version + 1)
@@ -638,7 +681,8 @@ export function App() {
         if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
       }),
       space.onMenuCommand((command) => {
-        if (command === 'new-board') void createBoardRef.current()
+        if (command === 'open-folder') void openFolderDialogRef.current()
+        else if (command === 'new-board') void createBoardRef.current()
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
@@ -665,6 +709,8 @@ export function App() {
 
   const createBoardRef = useRef(createBoard)
   createBoardRef.current = createBoard
+  const openFolderDialogRef = useRef(openFolderDialog)
+  openFolderDialogRef.current = openFolderDialog
 
   // ---------- Agents (MCP) ----------
 
@@ -692,7 +738,7 @@ export function App() {
       board: mounted,
       changeLog: current ? (cacheRef.current.get(current.path)?.log ?? null) : null,
       tool: toolRef.current,
-      unsaved: !!current && pendingRef.current?.path === current.path,
+      unsaved: !!current && isPending(current.path),
       changeBoard: (op) => changeBoardRef.current(op),
       openBoard: async (path) => {
         if (openRef.current?.path !== path) await openBoardRef.current(path)

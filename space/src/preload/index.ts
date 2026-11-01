@@ -24,12 +24,12 @@ const api: SpaceApi = {
   frameLimitOff,
 
   getInitialState: () => ipcRenderer.invoke(IPC.getInitialState),
-  openFolderDialog: () => ipcRenderer.invoke(IPC.openFolderDialog),
-  openRecent: (path) => ipcRenderer.invoke(IPC.openRecent, path),
+  pickFolder: () => ipcRenderer.invoke(IPC.pickFolder),
+  openFolder: (path) => ipcRenderer.invoke(IPC.openFolder, path),
   listFiles: () => ipcRenderer.invoke(IPC.listFiles),
 
-  readBoard: (path) => ipcRenderer.invoke(IPC.readBoard, path),
-  writeBoard: (path, text, info) => ipcRenderer.invoke(IPC.writeBoard, path, text, info),
+  readBoard: (root, path) => ipcRenderer.invoke(IPC.readBoard, root, path),
+  writeBoard: (root, path, text, info) => ipcRenderer.invoke(IPC.writeBoard, root, path, text, info),
   createBoard: (name, folder) => ipcRenderer.invoke(IPC.createBoard, name, folder),
   renameBoard: (path, newName) => ipcRenderer.invoke(IPC.renameBoard, path, newName),
   deleteBoard: (path) => ipcRenderer.invoke(IPC.deleteBoard, path),
@@ -48,13 +48,12 @@ const api: SpaceApi = {
   onGuideOverrides: (listener) => listen(IPC.guideOverrides, listener),
 
   getCamera: (path) => ipcRenderer.invoke(IPC.getCamera, path),
-  setCamera: (path, camera) => ipcRenderer.send(IPC.setCamera, path, camera),
-  setLastBoard: (path) => ipcRenderer.send(IPC.setLastBoard, path),
+  setCamera: (root, path, camera) => ipcRenderer.send(IPC.setCamera, root, path, camera),
+  setLastBoard: (root, path) => ipcRenderer.send(IPC.setLastBoard, root, path),
   openSceneRecords: (path, id) => ipcRenderer.invoke(IPC.openSceneRecords, path, id),
   onSceneStories: (listener) => listen(IPC.sceneStories, listener),
   rebuildScenes: (sceneIds) => ipcRenderer.invoke(IPC.rebuildScenes, sceneIds),
 
-  onFolderOpened: (listener) => listen(IPC.folderOpened, listener),
   onFilesChanged: (listener) => listen(IPC.filesChanged, listener),
   onBoardChanged: (listener) => listen(IPC.boardChanged, listener),
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),

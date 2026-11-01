@@ -97,6 +97,13 @@ function registerAssetProtocol(): void {
 
 let mainWindow: BrowserWindow | null = null
 let session: FolderSession | null = null
+/**
+ * Every folder opened in this run, by root. A board read or write names its folder and
+ * goes to it here, so a write made while another folder opens cannot land in that folder.
+ */
+const sessions = new Map<string, FolderSession>()
+/** The folder the learner picked in the dialog last: besides the recent list, the one folder the renderer may open. */
+let pickedFolder: string | null = null
 let quitting = false
 
 const snapshots = new SnapshotRenderer()
@@ -133,6 +140,12 @@ function requireSession(): FolderSession {
   return session
 }
 
+function sessionOf(root: unknown): FolderSession {
+  const found = typeof root === 'string' ? sessions.get(root) : undefined
+  if (!found) throw new Error('That learning folder was not opened.')
+  return found
+}
+
 /** The app state for the renderer. Only the initial state carries SPACE_OPEN. */
 async function snapshot(initial = false): Promise<Snapshot> {
   const folder = session
@@ -153,15 +166,27 @@ async function snapshot(initial = false): Promise<Snapshot> {
   return { folder, recent: store.recentFolders(), devOpen: initial && folder ? launchOpen : null }
 }
 
+/**
+ * Make a folder the open one. With a window, the renderer calls this inside its folder
+ * switch (App.tsx switchFolder), after it saved the folder it leaves: every route
+ * (the menu, the dialog, the recent list) goes that way.
+ */
 async function openFolder(path: string): Promise<void> {
-  const next = await FolderSession.open(path)
+  const opened = await FolderSession.open(path)
+  const next = sessions.get(opened.root) ?? opened
+  sessions.set(next.root, next)
   session?.stopWatching()
   session = next
   store.rememberFolder(next.root)
   setFolderOpen(true)
+  // A scan under way when the folder changes reports nothing: its folder is not the open one.
   next.startWatching({
-    filesChanged: (tree) => send(IPC.filesChanged, tree),
-    boardChanged: (change) => send(IPC.boardChanged, change)
+    filesChanged: (tree) => {
+      if (session === next) send(IPC.filesChanged, tree)
+    },
+    boardChanged: (change) => {
+      if (session === next) send(IPC.boardChanged, change)
+    }
   })
   // Keep the brief block in AGENTS.md current (an edited block stays as it is).
   await next
@@ -170,16 +195,15 @@ async function openFolder(path: string): Promise<void> {
     .catch((error) => console.error(`brief block: ${String(error)}`))
 }
 
-async function showOpenDialog(): Promise<Snapshot | null> {
+async function pickFolder(): Promise<string | null> {
   const options: Electron.OpenDialogOptions = {
     title: 'Open Learning Folder',
     buttonLabel: 'Open',
     properties: ['openDirectory', 'createDirectory']
   }
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
-  if (result.canceled || !result.filePaths[0]) return null
-  await openFolder(result.filePaths[0])
-  return snapshot()
+  pickedFolder = result.canceled ? null : (result.filePaths[0] ?? null)
+  return pickedFolder
 }
 
 function isDirectory(path: string): boolean {
@@ -256,9 +280,9 @@ function registerIpc(): void {
     if (!isAgentClientAction(action)) throw new Error('Unknown connect action.')
     return connectAgentClient(id, action)
   })
-  handle(IPC.openFolderDialog, () => showOpenDialog())
-  handle(IPC.openRecent, async (path: unknown) => {
-    if (typeof path !== 'string' || !store.isRecent(path)) throw new Error('That folder is not in the recent list.')
+  handle(IPC.pickFolder, () => pickFolder())
+  handle(IPC.openFolder, async (path: unknown) => {
+    if (typeof path !== 'string' || (path !== pickedFolder && !store.isRecent(path))) throw new Error('That folder is not in the recent list.')
     await openFolder(path)
     return snapshot()
   })
@@ -268,14 +292,16 @@ function registerIpc(): void {
     return requireSession().importAsset(src)
   })
 
-  handle(IPC.readBoard, (path: string) => requireSession().readBoard(path))
-  handle(IPC.writeBoard, async (path: string, text: string, info?: BoardSaveInfo) => {
+  handle(IPC.readBoard, (root: unknown, path: string) => sessionOf(root).readBoard(path))
+  handle(IPC.writeBoard, async (root: unknown, path: string, text: string, info?: BoardSaveInfo) => {
     const start = performance.now()
-    await requireSession().writeBoard(path, text)
+    const folder = sessionOf(root)
+    await folder.writeBoard(path, text)
     const writeMs = performance.now() - start
     const serializeMs = typeof info?.serializeMs === 'number' ? info.serializeMs.toFixed(1) : '?'
     console.log(`save: ${path} serialise ${serializeMs} ms, ${Math.round(Buffer.byteLength(text) / 1024)} kB, write ${writeMs.toFixed(1)} ms`)
-    agentServer.boardSaved(path, info?.learnerEdit ?? null)
+    // The agent server works on the open folder: a late save of the folder before is not its news.
+    if (folder === session) agentServer.boardSaved(path, info?.learnerEdit ?? null)
   })
   // The file side of the one board-change operation (renderer App.tsx changeBoard): the
   // agent server's drafts, change cursors, stage and board cache move or end with the file.
@@ -320,9 +346,9 @@ function registerIpc(): void {
     await current.resolvePath(path, { allowMissing: true })
     return store.getCamera(current.root, path)
   })
-  ipcMain.on(IPC.setCamera, (_event, path: unknown, camera: unknown) => {
-    if (!session || typeof path !== 'string' || !isCamera(camera)) return
-    store.setCamera(session.root, path, { center: [camera.center[0], camera.center[1]], zoom: camera.zoom })
+  ipcMain.on(IPC.setCamera, (_event, root: unknown, path: unknown, camera: unknown) => {
+    if (typeof root !== 'string' || !sessions.has(root) || typeof path !== 'string' || !isCamera(camera)) return
+    store.setCamera(root, path, { center: [camera.center[0], camera.center[1]], zoom: camera.zoom })
   })
   handle(IPC.openSceneRecords, async (path: unknown, id: unknown) => {
     const current = requireSession()
@@ -338,9 +364,9 @@ function registerIpc(): void {
     if (!Array.isArray(sceneIds) || !sceneIds.every((id) => typeof id === 'string')) throw new Error('Scene ids are required.')
     await agentServer.rebuildScenes(sceneIds as string[])
   })
-  ipcMain.on(IPC.setLastBoard, (_event, path: unknown) => {
-    if (!session) return
-    store.setLastBoard(session.root, typeof path === 'string' ? path : null)
+  ipcMain.on(IPC.setLastBoard, (_event, root: unknown, path: unknown) => {
+    if (typeof root !== 'string' || !sessions.has(root)) return
+    store.setLastBoard(root, typeof path === 'string' ? path : null)
   })
   // The board window's renderer asks for its port to the stage (frames of scenes); only the main window gets one.
   ipcMain.on(IPC.framesPort, (event) => {
@@ -450,8 +476,13 @@ registerIpc()
 void app.whenReady().then(async () => {
   installMenu({
     openFolder: () => {
-      void showOpenDialog()
-        .then((result) => result && send(IPC.folderOpened, result))
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        sendMenuCommand('open-folder')
+        return
+      }
+      // No window (macOS keeps the app): nothing is open that must be saved.
+      void pickFolder()
+        .then((path) => (path ? openFolder(path) : undefined))
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
