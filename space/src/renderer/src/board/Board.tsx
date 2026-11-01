@@ -130,7 +130,7 @@ export interface BoardHandle {
   remeasure(): void
   /** Select every top-level node and all loose ink (⌘A on the canvas). */
   selectAll(): void
-  /** Commit what the learner has open, the text editor and a stroke in progress: the board is about to save, close or leave. */
+  /** End what the learner has open, the text editor and any drag, and commit what it changed: the board is about to close, leave or take a new version. */
   settle(): void
   /** What the tile cache holds (dev checks). */
   tileStats(): ReturnType<InkLayers['tileStats']>
@@ -1543,19 +1543,25 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     void pinMark(node.id, 'learner')
   }
 
-  const commitStrokeRef = useRef(commitStroke)
-  commitStrokeRef.current = commitStroke
+  /** The drag's changes to the nodes on show become a commit. */
+  const commitDrag = (drag: DragState): void => {
+    if (!drag.changed) return
+    const ids = selectedIdsRef.current
+    commitNodes(nodesRef.current, drag.startNodes)
+    if (drag.kind !== 'erase') setSelectedIds(ids)
+  }
 
-  const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
-    if (relayPointer('up', event)) return
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    dragRef.current = null
-    const host = hostRef.current
-    const screen = host ? cssPoint(event, host.getBoundingClientRect()) : drag.last
-
-    if (drag.kind === 'ink' && activeRef.current) {
+  /**
+   * How each kind of drag ends at `screen`, when the pointer lifts or when the board settles
+   * while the pointer is down. The one place for it: a new kind does not compile until it
+   * says how it ends, so what a drag changed cannot be lost.
+   */
+  const dragEnds: Record<DragKind, (drag: DragState, screen: Point) => void> = {
+    none: () => undefined,
+    pan: () => setPanning(false),
+    ink: (_drag, screen) => {
       const stroke = activeRef.current
+      if (!stroke) return
       const end = screenToBoard(screen, viewportRef.current, cameraRef.current)
       const last = stroke.points[stroke.points.length - 1]
       if (last[0] !== end[0] || last[1] !== end[1]) stroke.points.push([end[0], end[1], last[2]])
@@ -1563,16 +1569,18 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       // A fresh object: the one drawn into was mutated while drawing.
       commitStroke({ ...stroke, points: [...stroke.points] })
       requestPaint({ active: true })
-    } else if (drag.kind === 'pan') {
-      setPanning(false)
-    } else if ((drag.kind === 'erase' || drag.kind === 'move' || drag.kind === 'resize') && drag.changed) {
-      const ids = selectedIdsRef.current
-      commitNodes(nodesRef.current, drag.startNodes)
-      if (drag.kind !== 'erase') setSelectedIds(ids)
-    } else if (drag.kind === 'move' && !drag.changed && drag.clicked && selectedIdsRef.current.length > 1) {
+    },
+    erase: (drag) => {
+      commitDrag(drag)
+      if (tool !== 'eraser') moveEraserCursor(null)
+    },
+    resize: commitDrag,
+    move: (drag) => {
+      commitDrag(drag)
       // A click (no drag) on a node of a multi-selection selects it alone.
-      setSelectedIds([drag.clicked])
-    } else if (drag.kind === 'lasso') {
+      if (!drag.changed && drag.clicked && selectedIdsRef.current.length > 1) setSelectedIds([drag.clicked])
+    },
+    lasso: (drag, screen) => {
       drag.points.push(screen)
       drag.lasso.push(screenToBoard(screen, viewportRef.current, cameraRef.current))
       const xs = drag.points.map((point) => point[0])
@@ -1603,7 +1611,24 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       }
       setLassoPoints(null)
     }
-    if (drag.kind === 'erase' && tool !== 'eraser') moveEraserCursor(null)
+  }
+
+  /** End the open drag, whatever its kind. */
+  const endDrag = (screen?: Point): void => {
+    const drag = dragRef.current
+    if (!drag) return
+    dragRef.current = null
+    dragEnds[drag.kind](drag, screen ?? drag.last)
+  }
+
+  const endDragRef = useRef(endDrag)
+  endDragRef.current = endDrag
+
+  const pointerUp = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (relayPointer('up', event)) return
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    const host = hostRef.current
+    endDrag(host ? cssPoint(event, host.getBoundingClientRect()) : undefined)
   }
 
   const pointerCancel = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -1894,13 +1919,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       selectAll: () => selectAllRef.current(),
       settle: () => {
         if (editingRef.current) commitEditing()
-        const drag = dragRef.current
-        const stroke = activeRef.current
-        if (drag?.kind !== 'ink' || !stroke) return
-        dragRef.current = null
-        activeRef.current = null
-        commitStrokeRef.current({ ...stroke, points: [...stroke.points] })
-        requestPaint({ active: true })
+        endDragRef.current()
       },
       setPlayback: (frame) => {
         const ghosts = frame?.ghosts ?? []

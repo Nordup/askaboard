@@ -755,7 +755,12 @@ export function App() {
     const records = await boardRecords(path, doc)
     if (token !== openTokenRef.current || openRef.current?.path !== path) return
     leaveBoard()
-    if (isPending(path)) return
+    if (isPending(path)) {
+      // A gesture held through the read is now a commit: last writer wins, as above.
+      console.warn(`${path} changed on disk during a held gesture; keeping the local version`)
+      await flushSave()
+      return
+    }
     const history = current.history
     history.clear()
     const entry = cacheRef.current.get(path)
