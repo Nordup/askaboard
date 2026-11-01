@@ -147,21 +147,31 @@ export class BoardHistory {
 /**
  * About how many bytes the nodes of a board hold in memory: the points of ink, and the text of
  * the rest. A move or a restyle makes a new node over the same points and text, and undo holds
- * both nodes: each array of points and each text counts once.
+ * both nodes: each array of points counts once, by identity. A string has no identity, and
+ * equal strings of two parsed items hold separate storage: each text counts once per item id.
  */
 export function boardBytes(nodes: Iterable<BoardNode>): number {
-  const counted = new Set<unknown>()
-  const once = (value: unknown, size: number): number => {
-    if (counted.has(value)) return 0
-    counted.add(value)
-    return size
+  const arrays = new Set<unknown>()
+  const texts = new Map<string, Set<string>>()
+  const pointBytes = (points: unknown[]): number => {
+    if (arrays.has(points)) return 0
+    arrays.add(points)
+    return points.length * 48
+  }
+  const textBytes = (id: string, text: unknown): number => {
+    if (typeof text !== 'string') return 0
+    let seen = texts.get(id)
+    if (!seen) texts.set(id, (seen = new Set()))
+    if (seen.has(text)) return 0
+    seen.add(text)
+    return text.length
   }
   let bytes = 0
   for (const node of nodes) {
-    if (isInk(node)) bytes += 200 + once(node.points, node.points.length * 48)
+    if (isInk(node)) bytes += 200 + pointBytes(node.points)
     else {
       const { text, markup } = node as { text?: unknown; markup?: unknown }
-      bytes += 400 + (typeof text === 'string' ? once(text, text.length) : 0) + (typeof markup === 'string' ? once(markup, markup.length) : 0)
+      bytes += 400 + textBytes(node.id, text) + textBytes(node.id, markup)
     }
   }
   return bytes
