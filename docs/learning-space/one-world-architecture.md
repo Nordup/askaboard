@@ -181,7 +181,8 @@ flowchart LR
   quality. Each world has its own cost: a fixed part and a part that grows with its
   pixels, learned from the fence time. A fence times a whole picture, so when worlds
   render together, one renders alone now and then: soon, three times per world, then
-  once in 240 pictures. So the world whose pixels cost most falls first,
+  once in 240 pictures. A render that renders alone gets all of the time. In a share, each
+  world counts for at least 0.1 ms, so a world that was free can turn heavy. So the world whose pixels cost most falls first,
   a world whose time does not follow its pixels stays sharp, and a world that falls
   soon after a rise waits longer each time, so that it does not swing. On a machine
   with less than 8 GB, the size of one world's render has a ceiling that follows memory.

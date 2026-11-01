@@ -483,6 +483,8 @@ export const SURFACE = String.raw`
   const FENCE_FLOOR = 5;
   /** A world's first guess, and the share of its time that it takes as fixed while it renders at one size only. */
   const COST_SLOPE = 3, COST_FIXED = 0.2, COST_KEEP = 0.95;
+  /** The least ms of a render in a share: a world learned as free must still get its part when it turns heavy. */
+  const COST_LEAST = 0.1;
   /** Hysteresis: a rise must leave this share of the budget free. A drop soon after a rise doubles the wait before the next rise of that world. */
   const RISE_ROOM = 0.85, HOLD_FIRST = 60, HOLD_MOST = 960, BOUNCE = 120;
   let smooth = 0, slowPictures = 0, fastPictures = 0, skipped = 0;
@@ -522,12 +524,12 @@ export const SURFACE = String.raw`
     soloIn = pick.w.cost.solos < SOLO_ROUNDS ? SOLO_SOON : SOLO_LATER;
     return pick;
   };
-  /** The time of a picture, shared over its worlds by what each should cost. */
+  /** The time of a picture, shared over its worlds by what each should cost. A world that renders alone gets all of it, whatever it cost before. */
   const learnPicture = (ms) => {
     const work = Math.max(0, ms - FENCE_FLOOR);
     let whole = 0;
-    for (let i = 0; i < fenced.length; i += 2) whole += costOf(fenced[i], fenced[i + 1]);
-    for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], whole > 0 ? (work * costOf(fenced[i], fenced[i + 1])) / whole : 0, fencedSolo ? SOLO_WEIGHT : 1);
+    for (let i = 0; i < fenced.length; i += 2) whole += Math.max(COST_LEAST, costOf(fenced[i], fenced[i + 1]));
+    for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], (work * Math.max(COST_LEAST, costOf(fenced[i], fenced[i + 1]))) / whole, fencedSolo ? SOLO_WEIGHT : 1);
     fenced.length = 0;
   };
   /** The share of a world's megapixels at full quality. */
