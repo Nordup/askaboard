@@ -52,7 +52,7 @@ limits scripts and images.
    removals, and returns ids and measured bounds.
 4. For screenshots, the renderer plans the region and main asks the snapshot
    window to draw it; main captures the pixels.
-5. The renderer saves the board file on its own autosave schedule.
+5. The renderer saves the board file on its own autosave schedule (see "Saving").
 
 ## The board document
 
@@ -79,7 +79,22 @@ limits scripts and images.
   with the same camera (`paint.ts`). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
-  history). Undo snapshots: `history.ts`.
+  history). Undo snapshots: `history.ts`. An agent edit is a change from the
+  nodes it was computed from, and it applies to the current document by item
+  id (`scene.ts applyChanges`). A drag shows on top of the document; a commit
+  under it goes to the document (`commitOver`, decision B26).
+
+## Saving
+
+The renderer holds one pending version per board, by folder and path
+(`App.tsx`). Each board read and write names its folder (`root`), and main
+sends it to that folder's `FolderSession`, also when another folder is open by
+then. A folder switch and a board change run in the save chain: they save
+first, and a failed save stops them. Failed saves stay pending and try again.
+At close, main hears which boards failed: their text goes to
+`userData/recovery/` (`main/recovery.ts`), one native dialog offers "Try again"
+and "Close anyway", and the board's next open brings the text back. A renderer
+that does not answer in 2 s cannot hold the window. Decisions B26 and B27.
 
 ## Agent-side helpers (renderer)
 

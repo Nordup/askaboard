@@ -29,6 +29,7 @@ const api: SpaceApi = {
   listFiles: () => ipcRenderer.invoke(IPC.listFiles),
 
   readBoard: (root, path) => ipcRenderer.invoke(IPC.readBoard, root, path),
+  readRecovery: (root, path) => ipcRenderer.invoke(IPC.readRecovery, root, path),
   writeBoard: (root, path, text, info) => ipcRenderer.invoke(IPC.writeBoard, root, path, text, info),
   createBoard: (name, folder) => ipcRenderer.invoke(IPC.createBoard, name, folder),
   renameBoard: (path, newName) => ipcRenderer.invoke(IPC.renameBoard, path, newName),
@@ -58,7 +59,8 @@ const api: SpaceApi = {
   onBoardChanged: (listener) => listen(IPC.boardChanged, listener),
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),
   onFlushRequest: (listener) => listen<void>(IPC.flushRequest, () => listener()),
-  flushDone: () => ipcRenderer.send(IPC.flushDone),
+  flushStarted: () => ipcRenderer.send(IPC.flushStarted),
+  flushDone: (failed) => ipcRenderer.send(IPC.flushDone, failed),
 
   getAgentStatus: () => ipcRenderer.invoke(IPC.getAgentStatus),
   onAgentStatus: (listener) => listen(IPC.agentStatus, listener),

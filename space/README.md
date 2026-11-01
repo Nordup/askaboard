@@ -153,6 +153,8 @@ to 20 s for that window and its dev hook to load.
 | `window-size <w> <h>` | Resizes the window |
 | `screenshot <out.png>` | Captures the window |
 | `eval-state` | Board, zoom, tool, selection and nodes as JSON |
+| `recent <folder>`, `draw … --then-recent <folder>` | The sidebar's recent-folder item; with `draw`, right after the last pen-up |
+| `close` | Closes the window, as the red button does |
 
 The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
 

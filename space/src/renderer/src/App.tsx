@@ -16,7 +16,7 @@ import {
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
-import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FailedSave, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { dropTracker, moveTracker } from './agent/groups'
@@ -44,6 +44,8 @@ const space = window.space
 const SAVE_DELAY_MS = 400
 /** …but at least this often while changes continue. */
 const SAVE_MAX_WAIT_MS = 2000
+/** A failed save tries again after this long. */
+const SAVE_RETRY_MS = 5000
 const CAMERA_SAVE_DELAY_MS = 500
 
 /** A board's key across folders. */
@@ -58,6 +60,12 @@ interface OpenBoard {
   doc: BoardDoc
   history: BoardHistory
   camera: Camera | null
+}
+
+interface PendingSave {
+  root: string
+  path: string
+  doc: BoardDoc
 }
 
 interface CacheEntry {
@@ -126,7 +134,10 @@ export function App() {
 
   // ---------- Saving ----------
 
-  const pendingRef = useRef<{ root: string; path: string; doc: BoardDoc } | null>(null)
+  /** The unsaved version of each board, by saveKey. A board stays here until its write succeeds, so a failure never drops edits and no other board displaces them. */
+  const pendingRef = useRef(new Map<string, PendingSave>())
+  /** The last writes failed: the learner has seen the error. */
+  const saveFailingRef = useRef(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** When the oldest unsaved change was made, or null when all is saved. */
   const unsavedSinceRef = useRef<number | null>(null)
@@ -142,47 +153,78 @@ export function App() {
   }
 
   /**
-   * Write the pending board, if any. Runs only inside saveChainRef. A failed write keeps
-   * the edits pending; `strict` then throws (the board-change operation must not go on).
+   * Write the pending boards. Runs only inside saveChainRef. A failed write keeps its board
+   * pending, and the result lists it. `mustSave` names the boards a board or folder change
+   * needs saved: when one of them fails, this throws (the change must not go on).
    */
-  const writePending = useCallback(async (strict: boolean): Promise<void> => {
+  const writePending = useCallback(async (mustSave: (save: PendingSave) => boolean = () => false): Promise<FailedSave[]> => {
     const pending = pendingRef.current
-    if (!pending) return
-    pendingRef.current = null
+    if (!pending.size) return []
     setSaveStatus('saving')
-    try {
-      const start = performance.now()
-      const text = serializeBoard(pending.doc)
-      const serializeMs = performance.now() - start
-      const key = saveKey(pending.root, pending.path)
-      const since = learnerSeqRef.current.get(key)
-      const learnerEdit = since === undefined ? null : learnerEditSince(pending.doc, since)
-      await space.writeBoard(pending.root, pending.path, text, { learnerEdit, serializeMs })
-      learnerSeqRef.current.set(key, pending.doc.nextSeq)
-      if (!pendingRef.current) setSaveStatus('saved')
-    } catch (error) {
-      console.error(`save failed for ${pending.path}: ${errorMessage(error)}`)
-      pendingRef.current ??= pending // keep it for the next try
-      setSaveStatus('error')
-      showError(`Could not save the board: ${errorMessage(error)}`)
-      if (strict) throw new Error(`“${boardName(pending.path)}” could not be saved first, so nothing was changed: ${errorMessage(error)}`)
+    const failed: FailedSave[] = []
+    let refused: string | null = null
+    for (const key of [...pending.keys()]) {
+      const save = pending.get(key)
+      if (!save) continue
+      pending.delete(key)
+      let text: string | null = null
+      try {
+        const start = performance.now()
+        text = serializeBoard(save.doc)
+        const serializeMs = performance.now() - start
+        const since = learnerSeqRef.current.get(key)
+        const learnerEdit = since === undefined ? null : learnerEditSince(save.doc, since)
+        await space.writeBoard(save.root, save.path, text, { learnerEdit, serializeMs })
+        learnerSeqRef.current.set(key, save.doc.nextSeq)
+      } catch (error) {
+        const message = errorMessage(error)
+        console.error(`save failed for ${save.path}: ${message}`)
+        if (!pending.has(key)) pending.set(key, save) // newer edits of the board, if any, hold these too
+        if (text !== null) failed.push({ root: save.root, path: save.path, text })
+        if (!saveFailingRef.current) showError(`Could not save the board: ${message}`)
+        saveFailingRef.current = true
+        if (mustSave(save)) refused ??= `“${boardName(save.path)}” could not be saved first, so nothing was changed: ${message}`
+      }
     }
+    if (failed.length) setSaveStatus('error')
+    else {
+      saveFailingRef.current = false
+      setSaveStatus(pending.size ? 'unsaved' : 'saved')
+    }
+    if (refused) throw new Error(refused)
+    return failed
   }, [])
 
-  /** Write the pending board now. Writes run one after another. */
-  const flushSave = useCallback((): Promise<void> => {
+  /** Write the pending boards now, and resolve with the ones that failed. Writes run one after another. */
+  const flushSave = useCallback((): Promise<FailedSave[]> => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
     unsavedSinceRef.current = null
-    saveChainRef.current = saveChainRef.current.then(() => writePending(false))
-    return saveChainRef.current
+    const run = saveChainRef.current.then(() => writePending())
+    saveChainRef.current = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run.finally(() => {
+      // Saves that failed try again, also with no new edit.
+      if (pendingRef.current.size && !saveTimerRef.current) saveTimerRef.current = setTimeout(() => void flushSaveRef.current(), SAVE_RETRY_MS)
+    })
   }, [writePending])
+  const flushSaveRef = useRef(flushSave)
+  flushSaveRef.current = flushSave
+
+  /** Save what is pending soon (after a board or folder change that held the saves). */
+  const saveSoon = useCallback(() => {
+    if (!pendingRef.current.size) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => void flushSaveRef.current(), SAVE_DELAY_MS)
+  }, [])
 
   const scheduleSave = useCallback(
     (root: string, path: string, doc: BoardDoc) => {
-      pendingRef.current = { root, path, doc }
+      pendingRef.current.set(saveKey(root, path), { root, path, doc })
       setSaveStatus('unsaved')
       const now = Date.now()
       unsavedSinceRef.current ??= now
@@ -194,12 +236,13 @@ export function App() {
   )
 
   /** There are unsaved edits for this board of the folder on show. */
-  const isPending = (path: string): boolean => pendingRef.current?.path === path && pendingRef.current.root === rootRef.current
+  const isPending = (path: string): boolean => rootRef.current !== null && pendingRef.current.has(saveKey(rootRef.current, path))
 
   /** Drop unsaved edits for a path (the board is gone or replaced). */
   const dropPending = (path: string): void => {
     if (!isPending(path)) return
-    pendingRef.current = null
+    pendingRef.current.delete(saveKey(rootRef.current as string, path))
+    if (pendingRef.current.size) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = null
     unsavedSinceRef.current = null
@@ -247,6 +290,17 @@ export function App() {
     return next
   }
 
+  /** The board kept in a recovery file (main/recovery.ts), or null. */
+  const recoveryOf = async (root: string, path: string): Promise<BoardDoc | null> => {
+    try {
+      const text = await space.readRecovery(root, path)
+      return text === null ? null : parseBoard(text)
+    } catch (error) {
+      console.error(`the recovery of ${path} cannot be read: ${errorMessage(error)}`)
+      return null
+    }
+  }
+
   const openBoard = useCallback(
     async (path: string) => {
       const root = rootRef.current
@@ -257,6 +311,7 @@ export function App() {
         boardRef.current?.settle()
         await flushSave()
         flushCamera()
+        let recovered = false
         let entry = cacheRef.current.get(path)
         if (!entry || entry.stale) {
           let doc: BoardDoc
@@ -278,7 +333,18 @@ export function App() {
             entry.doc = reconciled.doc
             entry.stale = false
           } else {
-            entry = { doc, history: new BoardHistory(), log: new ChangeLog() }
+            // Edits still pending for a board that was closed (a folder left and opened again) are the board.
+            entry = { doc: pendingRef.current.get(saveKey(root, path))?.doc ?? doc, history: new BoardHistory(), log: new ChangeLog() }
+            const kept = await recoveryOf(root, path)
+            if (token !== openTokenRef.current) return
+            if (kept) {
+              // Work that a failed save kept at close comes back, as a change from the file.
+              const reconciled = reconcileBoard(doc, kept)
+              entry.log.record(reconciled.removed)
+              entry.log.revise(reconciled.revisions)
+              entry.doc = reconciled.doc
+              recovered = true
+            }
             cacheRef.current.set(path, entry)
           }
         }
@@ -291,6 +357,10 @@ export function App() {
         setBoardError(null)
         setOpen({ root, path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
         space.setLastBoard(root, path)
+        if (recovered) {
+          scheduleSave(root, path, entry.doc)
+          setToast({ text: `Your unsaved work on “${boardName(path)}” is back`, kind: 'info' })
+        }
       } finally {
         if (token === openTokenRef.current) openingRef.current = false
       }
@@ -357,13 +427,14 @@ export function App() {
    */
   const switchFolder = useCallback(
     async (path: string): Promise<void> => {
+      const leaving = rootRef.current
       boardRef.current?.settle()
       flushCamera()
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
       unsavedSinceRef.current = null
       const run = saveChainRef.current.then(async () => {
-        await writePending(true)
+        await writePending((save) => save.root === leaving)
         boardRef.current?.settle()
         applySnapshot(await space.openFolder(path))
       })
@@ -371,10 +442,10 @@ export function App() {
       try {
         await run
       } finally {
-        void flushSave()
+        saveSoon()
       }
     },
-    [applySnapshot, flushCamera, flushSave, writePending]
+    [applySnapshot, flushCamera, saveSoon, writePending]
   )
 
   const openRecent = useCallback(
@@ -418,7 +489,7 @@ export function App() {
       unsavedSinceRef.current = null
       flushCamera()
       const run = saveChainRef.current.then(async (): Promise<BoardChangeResult> => {
-        await writePending(true)
+        await writePending((save) => op.op !== 'create' && save.root === rootRef.current && save.path === op.path)
         if (op.op === 'create') {
           const path = await space.createBoard(op.name, op.folder)
           setTree(await space.listFiles())
@@ -439,7 +510,11 @@ export function App() {
           if (seq !== undefined) learnerSeqRef.current.set(saveKey(root, target), seq)
           moveTracker(from, target)
           // Edits made while the file moved are saved under the new path.
-          if (isPending(from)) pendingRef.current = { ...(pendingRef.current as NonNullable<typeof pendingRef.current>), path: target }
+          const pending = pendingRef.current.get(saveKey(root, from))
+          if (pending) {
+            pendingRef.current.delete(saveKey(root, from))
+            pendingRef.current.set(saveKey(root, target), { ...pending, path: target })
+          }
           if (cameraRef.current?.path === from) cameraRef.current = { ...cameraRef.current, path: target }
           if (openRef.current?.path === from) {
             openRef.current = { ...openRef.current, path: target }
@@ -448,10 +523,7 @@ export function App() {
           setBoardError((error) => (error?.path === from ? { ...error, path: target } : error))
         } else {
           dropTracker(from)
-          if (isPending(from)) {
-            pendingRef.current = null
-            setSaveStatus('saved')
-          }
+          dropPending(from)
           if (cameraRef.current?.path === from) cameraRef.current = null
           if (openRef.current?.path === from) {
             openTokenRef.current++
@@ -471,10 +543,10 @@ export function App() {
         return await run
       } finally {
         // Edits still pending (made while the operation ran, or a save that failed) are saved again now, under the current path.
-        if (pendingRef.current) scheduleSave(pendingRef.current.root, pendingRef.current.path, pendingRef.current.doc)
+        saveSoon()
       }
     },
-    [flushCamera, scheduleSave, writePending]
+    [flushCamera, saveSoon, writePending]
   )
 
   const createBoard = useCallback(async () => {
@@ -593,6 +665,12 @@ export function App() {
   onBoardChangeRef.current = async (path, deleted) => {
     const current = openRef.current
     if (current?.path !== path) {
+      if (deleted) dropPending(path)
+      else if (isPending(path)) {
+        // As for the open board: the local edits win, and they are saved over the disk version.
+        await flushSave()
+        return
+      }
       const entry = cacheRef.current.get(path)
       if (entry) {
         if (deleted) cacheRef.current.delete(path)
@@ -657,11 +735,16 @@ export function App() {
     void space.getShowPerformance().then(setShowPerformance)
   }, [])
 
-  const flushRef = useRef<() => Promise<void>>(async () => undefined)
+  /** Save everything now: the open editor first. Resolves with the boards that could not be saved. */
+  const flushRef = useRef<() => Promise<FailedSave[]>>(async () => [])
   flushRef.current = async () => {
-    boardRef.current?.settle()
-    await flushSave()
+    try {
+      boardRef.current?.settle()
+    } catch (error) {
+      console.error(`could not commit the open edit: ${errorMessage(error)}`)
+    }
     flushCamera()
+    return flushSave()
   }
 
   useEffect(() => {
@@ -698,7 +781,11 @@ export function App() {
         }
       }),
       space.onFlushRequest(() => {
-        void flushRef.current().finally(() => space.flushDone())
+        space.flushStarted()
+        void flushRef.current().then(space.flushDone, (error: unknown) => {
+          console.error(`save at close failed: ${errorMessage(error)}`)
+          space.flushDone([])
+        })
       })
     ]
     return () => {
@@ -752,11 +839,7 @@ export function App() {
         throw new Error(`"${path}" did not open in time.`)
       },
       importAsset: (src) => space.importAsset(src),
-      saveNow: async () => {
-        await flushRef.current()
-        // A failed write keeps the edits pending.
-        return pendingRef.current === null
-      }
+      saveNow: async () => (await flushRef.current()).length === 0
     }
   }, [])
 
@@ -764,8 +847,8 @@ export function App() {
   openBoardRef.current = openBoard
   const changeBoardRef = useRef(changeBoard)
   changeBoardRef.current = changeBoard
-  const sidebarRef = useRef({ renameBoard, deleteBoard })
-  sidebarRef.current = { renameBoard, deleteBoard }
+  const sidebarRef = useRef({ renameBoard, deleteBoard, openRecent })
+  sidebarRef.current = { renameBoard, deleteBoard, openRecent }
 
   // A live scene plays on one mounted board: a board switch or a reload ends it (its items are already final).
   const openKey = open?.key
@@ -855,9 +938,10 @@ export function App() {
       },
       /** The render meter (scripts/perf/render.mjs): start(), stop(), read(). */
       perf: perfMeter,
-      /** The sidebar's own board actions (dev checks, scripts/drive.mjs board-action): the same callbacks as its Rename and Move to Trash menu items; trash answers the confirm with OK. */
+      /** The sidebar's own actions (dev checks, scripts/drive.mjs): the same callbacks as its Rename, Move to Trash and recent-folder items; trash answers the confirm with OK. */
       sidebar: {
         rename: (path: string, name: string) => sidebarRef.current.renameBoard(path, name),
+        openRecent: (path: string) => sidebarRef.current.openRecent(path),
         trash: (path: string) => {
           const confirm = window.confirm
           window.confirm = () => true

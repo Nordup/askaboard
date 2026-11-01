@@ -112,6 +112,13 @@ export interface BoardChange {
   deleted: boolean
 }
 
+/** A board whose save failed, with the text that could not be written. */
+export interface FailedSave {
+  root: string
+  path: string
+  text: string
+}
+
 export type MenuCommand = 'open-folder' | 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
 
 /** Call the returned function to stop listening. */
@@ -568,6 +575,8 @@ export interface SpaceApi {
 
   /** Reads and writes name their folder (`root`): they go to that folder, whichever folder is open by then. */
   readBoard(root: string, path: string): Promise<string>
+  /** The board text kept when a save failed at close, or null (main/recovery.ts). */
+  readRecovery(root: string, path: string): Promise<string | null>
   /**
    * Atomic write (temp file + rename). Only `*.board.json` paths. `info` carries the
    * learner's changes in this save (for the learner-edit log) and the serialise time (for the save log).
@@ -614,9 +623,10 @@ export interface SpaceApi {
   onFilesChanged(listener: (tree: FileTree) => void): Unsubscribe
   onBoardChanged(listener: (change: BoardChange) => void): Unsubscribe
   onMenuCommand(listener: (command: MenuCommand) => void): Unsubscribe
-  /** The window is about to close: save, then call flushDone(). */
+  /** The window is about to close: call flushStarted() at once, save, then call flushDone() with the boards that could not be saved. */
   onFlushRequest(listener: () => void): Unsubscribe
-  flushDone(): void
+  flushStarted(): void
+  flushDone(failed: FailedSave[]): void
 
   getAgentStatus(): Promise<AgentServerStatus>
   onAgentStatus(listener: (status: AgentServerStatus) => void): Unsubscribe
@@ -659,6 +669,7 @@ export const IPC = {
   openFolder: 'space:open-folder',
   listFiles: 'space:list-files',
   readBoard: 'space:read-board',
+  readRecovery: 'space:read-recovery',
   writeBoard: 'space:write-board',
   createBoard: 'space:create-board',
   renameBoard: 'space:rename-board',
@@ -681,6 +692,7 @@ export const IPC = {
   boardChanged: 'space:board-changed',
   menuCommand: 'space:menu-command',
   flushRequest: 'space:flush-request',
+  flushStarted: 'space:flush-started',
   flushDone: 'space:flush-done',
   getAgentStatus: 'space:get-agent-status',
   agentStatus: 'space:agent-status',

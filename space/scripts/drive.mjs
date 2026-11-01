@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N] [--then-recent <folder>]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -20,6 +20,8 @@
  *   node scripts/drive.mjs screenshot <out.png> the whole window
  *   node scripts/drive.mjs eval-state           board, zoom, tool, selection, nodes with bounds (JSON)
  *   node scripts/drive.mjs board-action rename <path> <name> | trash <path>   the sidebar's own Rename / Move to Trash
+ *   node scripts/drive.mjs recent <folder>      the sidebar's own recent-folder item
+ *   node scripts/drive.mjs close                close the window, as the red button does
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
  *
@@ -37,7 +39,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  pans the board first so every point is on screen;
                                                  --tool eraser drags the eraser along the strokes;
                                                  --fast sends each stroke in one burst (no pen-speed delays);
-                                                 --hz sends N samples per second, as a pen does, with no wait for each answer
+                                                 --hz sends N samples per second, as a pen does, with no wait for each answer;
+                                                 --then-recent opens that recent folder right after the last pen-up
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
   click <x> <y> [--shift]                        window CSS pixels
@@ -51,6 +54,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   screenshot <out.png>
   eval-state                                     board, tool, selection, nodes (id, kind, parent, bounds)
   board-action rename <path> <name> | trash <path>   the sidebar's Rename / Move to Trash (prints the open board)
+  recent <folder>                                the sidebar's recent-folder item (prints the open board)
+  close                                          close the window, as the red button does
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
@@ -406,6 +411,7 @@ async function main() {
   const tool = takeOption('--tool') ?? 'pen'
   if (!['pen', 'highlighter', 'eraser'].includes(tool)) throw new Failure('--tool must be pen, highlighter or eraser.')
   const inline = takeOption('--strokes')
+  const thenRecent = takeOption('--then-recent')
   const hz = Number(takeOption('--hz') ?? 0)
   if (!Number.isFinite(hz) || hz < 0) throw new Failure('--hz must be a positive number.')
   const steps = Number(takeOption('--steps') ?? 12)
@@ -433,7 +439,14 @@ async function main() {
   if (command === 'draw') {
     const strokes = inline ? parseStrokes(inline) : rest[0] ? readStrokes(rest[0]) : null
     if (!strokes) throw new Failure('draw needs a strokes file, "-" for stdin, or --strokes.')
-    run = (cdp) => draw(cdp, strokes, tool, !noPan, fast, hz)
+    run = async (cdp) => {
+      await draw(cdp, strokes, tool, !noPan, fast, hz)
+      if (thenRecent) {
+        await evaluate(cdp, `window.__spaceDev.sidebar.openRecent(${JSON.stringify(thenRecent)})`)
+        await sleep(300)
+        console.log(JSON.stringify(await evaluate(cdp, 'window.__spaceDev.state().board')))
+      }
+    }
   } else if (command === 'key') {
     if (!rest[0]) throw new Failure('key needs a combo, for example v, Delete or Meta+z.')
     parseCombo(rest[0])
@@ -519,6 +532,21 @@ async function main() {
       await evaluate(cdp, action === 'rename' ? `window.__spaceDev.sidebar.rename(${JSON.stringify(path)}, ${JSON.stringify(name)})` : `window.__spaceDev.sidebar.trash(${JSON.stringify(path)})`)
       await sleep(300)
       console.log(JSON.stringify(await evaluate(cdp, 'window.__spaceDev.state().board')))
+    }
+  } else if (command === 'recent') {
+    if (!rest[0]) throw new Failure('recent needs a folder from the recent list.')
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      await evaluate(cdp, `window.__spaceDev.sidebar.openRecent(${JSON.stringify(rest[0])})`)
+      await sleep(300)
+      console.log(JSON.stringify(await evaluate(cdp, 'window.__spaceDev.state().board')))
+    }
+  } else if (command === 'close') {
+    run = async (cdp) => {
+      await requireDevHook(cdp)
+      // The page may go before it answers: the call does not wait.
+      void evaluate(cdp, 'window.close()').catch(() => undefined)
+      await sleep(100)
     }
   } else if (command === 'eval-state') {
     run = async (cdp) => {

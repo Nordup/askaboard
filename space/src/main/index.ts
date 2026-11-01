@@ -1,8 +1,8 @@
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainInvokeEvent } from 'electron'
-import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
+import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { IPC, type BoardSaveInfo, type Camera, type FailedSave, type MenuCommand, type Snapshot } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
@@ -14,11 +14,16 @@ import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
 import { installShim, writeRelayState } from './agent-home'
+import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
 const BACKGROUND = '#111113'
+/** A renderer that does not answer a close in this time is not responding: the window closes. */
+const FLUSH_ANSWER_MS = 2000
+/** The time a renderer that answered has for its saves. */
+const FLUSH_SAVE_MS = 30000
 
 /** Dev hook: write a PNG of the window to this path after load. */
 const capturePath = process.env.SPACE_CAPTURE
@@ -293,10 +298,12 @@ function registerIpc(): void {
   })
 
   handle(IPC.readBoard, (root: unknown, path: string) => sessionOf(root).readBoard(path))
+  handle(IPC.readRecovery, (root: unknown, path: string) => readRecovery(sessionOf(root).root, path))
   handle(IPC.writeBoard, async (root: unknown, path: string, text: string, info?: BoardSaveInfo) => {
     const start = performance.now()
     const folder = sessionOf(root)
     await folder.writeBoard(path, text)
+    await dropRecovery(folder.root, path)
     const writeMs = performance.now() - start
     const serializeMs = typeof info?.serializeMs === 'number' ? info.serializeMs.toFixed(1) : '?'
     console.log(`save: ${path} serialise ${serializeMs} ms, ${Math.round(Buffer.byteLength(text) / 1024)} kB, write ${writeMs.toFixed(1)} ms`)
@@ -310,7 +317,10 @@ function registerIpc(): void {
     const current = requireSession()
     const target = await current.renameBoard(path, newName)
     store.renameBoardState(current.root, path, target)
-    if (target !== path) agentServer.boardMoved(path, target)
+    if (target !== path) {
+      agentServer.boardMoved(path, target)
+      await moveRecovery(current.root, path, target)
+    }
     return target
   })
   handle(IPC.deleteBoard, async (path: string) => {
@@ -318,6 +328,7 @@ function registerIpc(): void {
     await current.deleteBoard(path)
     store.forgetBoardState(current.root, path)
     agentServer.boardMoved(path, null)
+    await dropRecovery(current.root, path)
   })
 
   handle(IPC.readFile, (path: string) => requireSession().readPreview(path))
@@ -378,6 +389,65 @@ function sendMenuCommand(command: MenuCommand): void {
   send(IPC.menuCommand, command)
 }
 
+/** Ask the renderer to save: the boards it could not save, or null when it does not answer. */
+function askToSave(win: BrowserWindow): Promise<FailedSave[] | null> {
+  return new Promise((resolve) => {
+    const finish = (failed: FailedSave[] | null): void => {
+      clearTimeout(timer)
+      ipcMain.removeListener(IPC.flushStarted, started)
+      ipcMain.removeListener(IPC.flushDone, done)
+      resolve(failed)
+    }
+    let timer = setTimeout(() => finish(null), FLUSH_ANSWER_MS)
+    const started = (event: IpcMainEvent): void => {
+      if (event.sender !== win.webContents) return
+      clearTimeout(timer)
+      timer = setTimeout(() => finish(null), FLUSH_SAVE_MS)
+    }
+    const done = (event: IpcMainEvent, failed: unknown): void => {
+      if (event.sender === win.webContents) finish(Array.isArray(failed) ? (failed as FailedSave[]) : [])
+    }
+    ipcMain.on(IPC.flushStarted, started)
+    ipcMain.on(IPC.flushDone, done)
+    try {
+      win.webContents.send(IPC.flushRequest)
+    } catch {
+      finish(null)
+    }
+  })
+}
+
+/**
+ * The close of the window. The renderer saves, and main hears each board that failed:
+ * its text goes to a recovery file, and the learner chooses to try again or to close.
+ * A renderer that does not answer cannot hold the window.
+ */
+async function saveAndClose(win: BrowserWindow): Promise<void> {
+  for (;;) {
+    const failed = await askToSave(win)
+    if (!failed?.length) break
+    const kept = await Promise.all(failed.map((board) => keepRecovery(board.root, board.path, board.text))).then(
+      () => true,
+      (error: unknown) => {
+        console.error(`recovery: could not keep ${failed.map((board) => board.path).join(', ')}: ${String(error)}`)
+        return false
+      }
+    )
+    console.log(`close: could not save ${failed.map((board) => board.path).join(', ')}`)
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      message: "Couldn't save your board",
+      ...(kept ? { detail: 'A copy is kept, and it comes back when you open this board again.' } : {}),
+      buttons: ['Try again', 'Close anyway'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    })
+    if (response !== 0) break
+  }
+  if (!win.isDestroyed()) win.destroy()
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
@@ -411,21 +481,13 @@ function createWindow(): BrowserWindow {
     if (url !== win.webContents.getURL()) event.preventDefault()
   })
 
-  // Before the window closes, the renderer saves its open board.
-  let flushed = false
+  // Before the window closes, the renderer saves. destroy() does not come back here.
+  let closing = false
   win.on('close', (event) => {
-    if (flushed) return
     event.preventDefault()
-    const finish = (): void => {
-      if (flushed) return
-      flushed = true
-      clearTimeout(timer)
-      ipcMain.removeListener(IPC.flushDone, finish)
-      win.destroy()
-    }
-    const timer = setTimeout(finish, 2000)
-    ipcMain.on(IPC.flushDone, finish)
-    win.webContents.send(IPC.flushRequest)
+    if (closing) return
+    closing = true
+    void saveAndClose(win)
   })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
