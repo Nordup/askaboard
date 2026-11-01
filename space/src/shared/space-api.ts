@@ -656,6 +656,11 @@ export interface SpaceApi {
   sceneEvent(event: SceneEvent): void
   /** A line of a world's console: it reaches the agent in the next tool result. */
   worldLog(level: string, text: string): void
+  /** Board window only: a worker's token reads the open folder from now on (main/live-item-protocol.ts). */
+  worldFilesGrant(token: string): void
+  worldFilesRevoke(token: string): void
+  /** Board window only: the bytes of the files that main served to this token in the last `ms` milliseconds. */
+  worldBytesRead(token: string, ms: number): Promise<number>
   /**
    * Board window only: ask for a port to the stage page, for the frames of
    * scenes (renderer/live/frames.ts). The port comes as a window message
@@ -714,6 +719,9 @@ export const IPC = {
   snapshotReady: 'space:snapshot-ready',
   sceneEvent: 'space:scene-event',
   worldLog: 'space:world-log',
+  worldFilesGrant: 'space:world-files-grant',
+  worldFilesRevoke: 'space:world-files-revoke',
+  worldBytesRead: 'space:world-bytes-read',
   framesPort: 'space:frames-port',
   openSceneRecords: 'space:open-scene-records',
   sceneStories: 'space:scene-stories',

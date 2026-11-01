@@ -153,8 +153,8 @@ export interface WorldStats {
 }
 
 export type PageToWorld =
-  /** width and height: board element in CSS pixels. margin: overscan in CSS pixels per side. */
-  | { type: 'init'; width: number; height: number; dpr: number; margin: number; tune?: WorldTune }
+  /** width and height: board element in CSS pixels. margin: overscan in CSS pixels per side. fileToken: this worker's right to read the folder. */
+  | { type: 'init'; width: number; height: number; dpr: number; margin: number; tune?: WorldTune; fileToken?: string }
   | { type: 'resize'; width: number; height: number; dpr: number }
   /** Sent when the camera or a placement changes. seq grows by one each time. */
   | { type: 'view'; seq: number; camera: WorldCamera; placements: WorldPlacement[] }
@@ -232,8 +232,8 @@ export type WorldToPage =
   | { type: 'report'; key: WorldKey; values: unknown }
   /** A line of the world's console, for the agent. */
   | { type: 'log'; key: WorldKey; level: string; text: string }
-  /** The worker loads files. Sent as loads start and end, and while they run. bytes: what these loads read so far. No `key`: a hang is a matter of the worker. */
-  | { type: 'files'; bytes: number }
+  /** The worker loads files. Sent as loads start and end. It holds no number, because this realm runs world code: the size of a read comes from main. No `key`: a hang is a matter of the worker. */
+  | { type: 'files' }
   /** The answer to `pick`. part: the nearest published ancestor. local: in the part's space. point: in world space. hit null: nothing there. */
   | { type: 'picked'; key: WorldKey; request: number; hit: { part: string | null; local: [number, number, number]; point: [number, number, number] } | null }
   /** The cursor the world asks for over itself, a CSS cursor. Empty: the board's own. Sent on a change. */

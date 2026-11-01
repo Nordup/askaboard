@@ -16,6 +16,8 @@ import { WorldHost, type LiveFrame } from './world/host'
  */
 
 const PROGRESS_MS = 8000
+/** No host lives longer. Its worker's realm runs world code, so its progress and its loads prove nothing, and another host waits for this turn. */
+const HOST_MOST_MS = 600000
 /** A check ends after this long (pass). */
 const CHECK_MS = 3000
 /** The largest still: pixels per picture (a step host computes every tick at this size). */
@@ -52,7 +54,8 @@ const NO_SCENE: SceneView = { t: 0, playing: false, active: false, ended: true, 
 /**
  * A step host and a watchdog: `run` gets the host and `watch`, which ends a
  * piece of work with null when the host fails, when its tick does not move
- * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`.
+ * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`,
+ * HOST_MOST_MS by default.
  */
 async function withStepHost<T>(
   node: Pick<LiveNode, 'code' | 'name' | 'params' | 'w' | 'h'> & Partial<Pick<LiveNode, 'id' | 'data' | 'pins'>>,
@@ -64,6 +67,7 @@ async function withStepHost<T>(
 ): Promise<T> {
   return withStepTurn(async () => {
     const started = absNow()
+    const limitMs = options.limitMs ?? HOST_MOST_MS
     let moved = started
     let lastTick = -2
     let failed = false
@@ -92,7 +96,7 @@ async function withStepHost<T>(
       new Promise((resolve) => {
         const timer = window.setInterval(() => {
           const now = absNow()
-          if (failed || now - moved > PROGRESS_MS || (options.limitMs !== undefined && now - started > options.limitMs)) {
+          if (failed || now - moved > PROGRESS_MS || now - started > limitMs) {
             clearInterval(timer)
             resolve(null)
           }

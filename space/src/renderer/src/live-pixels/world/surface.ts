@@ -42,6 +42,11 @@ const HANG_MS = 2000
 const SETUP_MS = 20000
 /** After a file, its parse can block the worker: this many milliseconds per byte more than a setup. */
 const PARSE_MS_PER_BYTE = 1 / 5000
+/** A load episode lets a silent worker stay silent this long at most, however large its files. */
+const LOAD_MOST_MS = 300000
+/** How often main is asked what a load read, and how far back past the episode's start a read counts: the first read can reach main first. */
+const BYTES_ASK_MS = 200
+const BYTES_SLACK_MS = 1000
 
 /** How a world stands on the board now, from the board's state. */
 export interface WorldPlace {
@@ -210,8 +215,13 @@ export class WorldSurface {
   private pings = 0
   /** The world that runs now in the worker, as it last said. */
   private running: WorldKey | null = null
+  /** This worker's right to read the folder: minted here, known to main and to the worker only. */
+  private fileToken = ''
+  /** When the load episode began: a message in an episode moves no deadline past LOAD_MOST_MS from here. */
+  private loadBegan = 0
   /** Until this time, a silent worker parses what it loaded. */
   private loadingUntil = 0
+  private bytesTimer = 0
   /** After a recovery: the view with the first world shown. Pictures before it do not show. */
   private recovering: { seq: number } | null = null
 
@@ -299,12 +309,52 @@ export class WorldSurface {
   private endWorker(): void {
     this.frame?.contentWindow?.postMessage({ type: 'stop' }, '*')
     this.channel?.port1.close()
+    if (this.fileToken) window.space?.worldFilesRevoke(this.fileToken)
+    this.fileToken = ''
+    clearTimeout(this.bytesTimer)
+    this.bytesTimer = 0
+    this.loadingUntil = 0
     for (const [win, surface] of byWindow) if (surface === this) byWindow.delete(win)
     this.box?.remove()
     this.frame = null
     this.box = null
     this.channel = null
     this.answeredAt = 0
+  }
+
+  /** A token for the worker that starts now. */
+  private mintToken(): string {
+    this.fileToken = Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    window.space?.worldFilesGrant(this.fileToken)
+    return this.fileToken
+  }
+
+  /**
+   * The worker says that it loads. The worker's realm runs world code, so this message proves only that a load may run, and it holds no number. The
+   * episode starts here, and its limit comes from what main served. So repeated messages move no deadline, and a silent worker has a limit that it cannot change.
+   */
+  private loadSeen(): void {
+    const now = performance.now()
+    if (now >= this.loadingUntil) {
+      this.loadBegan = now
+      this.silentUntil(now + SETUP_MS)
+    }
+    if (!this.bytesTimer) this.bytesTimer = window.setTimeout(() => this.askBytes(), BYTES_ASK_MS)
+  }
+
+  private askBytes(): void {
+    this.bytesTimer = 0
+    const began = this.loadBegan
+    void window.space?.worldBytesRead(this.fileToken, performance.now() - began + BYTES_SLACK_MS).then((bytes) => {
+      if (began === this.loadBegan && this.frame && Number.isFinite(bytes)) this.silentUntil(began + Math.min(LOAD_MOST_MS, SETUP_MS + bytes * PARSE_MS_PER_BYTE))
+    })
+  }
+
+  private silentUntil(until: number): void {
+    if (until <= this.loadingUntil) return
+    this.loadingUntil = until
+    const ms = until - performance.now()
+    for (const member of this.members.values()) member.loading(ms)
   }
 
   /** A message from the frame: it is ready, or the worker failed to load. */
@@ -330,7 +380,7 @@ export class WorldSurface {
     const waiting = this.outbox ?? []
     const stats: PageToWorld[] = this.canvas && statsListener ? [{ type: 'stats', on: true }] : []
     const rate: PageToWorld[] = this.canvas && uncapped ? [{ type: 'uncapped', on: true }] : []
-    this.outbox = [{ ...init, tune }, ...stats, ...rate, ...waiting]
+    this.outbox = [{ ...init, tune, fileToken: this.mintToken() }, ...stats, ...rate, ...waiting]
     this.opened = true
     this.flush()
   }
@@ -351,11 +401,7 @@ export class WorldSurface {
       this.running = m.running
     }
     else if (m.type === 'lost') this.recover(null)
-    else if (m.type === 'files') {
-      const ms = SETUP_MS + m.bytes * PARSE_MS_PER_BYTE
-      this.loadingUntil = this.answeredAt + ms
-      for (const member of this.members.values()) member.loading(ms)
-    }
+    else if (m.type === 'files') this.loadSeen()
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }
 

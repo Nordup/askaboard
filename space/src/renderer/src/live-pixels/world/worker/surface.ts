@@ -691,6 +691,7 @@ export const SURFACE = String.raw`
   let booted = false, booting = false;
   const boot = async (m) => {
     booting = true;
+    setFileToken(m.fileToken);
     try {
       THREE = await import(resolveLibrary('three'));
       watchLoaders();

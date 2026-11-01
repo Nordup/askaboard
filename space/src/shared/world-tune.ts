@@ -27,4 +27,6 @@ export interface WorldTune {
   integrated?: number
   /** 1: show pictures through a 2D canvas, as where bitmaprenderer is missing. */
   flat?: number
+  /** Generations with modules that a worker takes before it restarts. */
+  moduleRuns?: number
 }

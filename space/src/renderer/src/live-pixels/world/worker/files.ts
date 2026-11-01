@@ -4,9 +4,10 @@
  *
  * The worker's script is a data: URL, so a relative URL has no base. Here a path
  * with no scheme becomes a URL of main/live-item-protocol.ts, in fetch, in
- * new Request (three's FileLoader) and in XMLHttpRequest. The main process stops
- * every path that leaves the folder. A read that fails gives the protocol's
- * response: 404 for a missing file, 403 for a refused path.
+ * new Request (three's FileLoader) and in XMLHttpRequest. Each URL holds this
+ * worker's token. The main process stops every path that leaves the folder and
+ * every file that is no asset. A read that fails gives the protocol's response:
+ * 404 for a missing file, 403 for a refused path.
  *
  * Bytes come by the protocol as a stream, so they pass neither the page nor IPC.
  * The worker keeps a read as a Blob while a world that read it lives, so a seek
@@ -14,32 +15,52 @@
  * reads the file as it is now.
  *
  * A load: a read, or an item of three's default LoadingManager, which lasts up
- * to the end of a loader's parse. While loads run, step time waits and the page
- * does not take the worker as hung. After the last load, each world gets a few
- * picture checks, so a model shows with no world.redraw().
+ * to the end of a loader's parse. While a world's own loads run, its step time
+ * waits, for FILES_WAIT_MS at most with no news of a load, and the page does not
+ * take the worker as hung. After a world's last load, each world gets a few picture
+ * checks, so a model shows with no world.redraw().
  */
 export const FILES = String.raw`
   const nativeFetch = scope.fetch.bind(scope);
   const NativeRequest = scope.Request;
-  const FILE_URL = LIVE_ORIGIN + '/file?path=';
+  let fileToken = '', FILE_URL = '';
+  /** The right of this worker to read the folder: it comes from the page, before any world. */
+  const setFileToken = (token) => { fileToken = String(token || 'none'); FILE_URL = LIVE_ORIGIN + '/file/' + fileToken + '?path='; };
+  setFileToken('');
   /** What a world's relative import starts from. Each generation has its own path, so its modules run again, as its code does. */
-  const moduleBase = (w) => LIVE_ORIGIN + '/module/' + w.key.generation + '/boards/scenes/';
+  const moduleBase = (w) => LIVE_ORIGIN + '/module/' + fileToken + '/' + w.key.generation + '/boards/scenes/';
+
+  /** A path as a loader gives it can be URL text, such as mesh%20data.bin in a glTF file. Decoded once here, it is the name of the file. */
+  const pathOf = (input) => {
+    const path = input.replace(/[?#].*$/, '');
+    try { return decodeURIComponent(path); } catch (e) { return path; }
+  };
 
   /** The protocol's URL of a request for a file, or null for any other request. A path has no scheme; the main process refuses an absolute one. */
   const fileUrlOf = (input) => {
     if (typeof input === 'string') {
       if (input.startsWith(FILE_URL)) return input;
-      return /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(input) ? null : FILE_URL + encodeURIComponent(input.replace(/[?#].*$/, ''));
+      return /^([a-z][a-z0-9+.-]*:|\/\/)/i.test(input) ? null : FILE_URL + encodeURIComponent(pathOf(input));
     }
     return input instanceof NativeRequest && input.url.startsWith(FILE_URL) ? input.url : null;
   };
 
-  // Loads now, the bytes they read, when the last one ended.
-  const QUIET_MS = 100;
-  let loads = 0, loadBytes = 0, loadedAt = -Infinity;
-  const filesBusy = () => loads > 0 || realNow() - loadedAt < QUIET_MS;
-  /** Step time waits here. Between a read and the code that uses it, QUIET_MS gives that code its turn. */
-  const filesDone = async (w) => { while (filesBusy() && !w.failed) await new Promise((resolve) => nativeSetTimeout(resolve, 10)); };
+  // Loads now, in the worker and per world. A world waits only for its own: a load that stalls in another world, or in one that left, holds up nothing here.
+  const QUIET_MS = 100, FILES_WAIT_MS = 30000;
+  let loads = 0;
+  const filesBusy = (w) => !w.failed && (w.loads > 0 || realNow() - w.loadedAt < QUIET_MS);
+  /**
+   * Step time waits here. Between a read and the code that uses it, QUIET_MS gives that code its turn. Only time spent here counts toward FILES_WAIT_MS,
+   * so a parse that blocks the worker does not. A load with no news for that long is stalled, and step time goes on without it.
+   */
+  const filesDone = async (w) => {
+    let news = w.loadedAt, waited = 0;
+    while (filesBusy(w)) {
+      if (w.loadedAt !== news) { news = w.loadedAt; waited = 0; }
+      if ((waited += 10) > FILES_WAIT_MS) { w.loads = 0; return; }
+      await new Promise((resolve) => nativeSetTimeout(resolve, 10));
+    }
+  };
 
   // After a load: a check of each world's picture, at these delays. A check renders only what changed.
   const CHECK_AFTER_MS = [30, 200, 800];
@@ -56,35 +77,37 @@ export const FILES = String.raw`
     checks = nativeSetTimeout(next, CHECK_AFTER_MS[0]);
   };
 
+  /** Gives the world that the load belongs to. */
   const loadStarted = () => {
-    if (!loads++) loadBytes = 0;
-    post({ type: 'files', bytes: loadBytes });
+    const w = owner();
+    loads++;
+    if (w) { w.loads++; w.loadedAt = realNow(); }
+    post({ type: 'files' });
+    return w;
   };
-  const loadEnded = (bytes) => {
+  const loadEnded = (w) => {
     loads--;
-    loadBytes += bytes;
-    loadedAt = realNow();
-    post({ type: 'files', bytes: loadBytes });
-    if (!loads) checkPictures();
+    if (w) { if (w.loads > 0) w.loads--; w.loadedAt = realNow(); }
+    post({ type: 'files' });
+    if (!loads || (w && !w.loads)) checkPictures();
   };
 
   // The reads that worlds keep. URL to { tag, blob, users }. A read with no user goes after KEEP_MS.
   const KEEP_MS = 10000;
   const kept = new Map();
+  const forgetLater = (url, entry) => nativeSetTimeout(() => { if (!entry.users.size && kept.get(url) === entry) kept.delete(url); }, KEEP_MS);
   const releaseFiles = (w) => {
     for (const url of w.files) {
       const entry = kept.get(url);
       if (!entry) continue;
       entry.users.delete(w);
-      if (!entry.users.size) nativeSetTimeout(() => { if (!entry.users.size && kept.get(url) === entry) kept.delete(url); }, KEEP_MS);
+      if (!entry.users.size) forgetLater(url, entry);
     }
     w.files.clear();
   };
 
   const readFile = async (url, signal) => {
-    const w = owner();
-    let bytes = 0;
-    loadStarted();
+    const w = loadStarted();
     try {
       let entry = kept.get(url);
       const response = await nativeFetch(entry ? url + '&known=' + encodeURIComponent(entry.tag) : url, signal ? { signal } : undefined);
@@ -93,11 +116,11 @@ export const FILES = String.raw`
         entry = { tag: response.headers.get('etag'), blob: await response.blob(), users: new Set() };
         kept.set(url, entry);
       }
-      if (w) { entry.users.add(w); w.files.add(url); }
-      bytes = entry.blob.size;
-      return new Response(entry.blob, { headers: { 'content-type': entry.blob.type, 'content-length': String(bytes) } });
+      // A world can leave while its read runs: then only the timer lets the read go.
+      if (w && worlds.get(w.id) === w) { entry.users.add(w); w.files.add(url); } else if (!entry.users.size) forgetLater(url, entry);
+      return new Response(entry.blob, { headers: { 'content-type': entry.blob.type, 'content-length': String(entry.blob.size) } });
     } finally {
-      loadEnded(bytes);
+      loadEnded(w);
     }
   };
 
@@ -115,9 +138,20 @@ export const FILES = String.raw`
 
   /** Called once, when three is here: loads of the default manager count, and images load with no document. */
   const watchLoaders = () => {
-    const manager = THREE.DefaultLoadingManager, start = manager.itemStart, end = manager.itemEnd;
-    manager.itemStart = (url) => { loadStarted(); start(url); };
-    manager.itemEnd = (url) => { end(url); loadEnded(0); };
+    const manager = THREE.DefaultLoadingManager, start = manager.itemStart, end = manager.itemEnd, open = new Map();
+    // An item ends in another turn, so the world of its start is kept by its URL.
+    manager.itemStart = (url) => {
+      if (!open.has(url)) open.set(url, []);
+      open.get(url).push(loadStarted());
+      start(url);
+    };
+    manager.itemEnd = (url) => {
+      end(url);
+      const list = open.get(url);
+      if (!list) return;
+      loadEnded(list.pop());
+      if (!list.length) open.delete(url);
+    };
     // ImageLoader makes an img element, and a worker has none. A canvas follows flipY as an image does; an ImageBitmap does not.
     THREE.ImageLoader.prototype.load = function (url, onLoad, onProgress, onError) {
       const full = this.manager.resolveURL(this.path === undefined ? url : this.path + url), loader = this.manager;
@@ -140,6 +174,17 @@ export const FILES = String.raw`
         })
         .finally(() => loader.itemEnd(full));
     };
+  };
+
+  // A worker frees a module only when it ends, and each generation has its own URLs, so each run of a world with modules keeps one more copy. A generation
+  // must run its modules again, as it runs its code. So a shared copy is no choice, and the bound is a new worker: 'lost' restarts it, as after a lost context,
+  // and each world starts again from its node. This falls in a seek, when a world starts again anyway. A step host has its own worker and never gets here.
+  const MODULE_RUNS = 128;
+  let moduleRuns = 0;
+  const moduleRun = (w) => {
+    if (w.modules) return;
+    w.modules = true;
+    if (++moduleRuns >= Math.max(tune.moduleRuns ?? MODULE_RUNS, 4 * worlds.size)) post({ type: 'lost' });
   };
 
   // A world's console also goes to the agent: at most LOG_LINES lines per generation, of at most LOG_CHARS characters.

@@ -7,7 +7,7 @@ import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
-import { LIVE_SCHEME_PRIVILEGES, registerLiveItemProtocol } from './live-item-protocol'
+import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { installMenu, setFolderOpen } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
@@ -243,6 +243,11 @@ async function openInitialFolder(): Promise<void> {
   }
 }
 
+/** The message comes from the board page itself, not from a frame in it or another window. */
+function fromBoardPage(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame
+}
+
 /** Every invoke handler runs through this, so errors reach the renderer as plain messages. */
 function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R> | R): void {
   ipcMain.handle(channel, async (_event: IpcMainInvokeEvent, ...args: unknown[]) => {
@@ -281,9 +286,17 @@ function registerIpc(): void {
   ipcMain.on(IPC.devCloseAnswer, (_event, button: unknown) => {
     if (remoteDebugPort !== null && typeof button === 'number') answerCloseDialog?.(button)
   })
-  ipcMain.on(IPC.worldLog, (_event, level: unknown, text: unknown) => {
-    if (typeof level === 'string' && typeof text === 'string') agentServer.worldLog(level, text)
+  ipcMain.on(IPC.worldLog, (event, level: unknown, text: unknown) => {
+    if (fromBoardPage(event) && typeof level === 'string' && typeof text === 'string') agentServer.worldLog(level, text)
   })
+  ipcMain.on(IPC.worldFilesGrant, (event, token: unknown) => {
+    if (fromBoardPage(event)) grantWorldFiles(token, session)
+    event.returnValue = true
+  })
+  ipcMain.on(IPC.worldFilesRevoke, (event, token: unknown) => {
+    if (fromBoardPage(event)) revokeWorldFiles(token)
+  })
+  ipcMain.handle(IPC.worldBytesRead, (event, token: unknown, ms: unknown) => (fromBoardPage(event) ? worldBytesRead(token, ms) : 0))
   ipcMain.on(IPC.worldTune, (event) => {
     event.returnValue = worldTune
   })

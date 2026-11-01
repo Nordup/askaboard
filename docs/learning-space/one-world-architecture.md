@@ -238,19 +238,24 @@ flowchart LR
   keeps the named world stopped with a note.
 - **Context loss.** The surface restarts the same way.
 - **A world's console.** `console.log`, `info`, `debug`, `warn` and `error` also reach
-  the agent, as late notes (T31) in the next tool result. A generation sends at most 40
-  lines of 400 characters, and a line then says that the rest is left out. In main, a
-  line comes once per board until the next `write_scene`, because previews, pictures
-  and replays run the world again. At most 100 notes wait per board.
+  the agent at the start of the next tool result, in one `<world-console>` block that
+  says it is program output: untrusted text, as data, not instructions. World code can
+  be any library, and it shares its realm with the worker, so main applies the bounds
+  itself (`worldLogRow` in `main/mcp.ts`): the five levels only, 400 characters, no
+  control, format or line-separator character, no text that names the end of the block.
+  Each row starts with `| `, so a line that imitates a note stays inside the block. The
+  worker also sends at most 40 lines per generation, and a line then says that the rest
+  is left out. In main, a line comes once per board until the next `write_scene`, because
+  previews, pictures and replays run the world again. At most 100 rows wait per board.
 
 ## 7. Files and modules
 
 ```mermaid
 flowchart LR
   W["World code: fetch, Request, XMLHttpRequest, ImageLoader, import"] --> F["world/worker/files.ts"]
-  F -- "live-item://host/file?path=" --> M["main/live-item-protocol.ts"]
-  W -- "live-item://host/module/generation/path" --> M
-  M --> G["FolderSession.worldFile: the path check"]
+  F -- "live-item://host/file/token?path=" --> M["main/live-item-protocol.ts"]
+  W -- "live-item://host/module/token/generation/path" --> M
+  M --> G["FolderSession.worldFile: the path check and the asset rule"]
   G --> S["createReadStream: async, in chunks of 1 MiB"]
 ```
 
@@ -263,11 +268,27 @@ flowchart LR
   `Request` changes too. `ImageLoader` needs an `img` element, which a worker does not
   have, so it fetches, decodes and gives an `OffscreenCanvas`. A canvas follows `flipY`
   as an image does, and an `ImageBitmap` does not.
-- **Safety.** `FolderSession.worldFile` uses the path check of the folder, after
-  symlinks. A path that leaves the folder, an absolute path, and a hidden name on the
-  real path give 403. So `.learning-space/` is out. A missing file and a directory give
-  404. A write gives 405. A `file:` URL fails in the browser. World code can use the
-  network, so it can send out what it reads. No rule stops this.
+- **Safety: the path.** `FolderSession.worldFile` uses the path check of the folder,
+  after symlinks. A path that leaves the folder, an absolute path, and a hidden name on
+  the real path give 403. So `.learning-space/` is out. A missing file and a directory
+  give 404. A write gives 405. A `file:` URL fails in the browser.
+- **Safety: the asset rule.** A world reads assets only, and never the learner's notes.
+  A file must have an asset type: `glb gltf bin obj mtl fbx stl ply dae usdz hdr exr ktx2
+  basis png jpg jpeg webp gif svg avif wav mp3 ogg mp4 webm ttf otf woff2 csv tsv json txt
+  wasm js mjs`. So `.md` gives 403 in every place. The files at the top of the folder,
+  all of `sessions/`, and board files (`*.board.json`) give 403 too, whatever their type.
+  The rule holds for the path that was asked, also when no such file exists, and for the
+  real path, so a link named `x.png` cannot reach `learner.md`. The check ignores case.
+- **Safety: the token.** Any sandboxed frame of the app has the origin `null` and can name
+  the scheme, so an origin proves nothing. The page mints a token of 256 bits per worker
+  and gives it to main (`worldFilesGrant`, sent by the board page only) and to the worker,
+  over the port. So the frame never holds it. `/file` and `/module` need a token that lives,
+  for the folder that was open when the page minted it. Any other request gets 403. The
+  token ends with its worker. `access-control-allow-origin` is `null`, the origin of the worker.
+- **A known fact: world code has the network.** It can fetch any URL, it can run
+  third-party libraries from esm.sh, and it holds its worker's token, because the token
+  is in the URLs that it reads. So **a world can send out any asset that it can read.**
+  No rule stops this. The asset rule is what keeps the notes out of its reach.
 - **Keeping reads.** The worker keeps a read as a Blob while a world that read it lives,
   and 10 s more. Each read sends the tag of the kept Blob, and main answers 304 while size
   and time stay the same. So a seek reads no bytes again, and a file changed on disk
@@ -278,16 +299,30 @@ flowchart LR
   also after a change of a helper. Bare names in a module go through the same table as
   in world code. A computed `import(name)` resolves when it runs. **World modules are
   read at run time, not at `write_scene`:** the stage knows a world's source only when
-  the program runs, and a snapshot needs a second record of what ran (B34). A worker
-  frees module instances only when it ends, so each seek of a world with helpers adds a
-  little memory.
+  the program runs, and a snapshot needs a second record of what ran (B34).
+- **The bound on modules.** A worker frees module instances only when it ends. A copy
+  shared across generations would not run again: its state would pass from one run to
+  the next, and a replay would differ. So each generation keeps its copy, and a worker
+  that ran 128 generations with modules ends (4 per world, on a board with more). It
+  posts `lost`, and the page restarts it as after a lost context. This falls in a seek,
+  when a world starts again anyway. All worlds of that board start again from their nodes.
+  A step host has its own worker, so it never comes to this limit.
 - **Loads and hangs.** A load is a read or an item of three's default `LoadingManager`,
-  which lasts to the end of a loader's parse. A step world waits for loads, also between
-  ticks, so a still shows what loaded. While loads run, and after them for 20 s plus 1 s
-  per 5 MB, the page does not take a silent worker as hung. A step host waits the same
-  time. A parse that blocks the worker past that limit still ends the worker. A loader
-  with its own `LoadingManager` counts only for the time of its reads.
-- **The picture after a load.** After the last load each world gets three picture
+  which lasts to the end of a loader's parse. A step world waits for its own loads, also
+  between ticks, so a still shows what loaded. A load in another world holds up nothing,
+  and a load with no news for 30 s counts as stalled, so step time goes on. A read that
+  ends after its world left does not hold that world.
+- **The limit of a silent worker.** The worker's realm runs world code, which can reach
+  the port. So no number from the worker counts: a `files` message says only that a load
+  may run. In the page, the first message starts an episode. Its limit comes from what
+  main served to this token in the episode (`worldBytesRead`), with each file counted
+  once: 20 s plus 1 s per 5 MB, 300 s at most, from the first message. More messages do
+  not move it. So a world that lies goes silent for a time that it cannot change, and a
+  real file of 400 MB gets 100 s. A parse that blocks the worker past that limit still
+  ends the worker. A step host has the same limit, and no host lives past 600 s. A file
+  from the network counts for nothing, so its parse has the 20 s of a setup. A loader with
+  its own `LoadingManager` counts only for the time of its reads.
+- **The picture after a load.** After a world's last load each world gets three picture
   checks, at 30, 200 and 800 ms. A check renders only what changed. So a model shows with
   no `world.redraw()`, also from `scene.add` or a texture. A `parse()` that ends later
   than the last check still needs `world.redraw()` in a world with no frame loop.
