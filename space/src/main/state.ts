@@ -19,6 +19,8 @@ interface PersistedState {
   setupDontAsk: string[]
   /** Each agent app's news state per board (see news.ts). Key: `<client label>::<folder root>::<board path>`. */
   agentLooks: Record<string, AgentLook>
+  /** View > Show performance. */
+  showPerformance: boolean
 }
 
 /**
@@ -39,7 +41,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {} }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -51,7 +53,8 @@ export function loadState(): void {
       cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : {},
       lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {},
       setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : [],
-      agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {}
+      agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {},
+      showPerformance: raw.showPerformance === true
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -154,6 +157,15 @@ export function setSetupDontAsk(root: string, value: boolean): void {
   state.setupDontAsk = state.setupDontAsk.filter((entry) => entry !== root)
   if (value) state.setupDontAsk.push(root)
   // A rare, deliberate choice: write it now, so a crash cannot lose it.
+  saveStateNow()
+}
+
+export function getShowPerformance(): boolean {
+  return state.showPerformance
+}
+
+export function setShowPerformance(value: boolean): void {
+  state.showPerformance = value
   saveStateNow()
 }
 

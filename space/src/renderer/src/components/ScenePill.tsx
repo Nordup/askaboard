@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import { useSceneState } from '../live/state'
 import { scenesNewestFirst, storyOfSelection, useBoardStories } from '../live/stories'
 import { chooseScene, useReading } from '../live/reading'
+import { useMenuDismiss } from '../lib/dismiss'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
 
 /** Scene time as m:ss. */
@@ -75,25 +76,7 @@ export function ScenePill() {
   // The menu: the shared menu below the pill; Escape and a click outside close it.
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const down = (event: PointerEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false)
-    }
-    const key = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopPropagation()
-        setOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', down, true)
-    window.addEventListener('keydown', key, true)
-    return () => {
-      window.removeEventListener('pointerdown', down, true)
-      window.removeEventListener('keydown', key, true)
-    }
-  }, [open])
+  useMenuDismiss(open, rootRef, useCallback(() => setOpen(false), []))
   useEffect(() => {
     if (!value) setOpen(false)
   }, [value])

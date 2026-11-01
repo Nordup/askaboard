@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Check, ChevronLeft, ExternalLink, Loader2, Plus } from 'lucide-react'
+import { useMenuDismiss } from '../lib/dismiss'
 import type {
   AgentClientAction,
   AgentClientId,
@@ -287,25 +288,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
     if (open && clients && !navigated.current && lines.length === 0) setView('connect')
   }, [open, clients, lines.length])
 
-  useEffect(() => {
-    if (!open) return
-    const down = (event: PointerEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false)
-    }
-    const key = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        event.stopPropagation()
-        setOpen(false)
-      }
-    }
-    window.addEventListener('pointerdown', down, true)
-    window.addEventListener('keydown', key, true)
-    return () => {
-      window.removeEventListener('pointerdown', down, true)
-      window.removeEventListener('keydown', key, true)
-    }
-  }, [open])
+  useMenuDismiss(open, rootRef, useCallback(() => setOpen(false), []))
 
   const go = (next: 'agents' | 'connect'): void => {
     navigated.current = true

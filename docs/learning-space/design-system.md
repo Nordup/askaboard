@@ -47,9 +47,10 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--text-on-accent`
 - Accent and status: `--accent`, `--accent-hover`, `--accent-soft`,
   `--accent-ring`, `--accent-tile-from`, `--accent-tile-to`,
-  `--accent-tile-border`, `--status-idle`, `--status-live`,
-  `--status-idle-ring`, `--status-live-ring`, `--status-live-pulse`,
-  `--status-error-ring`, `--status-play`, `--status-play-ring`
+  `--accent-tile-border`, `--status-idle`, `--status-live`, `--status-warn`,
+  `--status-bad`, `--status-idle-ring`, `--status-live-ring`,
+  `--status-live-pulse`, `--status-error-ring`, `--status-warn-ring`,
+  `--status-bad-ring`, `--status-play`, `--status-play-ring`
 - Canvas tools: `--selection-fill`, `--lasso-fill`, `--eraser-ring`,
   `--eraser-halo`, `--swatch-edge`
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
@@ -89,8 +90,8 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 
 Every menu, popover and flyout uses it: the sidebar folder and board menus
 (`Menu.tsx`), the agent popover (`AgentPill.tsx`), the scene pill's menu
-(`ScenePill.tsx`), the setup flyout
-(`SetupMenu.tsx`). The reference comment block sits above `.menu` in
+(`ScenePill.tsx`), the performance pill's menu (`PerfPill.tsx`), the setup
+flyout (`SetupMenu.tsx`). The reference comment block sits above `.menu` in
 `app.css`.
 
 **Spacing and type** come only from custom properties on `.menu`:
@@ -107,7 +108,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu__heading` | Small uppercase section label |
 | `.menu__title` + `.menu__lede` | A title and one muted line |
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover) |
-| `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`) or `.menu__control` | A plain row: name left, meta or one control right |
+| `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
 | `.menu__separator` | The hairline between groups |
@@ -131,7 +132,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 The top bar's status pills share `.pill` in `app.css` (the comment block
 above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
-(`--live`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
+(`--live`, `--warn`, `--bad`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
 `.pill--selected` (the pill speaks of a selected item: `--text-primary`),
 `.pill__count` with `.pill__sep`, `.pill__time` (mono, tabular figures),
 `.pill__action` (the one small icon button, 12 px lucide icon),
@@ -258,6 +259,22 @@ item pill).
     pill lights up once in `--accent-soft` (`.pill--flash`, `--pill-flash`
     450 ms). Opening from the pill grows it out of the pill. A scene that
     starts after nothing played shows it again.
+
+- **Performance pill** (the founder's approval, 2026-11-01). View > Show
+  performance, a check mark that stays across restarts; off by default; no
+  keyboard shortcut. While on, the pill sits left of the scene pill: a
+  `.pill.pill--static` with `.pill__toggle`, a `.status-dot` and `.pill__time`
+  text, "60 fps · 4.8 ms" (the board's frame rate, the wall time per picture),
+  or "60 fps" with no world moving. The dot is `--live` at 55 fps or more,
+  `--warn` from 40 to 55, `--bad` below 40. A click opens the shared menu
+  below it (`.menu.perf-pop`, 264 px, position and width only); Escape and a
+  click outside close it. Numbers change once per second.
+  - Heading "Board": Frame rate, Slowest frame, Dropped, last 10 s.
+  - Heading "Worlds": Pictures, Time per picture, Resolution, Pixels, Draws,
+    triangles; with no world moving, one `.menu__line`, "No world moving".
+  - Rows are `.menu__row`, `.menu__name` and `.menu__meta--mono`.
+  - The pill reads `perf-meter.ts`, and the meter runs only while the pill
+    shows.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).

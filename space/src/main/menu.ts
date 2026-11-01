@@ -8,6 +8,9 @@ export interface MenuActions {
   zoom(step: 'in' | 'out' | 'reset'): void
   /** ⌘A: the focused text field's text, or all nodes on the board. */
   selectAll(): void
+  /** View > Show performance: its state at launch, and the change. */
+  showPerformance: boolean
+  setShowPerformance(on: boolean): void
 }
 
 /**
@@ -56,6 +59,8 @@ export function installMenu(actions: MenuActions): void {
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => actions.zoom('in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => actions.zoom('out') },
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => actions.zoom('reset') },
+        { type: 'separator' },
+        { label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },

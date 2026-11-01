@@ -112,7 +112,7 @@ export interface BoardChange {
   deleted: boolean
 }
 
-export type MenuCommand = 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all'
+export type MenuCommand = 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -586,6 +586,8 @@ export interface SpaceApi {
   applySetup(): Promise<SetupResult>
   /** Remember (or forget) "Don't ask for this folder". */
   setSetupDontAsk(value: boolean): Promise<void>
+  /** View > Show performance, as saved. */
+  getShowPerformance(): Promise<boolean>
   /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
   /** What the folder's guide and instructions files change for agents now. */
@@ -660,6 +662,7 @@ export const IPC = {
   setupPlan: 'space:setup-plan',
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
+  getShowPerformance: 'space:get-show-performance',
   boardGuidePath: 'space:board-guide-path',
   getGuideOverrides: 'space:get-guide-overrides',
   guideOverrides: 'space:guide-overrides',

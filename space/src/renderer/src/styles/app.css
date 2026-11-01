@@ -410,6 +410,16 @@ button:focus-visible {
   box-shadow: 0 0 0 var(--status-dot-ring) var(--status-error-ring);
 }
 
+.status-dot--warn {
+  background: var(--status-warn);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-warn-ring);
+}
+
+.status-dot--bad {
+  background: var(--status-bad);
+  box-shadow: 0 0 0 var(--status-dot-ring) var(--status-bad-ring);
+}
+
 /* One pulse per agent tool call. */
 .status-dot--pulse {
   animation: status-pulse 900ms ease-out;
@@ -464,6 +474,23 @@ button:focus-visible {
   top: calc(100% + 6px);
   right: 0;
   width: 300px;
+  max-height: calc(100vh - var(--topbar-height) - 24px);
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+}
+
+/* ---------- Performance pill ---------- */
+
+.perf-pill {
+  position: relative;
+}
+
+/* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
+.menu.perf-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 264px;
   max-height: calc(100vh - var(--topbar-height) - 24px);
   overflow-y: auto;
   -webkit-app-region: no-drag;
@@ -1086,6 +1113,7 @@ button:focus-visible {
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
+ *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
  *   .menu__separator       hairline
@@ -1227,6 +1255,11 @@ button:focus-visible {
   color: var(--text-tertiary);
   font-size: var(--menu-meta-font);
   font-variant-numeric: tabular-nums;
+}
+
+.menu__meta--mono {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
 }
 
 .menu__meta--accent {

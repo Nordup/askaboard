@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { WorldStats } from '@shared/world-protocol'
 import { listenWorldStats } from './live-pixels/world/surface'
 
@@ -5,7 +6,8 @@ import { listenWorldStats } from './live-pixels/world/surface'
  * The page's render meter, and the one owner of this state: paints of the page,
  * long tasks of the main thread, the last snapshot of the world worker. While
  * off, it has no loop, no observer and no listener. The render benchmark reads it
- * through window.__spaceDev.perf (scripts/perf/render.mjs).
+ * through window.__spaceDev.perf (scripts/perf/render.mjs). In the app, the performance
+ * pill runs it through usePerfReading.
  */
 
 const WINDOW_MS = 10_000
@@ -17,6 +19,8 @@ const WORLD_FRESH_MS = 2500
 export interface PerfReading {
   /** performance.now() of this reading. */
   at: number
+  /** False: the meter is off, and the numbers below are empty. */
+  running: boolean
   /** Paints in the last second. */
   fps: number
   /** The longest frame in the last 10 s, in ms. */
@@ -58,13 +62,15 @@ function watchLongTasks(): void {
   observer.observe({ type: 'longtask' })
 }
 
+/** A page that was hidden paints nothing, so the gap to its next paint is no frame. */
+function restartFrames(): void {
+  lastPaint = 0
+}
+
 function start(): void {
   if (raf) return
-  frames = []
-  tasks = []
-  lastPaint = 0
-  world = null
   raf = requestAnimationFrame(paint)
+  document.addEventListener('visibilitychange', restartFrames)
   watchLongTasks()
   listenWorldStats((stats) => {
     world = stats
@@ -76,9 +82,14 @@ function stop(): void {
   if (!raf) return
   cancelAnimationFrame(raf)
   raf = 0
+  document.removeEventListener('visibilitychange', restartFrames)
   observer?.disconnect()
   observer = null
   listenWorldStats(null)
+  frames = []
+  tasks = []
+  lastPaint = 0
+  world = null
 }
 
 function read(): PerfReading {
@@ -87,6 +98,7 @@ function read(): PerfReading {
   const taskRecent = tasks.filter(([at]) => now - at <= WINDOW_MS)
   return {
     at: now,
+    running: raf !== 0,
     fps: recent.filter(([at]) => now - at <= 1000).length,
     worstFrameMs: recent.reduce((worst, [, ms]) => Math.max(worst, ms), 0),
     droppedFrames: recent.filter(([, ms]) => ms > DROPPED_MS).length,
@@ -97,3 +109,17 @@ function read(): PerfReading {
 }
 
 export const perfMeter = { start, stop, read }
+
+/** The meter runs for as long as the caller is mounted. Null: the first second has no reading yet. */
+export function usePerfReading(): PerfReading | null {
+  const [reading, setReading] = useState<PerfReading | null>(null)
+  useEffect(() => {
+    start()
+    const tick = setInterval(() => setReading(read()), 1000)
+    return () => {
+      clearInterval(tick)
+      stop()
+    }
+  }, [])
+  return reading
+}

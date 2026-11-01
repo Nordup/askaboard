@@ -1,6 +1,7 @@
 import { AlertCircle, Check } from 'lucide-react'
 import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
+import { PerfPill } from './PerfPill'
 import { ScenePill } from './ScenePill'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
@@ -17,6 +18,8 @@ interface TopBarProps {
   agentActivityAt: number | null
   guideOverrides: GuideOverrides | null
   onOpenOverride(path: string): void
+  /** View > Show performance. */
+  showPerformance: boolean
 }
 
 const SAVE_LABEL: Record<SaveStatus, string> = {
@@ -26,7 +29,7 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
   error: 'Not saved'
 }
 
-export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride }: TopBarProps) {
+export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance }: TopBarProps) {
   return (
     <header className="topbar">
       <div className="topbar__title">
@@ -53,6 +56,7 @@ export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, a
         )}
       </div>
       <div className="topbar__right">
+        {showPerformance && <PerfPill />}
         <ScenePill />
         <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
         {zoom !== null && (

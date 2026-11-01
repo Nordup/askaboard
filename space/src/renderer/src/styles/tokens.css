@@ -41,11 +41,15 @@
   /* Status */
   --status-idle: #5c5c64;
   --status-live: #4ade80;
+  --status-warn: #fbbf24;
+  --status-bad: #f87171;
   /* The halo around a status dot, and the peak of the live pulse */
   --status-idle-ring: rgba(92, 92, 100, 0.18);
   --status-live-ring: rgba(74, 222, 128, 0.18);
   --status-live-pulse: rgba(74, 222, 128, 0.35);
   --status-error-ring: rgba(255, 107, 139, 0.18);
+  --status-warn-ring: rgba(251, 191, 36, 0.18);
+  --status-bad-ring: rgba(248, 113, 113, 0.18);
   /* A playing scene's dot (the scene pill): the accent with a soft ring */
   --status-play: var(--accent);
   --status-play-ring: var(--accent-soft);

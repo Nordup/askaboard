@@ -298,6 +298,7 @@ function registerIpc(): void {
     return result
   })
   handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
+  handle(IPC.getShowPerformance, () => store.getShowPerformance())
   handle(IPC.boardGuidePath, async () => {
     const rel = `${FOLDER_SETTINGS_DIR}/guide.md`
     const full = await requireSession().resolvePath(rel, { allowMissing: true })
@@ -438,7 +439,12 @@ void app.whenReady().then(async () => {
     newBoard: () => sendMenuCommand('new-board'),
     setupFolder: () => sendMenuCommand('setup-folder'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),
-    selectAll: () => sendMenuCommand('select-all')
+    selectAll: () => sendMenuCommand('select-all'),
+    showPerformance: store.getShowPerformance(),
+    setShowPerformance: (on) => {
+      store.setShowPerformance(on)
+      sendMenuCommand(on ? 'show-performance' : 'hide-performance')
+    }
   })
   registerAssetProtocol()
   registerLiveItemProtocol()

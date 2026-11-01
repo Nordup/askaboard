@@ -38,6 +38,7 @@ const api: SpaceApi = {
   setupPlan: () => ipcRenderer.invoke(IPC.setupPlan),
   applySetup: () => ipcRenderer.invoke(IPC.applySetup),
   setSetupDontAsk: (value) => ipcRenderer.invoke(IPC.setSetupDontAsk, value),
+  getShowPerformance: () => ipcRenderer.invoke(IPC.getShowPerformance),
   boardGuidePath: () => ipcRenderer.invoke(IPC.boardGuidePath),
   getGuideOverrides: () => ipcRenderer.invoke(IPC.getGuideOverrides),
   onGuideOverrides: (listener) => listen(IPC.guideOverrides, listener),

@@ -608,6 +608,12 @@ export function App() {
   useEffect(() => setReadingBoard(openPath), [openPath])
   useEffect(() => setBoardNodes(() => boardRef.current?.liveState().nodes ?? []), [])
 
+  // View > Show performance: main holds the choice; the top bar's pill follows it.
+  const [showPerformance, setShowPerformance] = useState(false)
+  useEffect(() => {
+    void space.getShowPerformance().then(setShowPerformance)
+  }, [])
+
   const flushRef = useRef<() => Promise<void>>(async () => undefined)
   flushRef.current = async () => {
     await flushSave()
@@ -637,6 +643,8 @@ export function App() {
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
         else if (command === 'zoom-reset') boardRef.current?.zoomStep('reset', 'menu')
+        else if (command === 'show-performance') setShowPerformance(true)
+        else if (command === 'hide-performance') setShowPerformance(false)
         else if (command === 'select-all') {
           // A focused text field selects its own text; otherwise the board selects all nodes.
           const active = document.activeElement
@@ -947,6 +955,7 @@ export function App() {
           agentActivityAt={agentActivity?.at ?? null}
           guideOverrides={folder ? guideOverrides : null}
           onOpenOverride={(path) => void editGuide(path)}
+          showPerformance={showPerformance}
         />
         <div className="workspace">
           <div className="canvas">
