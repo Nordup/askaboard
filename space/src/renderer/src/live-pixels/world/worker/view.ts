@@ -60,11 +60,21 @@ export const VIEW = String.raw`
   // Bounds. Each drawn object gives a box that holds all it can draw, under the matrices of this moment, so reach never cuts it. A geometry
   // keeps what is costly to find, and only a new attribute or version finds it again. So a measure costs one small sum per object.
   const versionOf = (a) => (a.isInterleavedBufferAttribute ? a.data.version : a.version);
+  /** The array of an attribute when its numbers are the values, or null: an interleaved, normalized or half-float attribute needs its own getX. */
+  const plainArray = (a) => (!a.isInterleavedBufferAttribute && !a.normalized && a.getX === THREE.BufferAttribute.prototype.getX ? a.array : null);
+  const attributeIds = new WeakMap();
+  let lastAttributeId = 0;
+  /** A number of its own for each attribute: a new attribute can have the version of the old one. */
+  const attributeId = (a) => {
+    let id = attributeIds.get(a);
+    if (!id) attributeIds.set(a, (id = ++lastAttributeId));
+    return id;
+  };
 
   /** out: the smallest and largest x, y, z of an attribute. */
   const measureAttribute = (a, out) => {
     let lx = Infinity, ly = Infinity, lz = Infinity, hx = -Infinity, hy = -Infinity, hz = -Infinity;
-    const flat = !a.isInterleavedBufferAttribute && !a.normalized ? a.array : null, size = a.itemSize, deep = size > 2;
+    const flat = plainArray(a), size = a.itemSize, deep = size > 2;
     for (let i = 0, k = 0; i < a.count; i++, k += size) {
       const x = flat ? flat[k] : a.getX(i), y = flat ? flat[k + 1] : a.getY(i), z = !deep ? 0 : flat ? flat[k + 2] : a.getZ(i);
       if (x < lx) lx = x;
@@ -81,11 +91,11 @@ export const VIEW = String.raw`
   /** What a geometry holds, for the version of its positions that three draws: box, centre, radius. */
   const shapeOf = (g) => {
     let s = shapes.get(g);
-    if (!s) shapes.set(g, (s = { position: null, version: -1, box: new Float64Array(6), x: 0, y: 0, z: 0, radius: 0, empty: true, deltas: null, skin: null, flat: null }));
+    if (!s) shapes.set(g, (s = { position: null, version: -1, stamp: 0, box: new Float64Array(6), x: 0, y: 0, z: 0, radius: 0, empty: true, deltas: null, skin: null, flat: null }));
     const p = g.attributes.position, version = versionOf(p);
     if (s.position === p && s.version === version) return s;
     const changed = !!s.position, b = s.box;
-    s.position = p; s.version = version; s.deltas = null; s.skin = null; s.flat = null;
+    s.position = p; s.version = version; s.stamp++; s.deltas = null; s.skin = null; s.flat = null;
     measureAttribute(p, b);
     s.empty = !(b[3] >= b[0]);
     if (s.empty) return s;
@@ -155,7 +165,7 @@ export const VIEW = String.raw`
   /** The box of all instances in the space of the mesh. Only a new instance matrix finds it again. It also serves three's culling. */
   const instanceBox = (o, s) => {
     let c = instanceBoxes.get(o);
-    if (!c) instanceBoxes.set(o, (c = { matrix: null, version: -1, count: -1, shape: -1, box: new Float64Array(6), slack: 0 }));
+    if (!c) instanceBoxes.set(o, (c = { matrix: null, version: -1, count: -1, shape: null, stamp: -1, box: new Float64Array(6), slack: 0 }));
     const a = o.instanceMatrix;
     let slack = 0;
     if (o.morphTexture) {
@@ -163,8 +173,8 @@ export const VIEW = String.raw`
       if (d) for (let i = 0; i < d.boxes.length; i++) slack = Math.max(slack, Math.abs(d.boxes[i]));
       if (d) slack *= d.list.length * Math.sqrt(3);
     }
-    if (c.matrix === a && c.version === a.version && c.count === o.count && c.shape === s.version && c.slack === slack) return c.box;
-    c.matrix = a; c.version = a.version; c.count = o.count; c.shape = s.version; c.slack = slack;
+    if (c.matrix === a && c.version === a.version && c.count === o.count && c.shape === s && c.stamp === s.stamp && c.slack === slack) return c.box;
+    c.matrix = a; c.version = a.version; c.count = o.count; c.shape = s; c.stamp = s.stamp; c.slack = slack;
     const m = a.array, r = s.radius + slack, x = s.x, y = s.y, z = s.z;
     let lx = Infinity, ly = Infinity, lz = Infinity, hx = -Infinity, hy = -Infinity, hz = -Infinity;
     for (let i = 0, k = 0; i < o.count; i++, k += 16) {
@@ -192,7 +202,7 @@ export const VIEW = String.raw`
   const classBox = (g, out) => {
     if (g.computeBoundingBox === THREE.BufferGeometry.prototype.computeBoundingBox) return false;
     let key = 0;
-    for (const name in g.attributes) key += versionOf(g.attributes[name]) * 31 + g.attributes[name].count;
+    for (const name in g.attributes) key += (attributeId(g.attributes[name]) * 65599 + versionOf(g.attributes[name])) * 31 + g.attributes[name].count;
     if (g.lsBoxKey !== key || !g.boundingBox) { g.computeBoundingBox(); g.lsBoxKey = key; }
     const b = g.boundingBox;
     out[0] = b.min.x; out[1] = b.min.y; out[2] = b.min.z; out[3] = b.max.x; out[4] = b.max.y; out[5] = b.max.z;

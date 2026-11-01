@@ -75,15 +75,16 @@ export const LOOK = String.raw`
    * When a resource goes while another world still draws it, three uploads it again for that world, and that world then owns it.
    */
   const watchResources = () => {
-    const dispatcher = THREE.EventDispatcher.prototype, on = dispatcher.addEventListener, off = dispatcher.removeEventListener;
+    const dispatcher = THREE.EventDispatcher.prototype, on = dispatcher.addEventListener, send = dispatcher.dispatchEvent;
     dispatcher.addEventListener = function (type, fn) {
       if (type === 'dispose' && holding && !owners.has(this) && !commonParts.has(this)) { owners.set(this, holding); holding.held.add(this); }
       return on.call(this, type, fn);
     };
-    dispatcher.removeEventListener = function (type, fn) {
-      const w = type === 'dispose' ? owners.get(this) : null;
+    // Only the event itself says that a resource left the GPU. A listener can leave with no disposal.
+    dispatcher.dispatchEvent = function (event) {
+      const w = event.type === 'dispose' ? owners.get(this) : null;
       if (w) { owners.delete(this); w.held.delete(this); }
-      return off.call(this, type, fn);
+      return send.call(this, event);
     };
   };
   const drawWorld = (w, camera) => {

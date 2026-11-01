@@ -56,8 +56,8 @@ export const TOUCH = String.raw`
 
   /** The positions of a geometry as tight x, y, z numbers. */
   const flatPositions = (g, s) => {
-    const p = g.attributes.position;
-    if (!p.isInterleavedBufferAttribute && !p.normalized && p.itemSize === 3) return p.array;
+    const p = g.attributes.position, plain = p.itemSize === 3 ? plainArray(p) : null;
+    if (plain) return plain;
     if (s.flat) return s.flat;
     const out = (s.flat = new Float32Array(p.count * 3));
     for (let i = 0; i < p.count; i++) { out[i * 3] = p.getX(i); out[i * 3 + 1] = p.getY(i); out[i * 3 + 2] = p.itemSize > 2 ? p.getZ(i) : 0; }
@@ -79,7 +79,7 @@ export const TOUCH = String.raw`
         const v = influences[t], a = morphs[t];
         if (!v) continue;
         if (n > 4095 && realNow() > deadline) return null;
-        const flat = !a.isInterleavedBufferAttribute && !a.normalized && a.itemSize === 3 ? a.array : null;
+        const flat = a.itemSize === 3 ? plainArray(a) : null;
         for (let i = 0, k = 0; i < n; i++, k += 3) {
           out[k] += v * (flat ? flat[k] : a.getX(i)); out[k + 1] += v * (flat ? flat[k + 1] : a.getY(i)); out[k + 2] += v * (flat ? flat[k + 2] : a.getZ(i));
         }
@@ -89,7 +89,7 @@ export const TOUCH = String.raw`
     if (!o.isSkinnedMesh || !index || !weight) return out;
     o.skeleton.update();
     const bones = o.skeleton.boneMatrices, b = o.bindMatrix.elements, c = o.bindMatrixInverse.elements;
-    const flatIndex = !index.isInterleavedBufferAttribute && !index.normalized ? index.array : null, flatWeight = !weight.isInterleavedBufferAttribute && !weight.normalized ? weight.array : null;
+    const flatIndex = plainArray(index), flatWeight = plainArray(weight);
     for (let i = 0, k = 0; i < n; i++, k += 3) {
       if ((i & 4095) === 4095 && realNow() > deadline) return null;
       const x = out[k], y = out[k + 1], z = out[k + 2];
@@ -130,7 +130,10 @@ export const TOUCH = String.raw`
     }
     return best;
   };
-  /** Which faces a material draws. flip: a mirrored matrix turns the faces. */
+  /**
+   * Which faces of a triangle, as they lie in its own space, a material draws. A ray in that space keeps which side it comes from under any matrix, and for
+   * a mirrored mesh three turns the winding back, so nothing changes. It does not do that for a mirrored instance: flip says so, and the back of the triangle shows.
+   */
   const sideOf = (m, flip) => (m.side === THREE.DoubleSide ? 0 : (m.side === THREE.FrontSide) !== flip ? 1 : -1);
   /** What a mesh draws against a local ray: its draw range, and with several materials its groups. */
   const hitMesh = (o, g, v, ray, best, deadline, flip) => {
@@ -172,13 +175,13 @@ export const TOUCH = String.raw`
       inverse.copy(o.matrixWorld).invert();
       local.copy(ray).applyMatrix4(inverse);
       local.direction.normalize();
-      const s = shapeOf(g), flip = o.matrixWorld.determinant() < 0;
-      if (o.isInstancedMesh) visitInstances(o, g, s, flip);
+      const s = shapeOf(g);
+      if (o.isInstancedMesh) visitInstances(o, g, s);
       else if (o.isPoints) visitPoints(o, g);
       else if (o.isMesh) {
         const deformed = o.isSkinnedMesh || (o.morphTargetInfluences && g.morphAttributes.position);
         const v = (deformed && drawnPositions(o, g, s, deadline)) || flatPositions(g, s);
-        const t = hitMesh(o, g, v, local, Infinity, deadline, flip);
+        const t = hitMesh(o, g, v, local, Infinity, deadline, false);
         if (t < Infinity) take(o, at.copy(local.direction).multiplyScalar(t).add(local.origin).applyMatrix4(o.matrixWorld), undefined);
       }
     };
@@ -186,7 +189,7 @@ export const TOUCH = String.raw`
      * Instances in rounds. A scan keeps the PICK_CANDIDATES that the ray enters first, a sorted short list and no sort of all, and those are
      * tested by their triangles. A next round is needed only when a kept hit lies past the last place tested.
      */
-    const visitInstances = (o, g, s, flip) => {
+    const visitInstances = (o, g, s) => {
       const m = o.instanceMatrix.array, n = o.count, material = o.material, v = flatPositions(g, s), mine = Math.max(deadline, realNow() + PICK_MS);
       const sx = s.x, sy = s.y, sz = s.z, r = s.radius;
       const ox = local.origin.x, oy = local.origin.y, oz = local.origin.z, dx = local.direction.x, dy = local.direction.y, dz = local.direction.z;
@@ -216,7 +219,7 @@ export const TOUCH = String.raw`
           toInstance.copy(instance).invert();
           inner.copy(local).applyMatrix4(toInstance);
           inner.direction.normalize();
-          const t = hitMesh(o, g, v, inner, Infinity, mine, (instance.determinant() < 0) !== flip);
+          const t = hitMesh(o, g, v, inner, Infinity, mine, instance.determinant() < 0);
           if (t === Infinity) continue;
           at.copy(inner.direction).multiplyScalar(t).add(inner.origin).applyMatrix4(instance);
           const along = at.clone().sub(local.origin).dot(local.direction);

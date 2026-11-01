@@ -118,7 +118,9 @@ sequenceDiagram
 - **Tick and render are separate.** A camera move or a change in another world
   composites again. It does not advance a paused world.
 - **Shaders start ahead.** The programs of a world start before its first picture,
-  and the world draws when they are linked, so other worlds do not wait for them.
+  and the world draws when they are linked, so other worlds do not wait for them. A
+  step host does not do this: nothing waits for its picture, and its worker can end
+  while programs still link, which fills the log with `glGetProgramiv` errors.
 - **Ink in one draw.** Rigid meshes of one geometry share one instanced hull.
 - **One walk of the matrices.** In a paint no world code runs, so the check, the
   bounds, the points and all render passes share one update.

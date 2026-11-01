@@ -298,7 +298,8 @@ export const SURFACE = String.raw`
         const planned = meter ? realNow() : 0;
         try {
           const plan = planWorld(w);
-          if (plan) { if (w.prepared) plans.push(plan); else prepareWorld(plan); }
+          // A stepping world here is a step host's: nothing waits for its picture, and its worker can end while programs still link. That ends with GL errors in the log.
+          if (plan) { if (w.prepared || w.stepping) plans.push(plan); else prepareWorld(plan); }
         } catch (e) { fail(w, e); }
         if (meter) meter.planMs += realNow() - planned;
       }
