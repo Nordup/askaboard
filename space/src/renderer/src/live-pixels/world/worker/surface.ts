@@ -480,7 +480,8 @@ export const SURFACE = String.raw`
   };
   /** The next display frame, or a timer when display frames do not come (a hidden frame). */
   const schedule = () => {
-    if (loop || !wanted()) return;
+    if (loop) return;
+    if (!wanted()) { wakeForTimers(); return; }
     loop = true;
     const mine = ++ticket;
     const go = () => { if (mine !== ticket) return; ticket++; loop = false; frame(); };
@@ -596,8 +597,8 @@ export const SURFACE = String.raw`
       setTune(m.tune);
       uncapped = !!tune.uncapped;
       sizeSurface(m);
-      makeToon();
       watchResources();
+      makeToon();
       makeSurface();
       core = false;
       booted = true;

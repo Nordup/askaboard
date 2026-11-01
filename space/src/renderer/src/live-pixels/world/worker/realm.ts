@@ -81,28 +81,74 @@ export const REALM = String.raw`
   VDate.now = dateNow; VDate.parse = RealDate.parse; VDate.UTC = RealDate.UTC;
   scope.Date = VDate;
 
-  // Timers: due in the item time of their world, fired at the start of its frame.
+  // Timers: due in the item time of their world, fired at the start of its frame. Each world has a heap, by due time and then by age. A cancelled
+  // timer stays in the heap until it comes to the top or until the cancelled ones are the most of it.
   let timerSeq = 0, timerOrder = 0;
+  const sooner = (a, b) => a.due < b.due || (a.due === b.due && a.order < b.order);
+  const heapAdd = (heap, timer) => {
+    let i = heap.length;
+    heap.push(timer);
+    while (i > 0) {
+      const up = (i - 1) >> 1;
+      if (!sooner(timer, heap[up])) break;
+      heap[i] = heap[up];
+      i = up;
+    }
+    heap[i] = timer;
+  };
+  const heapTake = (heap) => {
+    const top = heap[0], last = heap.pop(), n = heap.length;
+    if (!n) return top;
+    let i = 0;
+    for (;;) {
+      let down = 2 * i + 1;
+      if (down >= n) break;
+      if (down + 1 < n && sooner(heap[down + 1], heap[down])) down++;
+      if (!sooner(heap[down], last)) break;
+      heap[i] = heap[down];
+      i = down;
+    }
+    heap[i] = last;
+    return top;
+  };
+  /** The next timer of w that still counts, or null. */
+  const nextTimer = (w) => {
+    const heap = w.timerHeap;
+    while (heap.length && heap[0].cancelled) heapTake(heap);
+    return heap.length ? heap[0] : null;
+  };
   const addTimer = (w, cb, ms, args, every) => {
     if (typeof cb !== 'function') return 0;
     const id = ++timerSeq;
     const delay = Math.max(0, Number(ms) || 0);
-    w.timers.set(id, { due: w.tickMs + delay, cb, args, every: every ? Math.max(1, delay) : 0, order: timerOrder++ });
+    const timer = { id, due: w.tickMs + delay, cb, args, every: every ? Math.max(1, delay) : 0, order: timerOrder++, cancelled: false };
+    w.timers.set(id, timer);
+    heapAdd(w.timerHeap, timer);
     schedule();
     return id;
   };
+  const cancelTimer = (w, id) => {
+    const timer = w.timers.get(id);
+    if (!timer) return;
+    timer.cancelled = true;
+    w.timers.delete(id);
+    const heap = w.timerHeap;
+    if (heap.length < 64 || heap.length < 2 * w.timers.size) return;
+    const live = heap.filter((t) => !t.cancelled);
+    heap.length = 0;
+    for (const t of live) heapAdd(heap, t);
+  };
   scope.setTimeout = (cb, ms, ...args) => { const w = owner(); return w ? addTimer(w, cb, ms, args, false) : nativeSetTimeout(cb, ms, ...args); };
   scope.setInterval = (cb, ms, ...args) => { const w = owner(); return w ? addTimer(w, cb, ms, args, true) : nativeSetInterval(cb, ms, ...args); };
-  scope.clearTimeout = scope.clearInterval = (id) => { for (const w of worlds.values()) w.timers.delete(id); };
+  scope.clearTimeout = scope.clearInterval = (id) => { for (const w of worlds.values()) cancelTimer(w, id); };
   // The timers of w due by item time 'until', in order. True when one fired.
   const fireTimers = (w, until) => {
     let fired = false;
     for (let guard = 0; guard < 10000 && !w.failed; guard++) {
-      let next = null;
-      for (const entry of w.timers) if (entry[1].due <= until && (!next || entry[1].due < next[1].due || (entry[1].due === next[1].due && entry[1].order < next[1].order))) next = entry;
-      if (!next) break;
-      const timer = next[1];
-      if (timer.every) { timer.due += timer.every; timer.order = timerOrder++; } else w.timers.delete(next[0]);
+      const timer = nextTimer(w);
+      if (!timer || timer.due > until) break;
+      heapTake(w.timerHeap);
+      if (timer.every) { timer.due += timer.every; timer.order = timerOrder++; heapAdd(w.timerHeap, timer); } else w.timers.delete(timer.id);
       fired = true;
       try { timer.cb(...timer.args); } catch (e) { fail(w, e); }
     }
@@ -272,13 +318,33 @@ export const REALM = String.raw`
   // Live mode: one frame per display frame, at the item time of that frame (no grid).
   const itemTimeNow = (w) => w.clock.t + (w.clock.rate * (origin + realNow() - w.clock.at)) / 1000;
   const moved = (w) => !w.ran || itemTimeNow(w) * 1000 > w.tickMs;
-  const hasWork = (w) => (!w.ran && w.setUp) || w.frames.length > 0 || w.callbacks.size > 0 || w.timers.size > 0;
+  /** A timer is work when it is due: one that waits costs no ticks. */
+  const timerDue = (w) => {
+    const timer = w.timers.size ? nextTimer(w) : null;
+    return !!timer && timer.due <= itemTimeNow(w) * 1000;
+  };
+  const hasWork = (w) => (!w.ran && w.setUp) || w.frames.length > 0 || w.callbacks.size > 0 || timerDue(w);
   const due = (w) => w.running && !w.failed && !w.stepping && !w.busy && moved(w) && hasWork(w);
   const live = (w) => {
     w.busy = true;
     return runAt(w, Math.max(w.tickMs, itemTimeNow(w) * 1000)).then(() => { w.busy = false; }, (e) => { w.busy = false; fail(w, e); });
   };
   const held = (w) => !w.running || w.clock.rate === 0;
+  // With nothing to draw, the worker sleeps until the next timer is due in real time. A change of clock schedules again.
+  let wakeHandle = 0, wakeAt = Infinity;
+  const wakeForTimers = () => {
+    const now = realNow();
+    let soonest = Infinity;
+    for (const w of worlds.values()) {
+      if (!w.timers.size || !w.running || w.failed || w.stepping || !(w.clock.rate > 0)) continue;
+      const timer = nextTimer(w);
+      if (timer) soonest = Math.min(soonest, now + (timer.due - itemTimeNow(w) * 1000) / w.clock.rate);
+    }
+    if (soonest === Infinity || soonest >= wakeAt) return;
+    nativeClearTimeout(wakeHandle);
+    wakeAt = soonest;
+    wakeHandle = nativeSetTimeout(() => { wakeAt = Infinity; schedule(); }, Math.max(0, Math.ceil(soonest - now)));
+  };
   // A held world draws its time again for new params or a new size: time does not move (dt 0).
   const redraw = (w) => {
     if (w.failed || w.busy || w.stepping) return;
@@ -478,7 +544,7 @@ export const REALM = String.raw`
       clock: m.clock || { t: 0, at: 0, rate: 0 },
       view: Object.assign({ t: 0, playing: false, active: false, ended: true, step: null }, m.scene),
       timeline: m.timeline || null,
-      timers: new Map(), callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
+      timers: new Map(), timerHeap: [], callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
@@ -506,7 +572,7 @@ export const REALM = String.raw`
     if (setting === w) setting = null;
     if (announced === w) announce(setting);
     if (w.reportTimer) nativeClearTimeout(w.reportTimer);
-    w.timers.clear(); w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear(); w.pins.clear(); w.strokes.length = 0;
+    w.timers.clear(); w.timerHeap.length = 0; w.callbacks.clear(); w.frames.length = 0; w.events.clear(); w.parts.clear(); w.pins.clear(); w.strokes.length = 0;
     core = true;
     try { undressWorld(w); } finally { core = false; }
     surface.dirty = true;
