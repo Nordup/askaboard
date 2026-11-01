@@ -80,7 +80,7 @@ limits scripts and images.
   `ink-tiles.ts`, decision B28). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
-  history). Undo snapshots: `history.ts`. An agent edit is a change from the
+  history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Undo snapshots: `history.ts`. An agent edit is a change from the
   nodes it was computed from, and it applies to the current document by item
   id (`scene.ts applyChanges`). A drag shows on top of the document; a commit
   under it goes to the document (`commitOver`, decision B26).

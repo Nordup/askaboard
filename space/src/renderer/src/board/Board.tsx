@@ -20,7 +20,7 @@ import {
   zoomAt
 } from './geometry'
 import type { BoardHistory } from './history'
-import { InkLayers, paintActive, type PaintInk } from './paint'
+import { ActiveInk, InkLayers, type PaintInk } from './paint'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
@@ -343,7 +343,9 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
 export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, onSelectionChange, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
+  const penRef = useRef<HTMLDivElement>(null)
   const activeInkRef = useRef<HTMLCanvasElement>(null)
+  const activeTailRef = useRef<HTMLCanvasElement>(null)
   const eraserRef = useRef<HTMLDivElement>(null)
   const contentRootRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
@@ -373,6 +375,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const liveInkRef = useRef<HTMLCanvasElement>(null)
   const inkLayersRef = useRef<InkLayers>(null as unknown as InkLayers)
   inkLayersRef.current ??= new InkLayers()
+  const activeLayerRef = useRef<ActiveInk>(null as unknown as ActiveInk)
+  activeLayerRef.current ??= new ActiveInk()
   const paintFrameRef = useRef<number | null>(null)
   const dirtyLayersRef = useRef({ committed: false, active: false, playback: false })
   const editingRef = useRef<EditingState | null>(null)
@@ -697,7 +701,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const dirty = dirtyLayersRef.current
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
         // The learner's stroke first: it never waits for the scene's ink.
-        if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
+        if (dirty.active) activeLayerRef.current.paint(penRef.current, activeInkRef.current, activeTailRef.current, activeRef.current, viewportRef.current, cameraRef.current)
         if (dirty.committed) applyContentTransform()
         let again = false
         if (dirty.committed || dirty.playback) {
@@ -2121,7 +2125,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       <canvas className="board__world" aria-hidden="true" />
       <canvas className="board__ink" ref={inkRef} />
       <canvas className="board__ink board__ink--live" ref={liveInkRef} aria-hidden="true" />
-      <canvas className="board__active" ref={activeInkRef} aria-hidden="true" />
+      <div className="board__pen" ref={penRef} aria-hidden="true">
+        <canvas className="board__active" ref={activeInkRef} />
+        <canvas className="board__active" ref={activeTailRef} />
+      </div>
       {lassoPoints && lassoPoints.length > 1 && (
         <svg className="board__lasso" viewBox={`0 0 ${viewport[0]} ${viewport[1]}`} aria-hidden="true">
           {/* A polygon, so the closing segment back to the start shows while dragging. */}

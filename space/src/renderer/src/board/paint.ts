@@ -660,11 +660,143 @@ export function paintItems(
   drawTips(context, playback?.tips ?? [], camera.zoom)
 }
 
-/** Paint the stroke in progress on the overlay layer. */
-export function paintActive(canvas: HTMLCanvasElement | null, stroke: StrokeItem | null, viewport: Point, camera: Camera): void {
-  if (!canvas) return
-  const context = prepare(canvas, viewport, camera)
-  if (context && stroke) drawStroke(context, stroke)
+/**
+ * The stroke in progress. Each piece of a stroke needs the sample after it,
+ * so all but the last piece never change: they go once on the first canvas.
+ * The second canvas holds the last piece, and a frame clears only what that
+ * piece covered. So a frame costs the new samples, at any length of stroke.
+ *
+ * The pieces are the curves of drawStroke, so the committed stroke shows the
+ * same pixels. A highlighter draws at full alpha in a group with its alpha:
+ * the group shows one flat tone, as the one path of a committed highlighter.
+ */
+export class ActiveInk {
+  /** The stroke and the view on the first canvas. */
+  private key = ''
+  /** The first canvas holds the pieces before this sample. */
+  private done = 0
+  /** All samples so far have one pressure: one path, as drawStroke draws it. */
+  private uniform = true
+  /** Samples checked for `uniform`. */
+  private checked = 0
+  /** What the second canvas covers, in device pixels. */
+  private covered: Region | null = null
+  private used = false
+
+  paint(group: HTMLElement | null, settled: HTMLCanvasElement | null, tail: HTMLCanvasElement | null, stroke: StrokeItem | null, viewport: Point, camera: Camera): void {
+    if (!group || !settled || !tail) return
+    if (!stroke) {
+      if (!this.used) return
+      this.used = false
+      this.key = ''
+      this.covered = null
+      prepare(settled, viewport, camera)
+      prepare(tail, viewport, camera)
+      group.style.opacity = ''
+      return
+    }
+    const highlighter = stroke.tool === 'highlighter'
+    const points = stroke.points
+    const uniform = highlighter || this.stillUniform(stroke)
+    const dpr = window.devicePixelRatio || 1
+    const key = `${stroke.id},${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom},${uniform}`
+    let context: CanvasRenderingContext2D | null
+    let last: CanvasRenderingContext2D | null
+    if (key !== this.key) {
+      context = prepare(settled, viewport, camera)
+      last = prepare(tail, viewport, camera)
+      this.key = key
+      this.done = 0
+      this.covered = null
+      this.used = true
+      group.style.opacity = highlighter ? String(HIGHLIGHTER_ALPHA) : ''
+    } else {
+      context = settled.getContext('2d')
+      last = tail.getContext('2d')
+    }
+    if (!context || !last) return
+    context.strokeStyle = stroke.color
+    last.strokeStyle = stroke.color
+    last.fillStyle = stroke.color
+    // The pieces that the newest sample ended.
+    const end = points.length - 1
+    const nib = (p: number): number => stroke.width * (highlighter ? 1 : pressureWidth(p))
+    if (uniform) {
+      if (end >= 2 && this.done < end - 1) {
+        context.lineWidth = nib(points[0][2])
+        context.beginPath()
+        const from = Math.max(1, this.done + 1)
+        const at = this.done === 0 ? points[0] : midpoint(points[this.done], points[from])
+        context.moveTo(at[0], at[1])
+        for (let i = from; i < end; i++) {
+          const [x, y] = points[i]
+          const [nx, ny] = points[i + 1]
+          context.quadraticCurveTo(x, y, (x + nx) / 2, (y + ny) / 2)
+        }
+        context.stroke()
+        this.done = end - 1
+      }
+    } else {
+      for (let i = this.done; i < end; i++) {
+        const [x, y, p] = points[i]
+        const start = i === 0 ? points[0] : midpoint(points[i - 1], points[i])
+        const stop = midpoint(points[i], points[i + 1])
+        context.lineWidth = nib(p)
+        context.beginPath()
+        context.moveTo(start[0], start[1])
+        context.quadraticCurveTo(x, y, stop[0], stop[1])
+        context.stroke()
+      }
+      this.done = Math.max(this.done, end)
+    }
+    // The last piece.
+    const [tx, ty] = inkOrigin(viewport, camera, dpr)
+    const scale = dpr * camera.zoom
+    if (this.covered) {
+      const { x, y, width, height } = this.covered
+      last.save()
+      last.setTransform(1, 0, 0, 1, 0, 0)
+      last.clearRect(x, y, width, height)
+      last.restore()
+    }
+    const tip = points[end]
+    const width = nib(tip[2])
+    if (end === 0) {
+      last.beginPath()
+      last.arc(tip[0], tip[1], width / 2, 0, Math.PI * 2)
+      last.fill()
+      this.covered = coverOf(tip, tip, width, scale, tx, ty)
+      return
+    }
+    const from = end === 1 && uniform ? points[0] : midpoint(points[end - 1], tip)
+    last.lineWidth = width
+    last.beginPath()
+    last.moveTo(from[0], from[1])
+    last.lineTo(tip[0], tip[1])
+    last.stroke()
+    this.covered = coverOf(from, tip, width, scale, tx, ty)
+  }
+
+  /** Samples only come at the end: each is checked once. A stroke that was just begun starts over. */
+  private stillUniform(stroke: StrokeItem): boolean {
+    const points = stroke.points
+    if (points.length < this.checked || !this.key.startsWith(`${stroke.id},`)) {
+      this.checked = 0
+      this.uniform = true
+    }
+    for (; this.uniform && this.checked < points.length; this.checked++) if (points[this.checked][2] !== points[0][2]) this.uniform = false
+    return this.uniform
+  }
+}
+
+const midpoint = (a: StrokeItem['points'][number], b: StrokeItem['points'][number]): Point => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+
+/** The device pixels of a line between two board points, with its nib and a margin for the edge. */
+function coverOf(a: readonly number[], b: readonly number[], width: number, scale: number, tx: number, ty: number): Region {
+  const pad = (width * scale) / 2 + 2
+  const x = Math.floor(Math.min(a[0], b[0]) * scale + tx - pad)
+  const y = Math.floor(Math.min(a[1], b[1]) * scale + ty - pad)
+  return { x, y, width: Math.ceil(Math.abs(a[0] - b[0]) * scale + pad * 2) + 1, height: Math.ceil(Math.abs(a[1] - b[1]) * scale + pad * 2) + 1 }
 }
 
 /** A box drawn over an offscreen render, in board coordinates. */
