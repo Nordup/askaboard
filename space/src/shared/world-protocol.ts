@@ -123,6 +123,8 @@ export interface WorldStats {
   pictureMsMedian: number | null
   /** Worker CPU time in the render calls of a picture, with the transfer of the bitmap. */
   cpuMsMedian: number | null
+  /** Per shown world: board points per reach, and the pixels of the scene and of the whole crop at the last render. */
+  crops: Array<{ scale: number; reach: [number, number]; scene: [number, number]; crop: [number, number] }>
   /** Lowest share of full resolution over the shown worlds, 1 to 0.5. */
   resolution: number
   /** Output pixels rendered per picture, in millions. */

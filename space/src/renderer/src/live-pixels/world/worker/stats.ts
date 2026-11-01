@@ -37,10 +37,15 @@ export const STATS = String.raw`
     if (m.ext) meterDrain();
     const seconds = (realNow() - m.from) / 1000, n = m.pictures, gpu = m.gpu.length ? m.gpu : m.fence, memory = infoNow();
     let alive = 0, share = 1;
+    const crops = [];
     for (const w of worlds.values()) {
       if (w.failed || !(w.setUp || w.ran)) continue;
       alive++;
       if (w.placement && w.placement.shown) share = Math.min(share, QUALITY[w.quality]);
+      if (w.drawn && w.reach && !w.reach.full) {
+        const c = w.drawn.crop, r = w.reach, inner = innerOf(w, w.drawn.s, c);
+        crops.push({ scale: w.drawn.s, reach: [Math.round(r.r - r.l), Math.round(r.b - r.t)], scene: [inner.r - inner.l, inner.b - inner.t], crop: [c.r - c.l, c.b - c.t] });
+      }
     }
     post({ type: 'stats', stats: {
       seconds, pictures: n, picturesPerSecond: n / seconds,
@@ -49,7 +54,7 @@ export const STATS = String.raw`
       pictureMsMedian: middle(m.wall, 0.5), cpuMsMedian: middle(m.cpu, 0.5), resolution: share,
       megapixels: perPicture(m.pixels / 1e6, n), drawCalls: perPicture(m.calls, n), triangles: perPicture(m.triangles, n), passes: perPicture(m.passes, n),
       programs: memory.programs, textures: memory.textures, geometries: memory.geometries, targets: memory.targets,
-      worldsAlive: alive, worldsRendered: perPicture(m.worlds, n), worldsWaited: perPicture(m.waited, n)
+      crops, worldsAlive: alive, worldsRendered: perPicture(m.worlds, n), worldsWaited: perPicture(m.waited, n)
     } });
     clearWindow(m);
     m.timer = nativeSetTimeout(meterSend, 1000);

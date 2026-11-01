@@ -58,7 +58,7 @@ export function args(argv = process.argv.slice(2)) {
   }
   return { option, flag, positional }
 }
-const BOOLEAN_FLAGS = new Set(['--video', '--profile', '--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
+const BOOLEAN_FLAGS = new Set(['--video', '--profile', '--no-pan', '--built', '--dev', '--fresh', '--no-crop', '--no-news-hook', '--no-gallery', '--keep-app', '--interview', '--wait-media', '--brief-only', '--no-web'])
 
 // ---------- Processes ----------
 

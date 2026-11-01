@@ -10,7 +10,7 @@
  *   node scripts/perf/render.mjs --report
  *   node scripts/perf/render.mjs --scenes film --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
  *
- * --dev: the dev renderer, not out/. The window opens behind the other windows, with no focus.
+ * --no-pan: film without its pan phase. --dev: the dev renderer, not out/. The window opens behind the other windows, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -18,7 +18,7 @@ import { loadavg } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { busyPieces } from '../bench/busy.mjs'
+import { HOLE, seedBusy } from '../bench/busy.mjs'
 import { args, cdpConnect, childPids, drive, guardRun, resultText, sceneHook, sleep, SPACE, startInstance, stopInstance, withMcp } from '../lab/common.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -162,6 +162,7 @@ async function measure(cdp, seconds, work) {
         textures: of('textures'),
         geometries: of('geometries'),
         targets: of('targets'),
+        crops: worlds.at(-1).crops,
         worldsAlive: of('worldsAlive'),
         worldsRendered: of('worldsRendered'),
         worldsWaited: of('worldsWaited')
@@ -333,21 +334,25 @@ async function playScene(scene, state, cdp) {
 
 /** The busy board of the perception bench, with all of it in view. */
 async function seedInk(state, cdp) {
-  const busy = busyPieces(0, 0)
-  await withMcp(state.mcpPort, async (call) => {
-    let n = 0
-    for (const code of busy.agent) {
-      const name = `busy ${++n}`
-      const results = [await call('write_scene', { name, code }), await call('play_scene', { action: 'start', name, when: 'now' })]
-      for (const result of results) if (result.isError) throw new Error(`seed ${name}: ${resultText(result).slice(0, 400)}`)
+  const busy = await withMcp(state.mcpPort, (call) => {
+    const mcp = async (name, a) => {
+      const result = await call(name, a)
+      const body = resultText(result)
+      if (result.isError) throw new Error(`seed ${name}: ${body.slice(0, 400)}`)
+      try {
+        return JSON.parse(body)
+      } catch {
+        return body
+      }
     }
+    return seedBusy({ x: -HOLE.halfWidth / 2, y: -HOLE.halfHeight / 2, width: HOLE.halfWidth, height: HOLE.halfHeight }, mcp)
   })
   for (const strokes of busy.learner) drive(state.debugPort, 'draw', '--strokes', JSON.stringify(strokes))
   await cdp.evaluate('window.__spaceDev.reveal(-1500, -1000, 3000, 2000)')
   await sleep(1000)
 }
 
-async function runScene(scene, { tune, label, seconds, dev, profile, identity }) {
+async function runScene(scene, { tune, label, seconds, dev, profile, noPan, identity }) {
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
   process.env.SPACE_WINDOW_AWAY = '1'
@@ -367,7 +372,7 @@ async function runScene(scene, { tune, label, seconds, dev, profile, identity })
     const windowAt = await windowShare(state.pids)
     const base = { at: new Date().toISOString(), scene, label, mode: dev ? 'dev' : 'built', tune: tune ?? null, ...identity, window: { ...size, visibleShare: windowAt?.share ?? null, x: windowAt?.x ?? null, y: windowAt?.y ?? null, width: windowAt?.width ?? size.width, height: windowAt?.height ?? size.height } }
     lines.push({ ...base, phase: scene === 'ink' ? 'pan' : 'hold', ...(await measure(cdp, seconds, scene === 'ink' ? motion : null)) })
-    if (scene === 'film') lines.push({ ...base, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
+    if (scene === 'film' && !noPan) lines.push({ ...base, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
     await cdp.evaluate('window.__spaceDev.perf.stop()')
     const after = await windowShare(state.pids)
     for (const line of lines) line.window.visibleShareEnd = after?.share ?? null
@@ -459,7 +464,7 @@ async function main() {
   if (matrix && scenes.length !== 1) throw new Error('--matrix runs one scene: give one with --scenes.')
   const tune = option('--tune', null)
   const tunes = matrix ? JSON.parse(matrix) : [tune ? JSON.parse(tune) : null]
-  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), identity: codeIdentity() }
+  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), noPan: flag('--no-pan'), identity: codeIdentity() }
   const done = guardRun(NAME, 'render')
   mkdirSync(OUT, { recursive: true })
   const before = readHistory()

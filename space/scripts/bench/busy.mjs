@@ -27,16 +27,19 @@ export const inkScene = (strokes, color) => `const s = stroke(${JSON.stringify(s
 
 /**
  * Run one set-up scene over `mcp` (the bench's own client: its items are
- * authored "agent") and return its first item ({id, kind, bounds}).
+ * authored "agent") and return its first item ({id, kind, bounds}). play_scene
+ * gives only counts for items with no name, so the item comes from list_items.
  */
 let seeds = 0
 export async function seedScene(mcp, code) {
   const name = `bench set-up ${++seeds}`
   await mcp('write_scene', { name, code })
-  const result = await mcp('play_scene', { action: 'start', name, when: 'now' })
-  const item = Array.isArray(result?.items) ? result.items[0] : null
-  if (!item) throw new Error(`play_scene start made no item: ${JSON.stringify(result).slice(0, 300)}`)
-  return item
+  await mcp('play_scene', { action: 'start', name, when: 'now' })
+  const outline = await mcp('list_items', { part: { scene: name } })
+  const text = typeof outline === 'string' ? outline : JSON.stringify(outline)
+  const unit = /^\s+(\w+)(?: ".*?")? ((?:n_|g)\w+) · (-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)/m.exec(text)
+  if (!unit) throw new Error(`list_items shows no item of the scene: ${text.slice(0, 300)}`)
+  return { kind: unit[1], id: unit[2], bounds: { x: +unit[3], y: +unit[4], width: +unit[5], height: +unit[6] } }
 }
 
 /** Agent material: scene programs with coordinates relative to the hole centre; (dx, dy) shifts it. */
@@ -113,9 +116,6 @@ function learnerItems(dx, dy) {
     [stroke([[-1450 + dx, 760 + dy], [-1250 + dx, 760 + dy], [-1250 + dx, 880 + dy], [-1450 + dx, 880 + dy], [-1450 + dx, 760 + dy]]), stroke([[-1450 + dx, 760 + dy], [-1250 + dx, 880 + dy]])]
   ]
 }
-
-/** The same board with no bench around it: the scene programs and the learner pieces, round (dx, dy). */
-export const busyPieces = (dx, dy) => ({ agent: agentItems(dx, dy), learner: learnerItems(dx, dy) })
 
 /**
  * Seed the busy board's agent material round a scenario whose material fits

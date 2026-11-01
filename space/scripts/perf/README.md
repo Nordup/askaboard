@@ -18,7 +18,7 @@ node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"ada
 node scripts/perf/render.mjs --report                           # writes .lab/perf/render-report.md, a table over commits
 ```
 
-Other options: `--seconds 10`, `--dev` (the dev renderer, slower than `out/`).
+Other options: `--seconds 10`, `--no-pan`, `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
 
 One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
 
@@ -36,7 +36,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | Column | Meaning |
 | --- | --- |
 | `pict/s` | Pictures per second that the world worker sent to the page. It follows the scene: a world that turns gives up to one per display frame. A still world gives none. |
-| `GPU ms`, `p95` | GPU time per picture, median and 95th percentile. |
+| `GPU ms`, `p95` | The timer query per picture, median and 95th percentile. See the note under this table. |
 | `timer` | The source of `GPU ms`. `timer`: `EXT_disjoint_timer_query_webgl2`, which works on the M1. `fence`: wall time from flush to fence, which is not pure GPU time. |
 | `wall ms` | Wall time from the first render call of a picture to its fence. |
 | `CPU ms` | Worker CPU time per picture in the render calls and the bitmap transfer. It does not include the world's own frame code. |
@@ -52,7 +52,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `seen` | The share of the app window that shows on the screen, at the start of the phase. |
 | `zoom` | The board zoom. `MP` changes with its square, so compare only runs with the same zoom. |
 
-`GPU ms` can be larger than `wall ms`: it was 45 ms against 25 ms for `three`, at 43 pictures per second. So `GPU ms` is not a share of the frame budget. The cause is not confirmed. Use `wall ms` for the budget, and `GPU ms` to compare runs.
+`wall ms` is the number for the frame budget. `GPU ms` is not. ANGLE's Metal backend adds up the GPU start-to-end span of each command buffer, with no handling of overlap (`QueryMtl.mm`, `onCommandBufferCompleted`). So `GPU ms` grows with the number of command buffers: a test with `gl.finish` after each pass took `three` from 40.6 to 314 ms, and `wall ms` stayed at 20.5 to 20.9 ms. Compare `GPU ms` only between runs with the same passes. `wall ms` has a fence poll step of about 1 to 4 ms, and it includes GPU work of other apps that comes first.
 
 A run must never take the founder's screen. With `SPACE_WINDOW_AWAY=1` the window opens with no focus, 100 points past the right edge of every display, at 1280 x 770 points. It pins nothing. A `PROBLEM` line says when any of it shows on a display. `seen` is then 0, and this is a plain fact and no fault. In this state the page still paints at 60 per second, and wheel input moves the camera. `GPU ms`, `wall ms` and `pict/s` were the same as for a window in front (`film` 12.8 and 12.5 ms, `plain` 2.9 and 3.1 ms). `util%` holds no window server work for this window: compare it only between runs with the same `seen`. The window in front and the window away gave a difference inside the noise of `util%` in 2 scenes, and one other reading of `plain` was 55%. The cause of that reading is not confirmed.
 
@@ -66,6 +66,8 @@ A run must never take the founder's screen. With `SPACE_WINDOW_AWAY=1` the windo
 | `adaptive` | 0: the resolution stays at the full share, so dynamic resolution hides no cost. Worlds still take turns inside the budget of a picture. |
 | `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
 | `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
+
+A world costs much more CPU in its first 20 s: the renderer with the worker used about 80% of one core 0 to 11 s after the scene ended, and 12% after 25 s. Compare CPU only at the same time after start. GPU numbers do not show this.
 
 In the app, `window.__spaceDev.perf` has `start()`, `stop()` and `read()`. `src/renderer/src/perf-meter.ts` owns the page state and merges the worker's snapshot, which comes once per second. While it is off, neither the page nor the worker measures anything.
 
