@@ -21,6 +21,8 @@ export interface Tombstone {
 const MAX_TOMBSTONES = 5000
 /** The revisions kept per node. Older ones drop off first. */
 const MAX_REVISIONS = 32
+/** The revisions a board keeps in all, deleted nodes too. Older ones drop off first. */
+const MAX_ALL_REVISIONS = 20000
 
 /** What a node was at a seq, for telling a change apart (see describeChange). */
 export type PriorState =
@@ -41,14 +43,35 @@ export type PriorState =
 export class ChangeLog {
   private tombstones: Tombstone[] = []
   private revisions = new Map<string, Revision[]>()
+  /** The node of each revision held, oldest first, from `oldest` on. A dropped revision is the first of its node's list, or was dropped by MAX_REVISIONS. */
+  private arrivals: string[] = []
+  private oldest = 0
+  private held = 0
 
   /** Nodes that took a new seq, with their state before. */
   revise(revisions: readonly Revision[], by?: Author): void {
     for (const revision of revisions) {
       const list = this.revisions.get(revision.id) ?? []
       list.push(by ? { ...revision, by } : revision)
-      if (list.length > MAX_REVISIONS) list.splice(0, list.length - MAX_REVISIONS)
+      this.held++
+      this.arrivals.push(revision.id)
+      if (list.length > MAX_REVISIONS) {
+        this.held -= list.length - MAX_REVISIONS
+        list.splice(0, list.length - MAX_REVISIONS)
+      }
       this.revisions.set(revision.id, list)
+    }
+    while (this.held > MAX_ALL_REVISIONS) {
+      const id = this.arrivals[this.oldest++]
+      const list = this.revisions.get(id)
+      if (!list) continue
+      this.held--
+      if (list.length > 1) list.shift()
+      else this.revisions.delete(id)
+    }
+    if (this.oldest > MAX_ALL_REVISIONS) {
+      this.arrivals = this.arrivals.slice(this.oldest)
+      this.oldest = 0
     }
   }
 

@@ -72,7 +72,8 @@ limits scripts and images.
   flex frames. No margin, grid, position or transform.
 - **Change tracking:** every created or changed node gets a new `seq`;
   removals are kept in an in-memory tombstone log
-  (`src/renderer/src/board/changes.ts`). `since` is exclusive. Each MCP
+  (`src/renderer/src/board/changes.ts`), which holds a bounded number of
+  revisions. `since` is exclusive. Each MCP
   session keeps its own cursor per board.
 - **Rendering:** the content layer is real DOM under one CSS camera transform
   (`src/renderer/src/board/content.tsx`); ink is drawn on a canvas above it
@@ -80,7 +81,7 @@ limits scripts and images.
   `ink-tiles.ts`, decision B28). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
-  history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Undo snapshots: `history.ts`. An agent edit is a change from the
+  history; the stroke in progress: `paint.ts ActiveInk`, decision B29). Undo: `history.ts`, a full snapshot on top of changes between snapshots. An agent edit is a change from the
   nodes it was computed from, and it applies to the current document by item
   id (`scene.ts applyChanges`). A drag shows on top of the document; a commit
   under it goes to the document (`commitOver`, decision B26).
@@ -283,7 +284,9 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   record's signatures show as ghosts. A re-run that does not match the
   record marks the scene; the panel says "could not be rebuilt". The
   rebuilt play data stays in the player's history like the play data of
-  a scene committed in this session.
+  a scene committed in this session. The frames of drafts and of that
+  history share one budget (`run.ts trimScenes`, decision B30): an older
+  finished scene gives up its play data and rebuilds at its next replay.
 - **Errors.** A scene input works, draws nothing, or is an error with its
   line, also from parallel async functions and functions of moving objects;
   results carry no warnings (decision B18). An error at a moment that

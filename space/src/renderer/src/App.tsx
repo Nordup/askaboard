@@ -22,7 +22,7 @@ import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { dropTracker, moveTracker } from './agent/groups'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
-import { BoardHistory } from './board/history'
+import { BoardHistory, boardBytes } from './board/history'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { Sidebar, type BoardEntry } from './components/Sidebar'
@@ -47,6 +47,8 @@ const SAVE_MAX_WAIT_MS = 2000
 /** A failed save tries again after this long. */
 const SAVE_RETRY_MS = 5000
 const CAMERA_SAVE_DELAY_MS = 500
+/** About the bytes of the nodes of all boards in memory, the open one too. */
+const MAX_BOARD_BYTES = 64 * 1024 * 1024
 
 /** A board's key across folders. */
 const saveKey = (root: string, path: string): string => `${root}\0${path}`
@@ -302,6 +304,24 @@ export function App() {
     }
   }
 
+  /**
+   * Closed boards stay in memory for a fast way back, within MAX_BOARD_BYTES.
+   * A board that leaves opens from its file, and its undo and its change log go with it, as after a restart.
+   * A board with an unsaved version stays: pendingRef holds what its file lacks.
+   */
+  const trimBoards = (openPath: string): void => {
+    const root = rootRef.current
+    const sizes = new Map([...cacheRef.current].map(([path, entry]) => [path, boardBytes(entry.doc.nodes)]))
+    let bytes = 0
+    for (const size of sizes.values()) bytes += size
+    for (const [path, size] of sizes) {
+      if (bytes <= MAX_BOARD_BYTES) break
+      if (path === openPath || (root && pendingRef.current.has(saveKey(root, path)))) continue
+      cacheRef.current.delete(path)
+      bytes -= size
+    }
+  }
+
   const openBoard = useCallback(
     async (path: string) => {
       const root = rootRef.current
@@ -350,6 +370,9 @@ export function App() {
           }
         }
         if (token !== openTokenRef.current) return
+        // The boards of the cache in the order of their use: the board left longest ago goes first.
+        cacheRef.current.delete(path)
+        cacheRef.current.set(path, entry)
         const [camera, records] = await Promise.all([space.getCamera(path).catch(() => null), boardRecords(path, entry.doc)])
         if (token !== openTokenRef.current) return
         entry.doc = mountRecords(root, path, entry.doc, records)
@@ -357,6 +380,7 @@ export function App() {
         setZoom(camera?.zoom ?? 1)
         setBoardError(null)
         setOpen({ root, path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
+        trimBoards(path)
         space.setLastBoard(root, path)
         if (recovered) {
           scheduleSave(root, path, entry.doc)
