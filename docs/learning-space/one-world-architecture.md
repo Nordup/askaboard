@@ -356,8 +356,7 @@ flowchart LR
   not move it. So a world that lies goes silent for a time that it cannot change, and a
   real file of 400 MB gets 100 s. A parse that blocks the worker past that limit still
   ends the worker. A step host has the same limit, and no host lives past 600 s. A file
-  from the network counts for nothing, so its parse has the 20 s of a setup. A loader with
-  its own `LoadingManager` counts only for the time of its reads.
+  from the network counts for nothing, so its parse has the 20 s of a setup.
 - **The picture after a load.** After a world's last load each world gets three picture
   checks, at 30, 200 and 800 ms. A check renders only what changed. So a model shows with
   no `world.redraw()`, also from `scene.add` or a texture. A `parse()` that ends later

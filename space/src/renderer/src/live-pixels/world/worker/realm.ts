@@ -38,6 +38,8 @@ export const REALM = String.raw`
   // True while the runtime itself renders: the globals are real then, and no world's numbers are used.
   let core = false;
   const owner = () => (core ? null : current || setting || last);
+  /** The world that runs for certain, or null: unlike owner(), no guess at code that runs after an await. */
+  const runner = () => (core ? null : current || setting);
   // Who runs, for the page: a worker in an endless loop answers no ping, so the page keeps the last of these.
   // Only changes go out. A paint does not reset it, so a world alone on a board costs no message per tick.
   let announced = null;
@@ -171,7 +173,7 @@ export const REALM = String.raw`
   /** A text with the protocol's URLs as the paths that an agent wrote. */
   const readable = (text) => text
     .split(LIVE_ORIGIN + '/module/').map((part, i) => (i ? part.replace(/^[^/]+\/\d+\//, '') : part)).join('')
-    .split(FILE_URL).map((part, i) => (i ? part.replace(/^[^\s"')]*/, (path) => decodeURIComponent(path.split('&')[0])) : part)).join('');
+    .split(FILE_URL).map((part, i) => (i ? part.replace(/^[^\s"')]*/, (path) => decodeURIComponent(path.split(/[&#]/)[0])) : part)).join('');
   /** A clean message: positions in the world's lines, no frames of the runtime. */
   const messageOf = (error) => {
     const text = error && error.stack ? String(error.stack) : error && error.message ? String(error.message) : String(error);
@@ -565,7 +567,7 @@ export const REALM = String.raw`
       timers: new Map(), timerHeap: [], callbacks: new Map(), callbacksNext: new Map(), framesNow: [], frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
-      reportTimer: 0, reportValue: undefined, lastReport: 0, logLines: 0, files: new Set(), loads: 0, loadedAt: -Infinity, modules: false,
+      reportTimer: 0, reportValue: undefined, lastReport: 0, logLines: 0, files: new Set(), loads: 0, loadedAt: -Infinity, modules: false, manager: null,
       cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: weakGpu ? 1 : 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
       output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1, content: 0, sharpen: false, prepared: false, compiling: false, cost: newCost(), roseAt: -Infinity, heldUntil: 0, hold: 0
     };

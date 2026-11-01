@@ -14,11 +14,17 @@
  * reads no file again. Each read asks main whether the file changed: a replay
  * reads the file as it is now.
  *
- * A load: a read, or an item of three's default LoadingManager, which lasts up
- * to the end of a loader's parse. While a world's own loads run, its step time
- * waits, for FILES_WAIT_MS at most with no news of a load, and the page does not
- * take the worker as hung. After a world's last load, each world gets a few picture
- * checks, so a model shows with no world.redraw().
+ * A load: a read, or an item of a LoadingManager, which lasts up to the end of a
+ * loader's parse. While a world's own loads run, its step time waits, for
+ * FILES_WAIT_MS at most with no news of a load, and the page does not take the
+ * worker as hung. After a world's last load, each world gets a few picture checks,
+ * so a model shows with no world.redraw().
+ *
+ * A load belongs to the world that started it, and a loader's parse goes on long
+ * after that world's turn. So each world has its own LoadingManager, a loader takes
+ * it when it is made, and the loaders of a parse get it from their parent. An item
+ * belongs to its manager, and a file URL that the manager resolves names the world in
+ * its fragment. A load with no world holds up every world's step time (filesBusy).
  */
 export const FILES = String.raw`
   const nativeFetch = scope.fetch.bind(scope);
@@ -45,10 +51,25 @@ export const FILES = String.raw`
     return input instanceof NativeRequest && input.url.startsWith(FILE_URL) ? input.url : null;
   };
 
-  // Loads now, in the worker and per world. A world waits only for its own: a load that stalls in another world, or in one that left, holds up nothing here.
+  /** A file URL that names world w. A fragment never leaves the worker. Any other URL stays as it is. */
+  const namedUrl = (url, w) => {
+    const file = fileUrlOf(url);
+    if (file === null) return url;
+    return file.includes('#') ? file : file + '#' + encodeURIComponent(w.id);
+  };
+  /** The world of a load whose world left: nothing waits for it. */
+  const LEFT = { id: '', loads: 0, loadedAt: 0 };
+  /** The world of a read: the one that its URL names, else the code that runs now. Null: no world is known, and no guess takes its place. */
+  const readerOf = (url) => {
+    const at = url.indexOf('#');
+    return at < 0 ? runner() : worlds.get(decodeURIComponent(url.slice(at + 1))) || LEFT;
+  };
+
+  // Loads now: in the worker, per world, and of no world. A world waits for its own: a load that stalls in another world, or in one that left, holds up nothing here.
+  // A load of no world can be any world's, so all wait for it. That costs a wait and no wrong still, and it is rare: code in a library, after an await, outside any loader.
   const QUIET_MS = 100, FILES_WAIT_MS = 30000;
-  let loads = 0;
-  const filesBusy = (w) => !w.failed && (w.loads > 0 || realNow() - w.loadedAt < QUIET_MS);
+  let loads = 0, loose = 0;
+  const filesBusy = (w) => !w.failed && (w.loads > 0 || loose > 0 || realNow() - w.loadedAt < QUIET_MS);
   /**
    * Step time waits here. Between a read and the code that uses it, QUIET_MS gives that code its turn. Only time spent here counts toward FILES_WAIT_MS,
    * so a parse that blocks the worker does not. A load with no news for that long is stalled, and step time goes on without it.
@@ -57,7 +78,7 @@ export const FILES = String.raw`
     let news = w.loadedAt, waited = 0;
     while (filesBusy(w)) {
       if (w.loadedAt !== news) { news = w.loadedAt; waited = 0; }
-      if ((waited += 10) > FILES_WAIT_MS) { w.loads = 0; return; }
+      if ((waited += 10) > FILES_WAIT_MS) { w.loads = 0; loose = 0; return; }
       await new Promise((resolve) => nativeSetTimeout(resolve, 10));
     }
   };
@@ -77,19 +98,17 @@ export const FILES = String.raw`
     checks = nativeSetTimeout(next, CHECK_AFTER_MS[0]);
   };
 
-  /** Gives the world that the load belongs to. */
-  const loadStarted = () => {
-    const w = owner();
+  /** w: the world that the load belongs to, or null. */
+  const loadStarted = (w) => {
     loads++;
-    if (w) { w.loads++; w.loadedAt = realNow(); }
+    if (w) { w.loads++; w.loadedAt = realNow(); } else loose++;
     post({ type: 'files' });
-    return w;
   };
   const loadEnded = (w) => {
     loads--;
-    if (w) { if (w.loads > 0) w.loads--; w.loadedAt = realNow(); }
+    if (w) { if (w.loads > 0) w.loads--; w.loadedAt = realNow(); } else if (loose > 0) loose--;
     post({ type: 'files' });
-    if (!loads || (w && !w.loads)) checkPictures();
+    if (!loads || (w ? !w.loads : !loose)) checkPictures();
   };
 
   // The reads that worlds keep. URL to { tag, blob, users }. A read with no user goes after KEEP_MS.
@@ -106,16 +125,50 @@ export const FILES = String.raw`
     w.files.clear();
   };
 
-  const readFile = async (url, signal) => {
-    const w = loadStarted();
-    try {
-      let entry = kept.get(url);
-      const response = await nativeFetch(entry ? url + '&known=' + encodeURIComponent(entry.tag) : url, signal ? { signal } : undefined);
-      if (response.status !== 304) {
-        if (!response.ok) { kept.delete(url); return response; }
-        entry = { tag: response.headers.get('etag'), blob: await response.blob(), users: new Set() };
+  // Reads on their way. URL to { done, readers, stop }. Worlds that ask for one file at once share one read: it gives { entry } or a failed { response }.
+  const reading = new Map();
+  const startRead = (url) => {
+    const read = { done: null, readers: 0, stop: new AbortController() }, known = kept.get(url);
+    const run = async () => {
+      try {
+        const response = await nativeFetch(known ? url + '&known=' + encodeURIComponent(known.tag) : url, { signal: read.stop.signal });
+        if (response.status === 304) { kept.set(url, known); return { entry: known }; }
+        if (!response.ok) { kept.delete(url); return { response }; }
+        const entry = { tag: response.headers.get('etag'), blob: await response.blob(), users: new Set() };
         kept.set(url, entry);
+        return { entry };
+      } finally {
+        if (reading.get(url) === read) reading.delete(url);
       }
+    };
+    reading.set(url, read);
+    read.done = run();
+    read.done.catch(() => {});
+    return read;
+  };
+  /** The result of a read for one reader. Its signal ends only its own wait. The read itself stops when no reader is left. */
+  const joinRead = (read, url, signal) => {
+    read.readers++;
+    if (!signal) return read.done;
+    return new Promise((resolve, reject) => {
+      const leave = () => {
+        reject(signal.reason);
+        if (--read.readers) return;
+        if (reading.get(url) === read) reading.delete(url);
+        read.stop.abort();
+      };
+      if (signal.aborted) { leave(); return; }
+      signal.addEventListener('abort', leave, { once: true });
+      read.done.then(resolve, reject).finally(() => signal.removeEventListener('abort', leave));
+    });
+  };
+
+  const readFile = async (name, signal) => {
+    const w = readerOf(name), url = name.split('#')[0];
+    loadStarted(w);
+    try {
+      const { entry, response } = await joinRead(reading.get(url) || startRead(url), url, signal);
+      if (response) return response.clone();
       // A world can leave while its read runs: then only the timer lets the read go.
       if (w && worlds.get(w.id) === w) { entry.users.add(w); w.files.add(url); } else if (!entry.users.size) forgetLater(url, entry);
       return new Response(entry.blob, { headers: { 'content-type': entry.blob.type, 'content-length': String(entry.blob.size) } });
@@ -136,22 +189,30 @@ export const FILES = String.raw`
   const xhrOpen = scope.XMLHttpRequest.prototype.open;
   scope.XMLHttpRequest.prototype.open = function (method, url, ...rest) { return xhrOpen.call(this, method, fileUrlOf(String(url)) || url, ...rest); };
 
-  /** Called once, when three is here: loads of the default manager count, and images load with no document. */
+  /** Called once, when three is here: items of a loading manager count as loads of its world, and images load with no document. */
   const watchLoaders = () => {
-    const manager = THREE.DefaultLoadingManager, start = manager.itemStart, end = manager.itemEnd, open = new Map();
-    // An item ends in another turn, so the world of its start is kept by its URL.
-    manager.itemStart = (url) => {
-      if (!open.has(url)) open.set(url, []);
-      open.get(url).push(loadStarted());
-      start(url);
+    const shared = THREE.DefaultLoadingManager, plain = { itemStart: shared.itemStart, itemEnd: shared.itemEnd, resolveURL: shared.resolveURL };
+    /** Manager m works for world w, or for no world (null). from: its own functions. */
+    const claim = (m, w, from) => {
+      const { itemStart, itemEnd, resolveURL } = from;
+      m.lsClaimed = true;
+      m.itemStart = (url) => { loadStarted(w); itemStart.call(m, url); };
+      m.itemEnd = (url) => { itemEnd.call(m, url); loadEnded(w); };
+      m.resolveURL = (url) => (w ? namedUrl(resolveURL.call(m, url), w) : resolveURL.call(m, url));
+      return m;
     };
-    manager.itemEnd = (url) => {
-      end(url);
-      const list = open.get(url);
-      if (!list) return;
-      loadEnded(list.pop());
-      if (!list.length) open.delete(url);
-    };
+    claim(shared, null, plain);
+    // A world's manager stands in for the default one, so that manager's handlers and its onLoad go on working. A loader of a parse gets its parent's manager, so it stays with the world.
+    Object.defineProperty(THREE.Loader.prototype, 'manager', {
+      configurable: true,
+      get() { return this.lsManager; },
+      set(m) {
+        const w = runner();
+        if (w && m === shared) m = w.manager || (w.manager = claim(Object.create(shared), w, plain));
+        else if (w && !m.lsClaimed) claim(m, w, m);
+        this.lsManager = m;
+      }
+    });
     // ImageLoader makes an img element, and a worker has none. A canvas follows flipY as an image does; an ImageBitmap does not.
     THREE.ImageLoader.prototype.load = function (url, onLoad, onProgress, onError) {
       const full = this.manager.resolveURL(this.path === undefined ? url : this.path + url), loader = this.manager;
