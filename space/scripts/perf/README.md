@@ -91,6 +91,8 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 
 A run opens the window at its normal place on the screen, with no focus (`SPACE_NO_FOCUS=1`). It can open behind the active app. It is not always on top and not on all workspaces, and it is a normal window: the founder brings it forward with a click, the Dock or Cmd-Tab. `seen` gives what shows: any value is a plain fact and no fault. `util%` includes the window server work for this window, so compare it only between runs with the same `seen`.
 
+`seen` is empty on lines from 2026-11-01 before commit `space: the seen number works on a window in view`: the script failed when the window was on the screen. Earlier lines with 0 came from a window that macOS did not list as on screen.
+
 `SPACE_WORLD_TUNE` holds JSON with measuring switches. An absent key changes nothing. They are not settings for users. `node scripts/lab/lab.mjs start --tune '<json>'` passes them to a lab app.
 
 | Key | Effect |
@@ -107,6 +109,15 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 The first seconds of a world cost more CPU, so compare CPU only at the same time after start. `--burst` gives it. With a canvas of 11 MP per picture the renderers used 90% of one core for 10 s. Since the canvas covers only the worlds, they use 35% in the first 5 s and about 20% later.
 
 In the app, `window.__spaceDev.perf` has `start()`, `stop()` and `read()`. `src/renderer/src/perf-meter.ts` owns the page state and merges the worker's snapshot, which comes once per second. While it is off, neither the page nor the worker measures anything.
+
+The `meter` result of 2026-11-01 (`before-review`, commit `d6b153c`): util% on the busy board.
+
+| Launch | Still, off | Still, on | Pan, off | Pan, on |
+| --- | --- | --- | --- | --- |
+| Uncapped | 0 | 0 | 18 | 10 |
+| Capped | 0 | 0 | 9 | 9 |
+
+The meter is not the cause of the gap between 23% and 13%: a still board uses 0% with the meter on, and pan with the meter off still uses twice the capped value. The gap comes from the launch flags during pan. In the uncapped row the pinch moved the zoom from 0.28 to 0.60 in `pan-off`, so the two pan phases do not show the same view: do not read 18 against 10 as a meter effect.
 
 ## Which runs to use
 

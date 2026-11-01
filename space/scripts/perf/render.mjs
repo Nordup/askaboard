@@ -68,7 +68,7 @@ function run(argv) {
     return JSON.stringify({ share: 0, x: all?.kCGWindowBounds.X, y: all?.kCGWindowBounds.Y });
   }
   const r = list[at].kCGWindowBounds, front = list.slice(0, at).filter((w) => w.kCGWindowLayer <= 3 && w.kCGWindowAlpha > 0.5).map((w) => w.kCGWindowBounds);
-  const screens = ObjC.deepUnwrap($.NSScreen.screens).map((s) => s.frame), top = screens[0].size.height;
+  const known = $.NSScreen.screens, screens = Array.from({ length: known.count }, (_, i) => known.objectAtIndex(i).frame), top = screens[0].size.height;
   const onScreen = (x, y) => screens.some((s) => x >= s.origin.x && x < s.origin.x + s.size.width && y >= top - s.origin.y - s.size.height && y < top - s.origin.y);
   let open = 0, all = 0;
   for (let i = 0; i < 40; i++) for (let j = 0; j < 25; j++) {
