@@ -76,7 +76,8 @@ limits scripts and images.
   session keeps its own cursor per board.
 - **Rendering:** the content layer is real DOM under one CSS camera transform
   (`src/renderer/src/board/content.tsx`); ink is drawn on a canvas above it
-  with the same camera (`paint.ts`). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
+  with the same camera (`paint.ts`; static ink comes from cached tiles,
+  `ink-tiles.ts`, decision B28). One layout cache (`board/scene.ts`, the node-tree cache; not related to live scenes) gives
   every node's world bounds to hit testing, selection, placement and agents.
 - **Editing:** `src/renderer/src/board/Board.tsx` (tools, camera, selection,
   history). Undo snapshots: `history.ts`. An agent edit is a change from the

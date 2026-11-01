@@ -1,3 +1,24 @@
+/* The camera writes these on .board in every frame. Only .board reads them: an inherited property would recalculate the style of every element on the board. */
+@property --grid-size {
+  syntax: '*';
+  inherits: false;
+}
+
+@property --grid-x {
+  syntax: '*';
+  inherits: false;
+}
+
+@property --grid-y {
+  syntax: '*';
+  inherits: false;
+}
+
+@property --grid-alpha {
+  syntax: '*';
+  inherits: false;
+}
+
 .board {
   position: absolute;
   inset: 0;

@@ -1,8 +1,12 @@
 import { inkBounds, pressureWidth, regionsIntersect } from './geometry'
-import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from './playback'
+import { InkGrid, TileCache, tileLevel, type TileContext } from './ink-tiles'
+import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackMatrix, type PlaybackTip } from './playback'
 import type { Camera, InkNode, Point, Region } from './types'
 
 type StrokeItem = InkNode
+
+/** A canvas or a tile: stroke code draws on both. */
+type InkContext = CanvasRenderingContext2D | TileContext
 
 /** An ink node with its world offset (the world position of its local 0,0). */
 export interface PaintInk {
@@ -12,6 +16,22 @@ export interface PaintInk {
 
 /** Highlighter ink is translucent and sits under pen ink. */
 export const HIGHLIGHTER_ALPHA = 0.55
+
+/** The device pixel of board point 0,0: a whole pixel, so that every ink layer and every tile shows the same pixels at any pan. */
+function inkOrigin(viewport: Point, camera: Camera, dpr: number): Point {
+  return [Math.round(dpr * (viewport[0] / 2 - camera.center[0] * camera.zoom)), Math.round(dpr * (viewport[1] / 2 - camera.center[1] * camera.zoom))]
+}
+
+/** The box around a region under a matrix. */
+function matrixBounds(region: Region, [a, b, c, d, e, f]: PlaybackMatrix): Region {
+  const xs = [region.x, region.x + region.width]
+  const ys = [region.y, region.y + region.height]
+  const px = xs.flatMap((x) => ys.map((y) => a * x + c * y + e))
+  const py = xs.flatMap((x) => ys.map((y) => b * x + d * y + f))
+  const x = Math.min(...px)
+  const y = Math.min(...py)
+  return { x, y, width: Math.max(...px) - x, height: Math.max(...py) - y }
+}
 
 /**
  * Size the canvas backing store for the viewport and device pixel ratio,
@@ -32,14 +52,8 @@ function prepare(canvas: HTMLCanvasElement, viewport: Point, camera: Camera): Ca
   if (!context) return null
   context.setTransform(1, 0, 0, 1, 0, 0)
   context.clearRect(0, 0, pixelWidth, pixelHeight)
-  context.setTransform(
-    dpr * camera.zoom,
-    0,
-    0,
-    dpr * camera.zoom,
-    dpr * (width / 2 - camera.center[0] * camera.zoom),
-    dpr * (height / 2 - camera.center[1] * camera.zoom)
-  )
+  const [tx, ty] = inkOrigin(viewport, camera, dpr)
+  context.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, tx, ty)
   context.lineCap = 'round'
   context.lineJoin = 'round'
   return context
@@ -59,7 +73,7 @@ function visibleRegion(viewport: Point, camera: Camera): Region {
 }
 
 /** A smooth path through the points: quadratic curves between segment midpoints. */
-function tracePath(context: CanvasRenderingContext2D, points: StrokeItem['points']): void {
+function tracePath(context: InkContext, points: StrokeItem['points']): void {
   context.moveTo(points[0][0], points[0][1])
   if (points.length === 2) {
     context.lineTo(points[1][0], points[1][1])
@@ -75,7 +89,7 @@ function tracePath(context: CanvasRenderingContext2D, points: StrokeItem['points
 }
 
 /** Draw one ink node at its world offset; a playback override moves, fades, recolours or partly draws it. */
-function drawInk(context: CanvasRenderingContext2D, ink: PaintInk, minWidth = 0, override?: NodeOverride): void {
+function drawInk(context: InkContext, ink: PaintInk, minWidth = 0, override?: NodeOverride): void {
   context.save()
   if (override?.matrix) context.transform(...override.matrix)
   context.translate(ink.offset[0], ink.offset[1])
@@ -87,7 +101,7 @@ function drawInk(context: CanvasRenderingContext2D, ink: PaintInk, minWidth = 0,
 }
 
 /** `minWidth`: the thinnest line to draw, in board points (offscreen export only). `alpha` multiplies the ink's own. */
-function drawStroke(context: CanvasRenderingContext2D, stroke: StrokeItem, minWidth = 0, alpha = 1): void {
+function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha = 1): void {
   const points = stroke.points
   if (!points.length || alpha <= 0) return
   context.strokeStyle = stroke.color
@@ -229,6 +243,8 @@ const RUN_GAP = 48
 const MAX_RUNS = 3
 /** How many strokes a new run reaches past its last changing stroke: a scene draws its strokes in order. */
 const RUN_AHEAD = 16
+/** A zoom that stood still this long has stopped: tiles at the scale of the screen follow. */
+const SETTLE_MS = 120
 
 type Run = { lo: number; hi: number }
 
@@ -267,9 +283,14 @@ const strokesIn = (runs: readonly Run[]): number => runs.reduce((sum, run) => su
  * and one animated early stroke does not repaint the unrelated ink after it.
  * The static canvas and the pictures show each stroke with its override of
  * the time they were drawn: a stroke that a scene keeps hidden or keeps
- * still costs nothing per frame. They are drawn again only when the view,
- * the selection or the committed ink changes, or when the override of a
- * stroke outside the runs changes.
+ * still costs nothing per frame.
+ *
+ * The strokes of the static canvas come from cached tiles (ink-tiles.ts,
+ * decision B28), and the glow goes under them. A camera move shows the same
+ * tiles at another place, and an edit, a change of override or a change of
+ * the first run drops only the tiles under the strokes that changed. While
+ * the zoom moves, tiles of a fixed level show; when it stops, tiles at the
+ * scale of the screen take their place.
  */
 export class InkLayers {
   private inks: readonly PaintInk[] | null = null
@@ -277,23 +298,42 @@ export class InkLayers {
   /** The committed and ghost strokes in paint order, and the position of each. */
   private order: PaintInk[] = []
   private position = new Map<string, number>()
+  /** The bounds of each stroke of the order, and the strokes by place. */
+  private bounds: Array<Region | null> = []
+  private grid = new InkGrid([])
+  /** Where a scene's matrix holds a stroke now, when it holds one. */
+  private moved = new Map<string, Region>()
   /** The count of highlighters at the start of the order (changing highlighters go after them). */
   private highlighters = 0
   /** The strokes of the order that have an override now. */
   private overridden = new Set<string>()
+  /** The overrides of this paint: the tiles draw with them. */
+  private overrides: ReadonlyMap<string, NodeOverride> | null = null
   /** Nodes whose override changed since the last paint (null: any). */
   private pending: Set<string> | null = null
   /** The strokes whose override changed in the last HOLD_MS, with the time of the last change. */
   private active = new Map<string, number>()
   /** The runs of the order that the live canvas draws in each frame (none: the static canvas holds all strokes). */
   private runs: Run[] = []
-  /** The view and the selection that the static canvas and the pictures show ('' : not drawn). */
-  private key = ''
-  /** The end of the strokes on the static canvas. */
-  private baseEnd = -1
+  /** The view that the pictures show ('' : not drawn). */
+  private view = ''
+  /** The view, the selection, the tile scale and the tiles that the static canvas shows. */
+  private shown = ''
+  /** The end of the strokes in the tiles. */
+  private baseEnd = 0
+  /** Device pixels per board point at the last paint, and when that last changed. */
+  private scale = 0
+  private zoomedAt = -Infinity
+  /** Tiles still wait for a later paint. */
+  private waiting = false
   /** pictures[i]: the strokes [lo, hi) after runs[i], up to the next run or the end. */
   private pictures: Array<{ canvas: HTMLCanvasElement; lo: number; hi: number }> = []
   private liveUsed = false
+  private readonly tiles = new TileCache((context, region) => {
+    const positions = this.strokesIn(region, 0, this.baseEnd)
+    for (const at of positions) this.drawAt(context, at)
+    return positions.length > 0
+  })
 
   /** The overrides of these nodes changed (null: of any node). Call it for each playback frame. */
   note(changed: ReadonlySet<string> | null | undefined): void {
@@ -301,30 +341,123 @@ export class InkLayers {
     else if (this.pending) for (const id of changed) this.pending.add(id)
   }
 
-  /** Paint the ink: the static canvas and the pictures when they are out of date, and the live canvas. */
-  paint(base: HTMLCanvasElement | null, live: HTMLCanvasElement | null, input: InkPaint): void {
-    if (!base || !live) return
+  /** Free the tiles: the board leaves. */
+  dispose(): void {
+    this.tiles.clear()
+  }
+
+  /** The positions in [lo, hi) of the strokes that show in a region, in paint order. */
+  private strokesIn(region: Region, lo: number, hi: number): number[] {
+    const hit = (at: number): boolean => {
+      const place = this.moved.get(this.order[at].node.id) ?? this.bounds[at]
+      return !!place && regionsIntersect(place, region)
+    }
+    if (hi - lo < 256) {
+      const out: number[] = []
+      for (let at = lo; at < hi; at++) if (hit(at)) out.push(at)
+      return out
+    }
+    const out = this.grid.query(region).filter((at) => at >= lo && at < hi && hit(at))
+    if (!this.moved.size) return out
+    const known = new Set(out)
+    for (const id of this.moved.keys()) {
+      const at = this.position.get(id)
+      if (at !== undefined && at >= lo && at < hi && !known.has(at) && hit(at)) out.push(at)
+    }
+    return out.sort((a, b) => a - b)
+  }
+
+  private drawAt(context: InkContext, at: number): void {
+    const ink = this.order[at]
+    const override = this.overrides?.get(ink.node.id)
+    if (override?.opacity !== 0) drawInk(context, ink, 0, override)
+  }
+
+  /** A stroke changes: the tiles under it, where it rests and where a scene holds it, are out of date. */
+  private touch(ink: PaintInk): void {
+    const place = this.moved.get(ink.node.id)
+    if (place) this.tiles.invalidate(place)
+    const bounds = inkBounds(ink.node, ink.offset)
+    if (bounds) this.tiles.invalidate(bounds)
+  }
+
+  /** A new order: tiles go only for strokes that changed. Survivors in another order leave no tile valid. */
+  private reorder(next: PaintInk[]): void {
+    const old = this.order
+    const oldAt = this.position
+    const position = new Map(next.map((ink, i) => [ink.node.id, i]))
+    let last = -1
+    let sameOrder = true
+    for (const ink of next) {
+      const at = oldAt.get(ink.node.id)
+      if (at === undefined) {
+        this.touch(ink)
+        continue
+      }
+      const was = old[at]
+      if (was.node !== ink.node || was.offset[0] !== ink.offset[0] || was.offset[1] !== ink.offset[1]) {
+        this.touch(was)
+        this.touch(ink)
+      }
+      if (at < last) sameOrder = false
+      last = Math.max(last, at)
+    }
+    for (const ink of old) if (!position.has(ink.node.id)) this.touch(ink)
+    if (!sameOrder) this.tiles.clear()
+    this.order = next
+    this.position = position
+    this.bounds = next.map((ink) => inkBounds(ink.node, ink.offset))
+    this.grid = new InkGrid(this.bounds)
+    for (const id of this.moved.keys()) if (!position.has(id)) this.moved.delete(id)
+  }
+
+  /** Where the override of a stroke holds it now. */
+  private place(at: number): Region | null {
+    const ink = this.order[at]
+    const matrix = this.overrides?.get(ink.node.id)?.matrix
+    const bounds = this.bounds[at]
+    return matrix && bounds ? matrixBounds(bounds, matrix) : null
+  }
+
+  /** The strokes in the tiles change from the first `end` strokes of `before` (its order and positions) to those of the order now. */
+  private respan(end: number, before: { order: readonly PaintInk[]; position: ReadonlyMap<string, number>; end: number }): void {
+    const { order, position } = this
+    if (before.order === order) {
+      for (let at = Math.min(before.end, end); at < Math.max(before.end, end); at++) this.touch(order[at])
+    } else if (before.end < before.order.length || end < order.length) {
+      for (let at = 0; at < before.end; at++) if ((position.get(before.order[at].node.id) ?? end) >= end) this.touch(before.order[at])
+      for (let at = 0; at < end; at++) if ((before.position.get(order[at].node.id) ?? before.end) >= before.end) this.touch(order[at])
+    }
+    this.baseEnd = end
+  }
+
+  /** Paint the ink: the static canvas and the pictures when they are out of date, and the live canvas. True: paint again in the next frame. */
+  paint(base: HTMLCanvasElement | null, live: HTMLCanvasElement | null, input: InkPaint): boolean {
+    if (!base || !live) return false
     const { overrides, transients, viewport, camera } = input
-    // The order of the committed and ghost strokes. full: every layer is out of date.
-    let full = false
+    this.overrides = overrides
+    // The order of the committed and ghost strokes. reordered: the positions are new.
+    const before = { order: this.order, position: this.position, end: this.baseEnd }
+    let reordered = false
     if (input.inks !== this.inks || input.ghosts !== this.ghosts) {
       this.inks = input.inks
       this.ghosts = input.ghosts
       const all = input.ghosts.length ? [...input.inks, ...input.ghosts] : input.inks
-      this.order = [...all.filter((ink) => ink.node.tool === 'highlighter'), ...all.filter((ink) => ink.node.tool !== 'highlighter')]
+      this.reorder([...all.filter((ink) => ink.node.tool === 'highlighter'), ...all.filter((ink) => ink.node.tool !== 'highlighter')])
       this.highlighters = this.order.findIndex((ink) => ink.node.tool !== 'highlighter')
       if (this.highlighters < 0) this.highlighters = this.order.length
-      this.position = new Map(this.order.map((ink, i) => [ink.node.id, i]))
-      full = true
+      reordered = true
     }
     // The strokes whose override changed: the noted ones, or all that have or had one.
-    const changed: Iterable<string> = this.pending ?? new Set([...this.overridden, ...(overrides?.keys() ?? [])])
+    const changed = new Set<string>(this.pending ?? [...this.overridden, ...(overrides?.keys() ?? [])])
+    // Strokes that arrived with a matrix: the note of their frame came before them.
+    if (reordered && overrides) for (const [id, override] of overrides) if (override.matrix && this.position.has(id)) changed.add(id)
     // The strokes with an override now.
     let presence = false
     if (!overrides) {
       presence = this.overridden.size > 0
       this.overridden.clear()
-    } else if (this.pending === null || full) {
+    } else if (this.pending === null || reordered) {
       const next = new Set<string>()
       for (const id of overrides.keys()) if (this.position.has(id)) next.add(id)
       presence = next.size !== this.overridden.size || [...next].some((id) => !this.overridden.has(id))
@@ -348,9 +481,17 @@ export class InkLayers {
       const at = this.position.get(id)
       if (at === undefined) continue
       this.active.set(id, now)
-      if (!inRuns(at)) stale.push(at)
+      const outside = !inRuns(at)
+      if (outside) {
+        stale.push(at)
+        this.touch(this.order[at])
+      }
+      const place = this.place(at)
+      if (place) this.moved.set(id, place)
+      else this.moved.delete(id)
+      if (outside && place) this.tiles.invalidate(place)
     }
-    let rebuild = full || stale.length > 0
+    let rebuild = reordered || stale.length > 0
     // The runs that this frame needs.
     const positions: number[] = []
     for (const [id, changedAt] of this.active) {
@@ -368,70 +509,70 @@ export class InkLayers {
     if (transientHighlighter) positions.push(this.highlighters)
     const needed = runsOf(positions)
     const dpr = window.devicePixelRatio || 1
-    const key = `${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom}|${input.selected.join(',')}`
-    if (key !== this.key || (presence && input.selected.length)) rebuild = full = true // the glow shows only under strokes without an override
+    const view = `${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom}`
+    let full = reordered
+    if (view !== this.view) rebuild = full = true
     else if (!needed.length) rebuild ||= this.runs.length > 0
     else if (needed.some((run) => !this.runs.some((own) => run.lo >= own.lo && run.hi <= own.hi))) rebuild = true
     else if (strokesIn(this.runs) - strokesIn(needed) > Math.max(64, strokesIn(needed))) rebuild = true // much more than needed
     if (rebuild) {
       const n = this.order.length
       const runs = needed.map((run, i) => ({ lo: run.lo, hi: Math.min(n, run.hi + RUN_AHEAD, needed[i + 1]?.lo ?? n) }))
-      this.drawStatic(base, input, runs, key, full, stale)
+      this.respan(runs.length ? runs[0].lo : n, before)
+      this.view = view
+      this.drawPictures(input, runs, full, stale)
     }
+    const again = this.drawBase(base, input, view, presence, now)
     this.drawLive(live, input, transientHighlighter, transientPen)
+    return again
   }
 
-  /**
-   * The static canvas (glow and the strokes before the first run) and the
-   * pictures after the runs, each stroke with its override now. A layer is
-   * drawn again only when its span of the order changed or holds a stale
-   * stroke (full: every layer).
-   */
-  private drawStatic(base: HTMLCanvasElement, input: InkPaint, runs: Run[], key: string, full: boolean, stale: readonly number[]): void {
-    this.runs = runs
-    this.key = key
-    const fresh = (lo: number, hi: number): boolean => !full && !stale.some((at) => at >= lo && at < hi)
+  /** The static canvas: the glow, then the tiles. True: paint again, for tiles that wait or for a zoom that may have stopped. */
+  private drawBase(base: HTMLCanvasElement, input: InkPaint, view: string, presence: boolean, now: number): boolean {
     const { viewport, camera, overrides } = input
+    const dpr = window.devicePixelRatio || 1
+    const scale = camera.zoom * dpr
+    if (scale !== this.scale) {
+      if (this.scale) this.zoomedAt = now
+      this.scale = scale
+    }
+    const settled = now - this.zoomedAt >= SETTLE_MS
+    const target = settled ? scale : tileLevel(scale)
+    const shown = `${view}|${input.selected.join(',')}|${target}|${this.tiles.version}`
+    if (shown === this.shown && !this.waiting && !(presence && input.selected.length)) return !settled
+    const context = prepare(base, viewport, camera)
+    if (!context) return false
+    if (input.selected.length) {
+      const visible = visibleRegion(viewport, camera)
+      for (const id of input.selected) {
+        const at = this.position.get(id)
+        if (at === undefined || overrides?.has(id)) continue
+        const bounds = this.bounds[at]
+        if (bounds && regionsIntersect(bounds, visible)) drawGlow(context, this.order[at], camera.zoom)
+      }
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    const [tx, ty] = inkOrigin(viewport, camera, dpr)
+    this.waiting = this.tiles.compose(context, { scale, target, tx, ty, width: base.width, height: base.height, ring: settled })
+    this.shown = `${view}|${input.selected.join(',')}|${target}|${this.tiles.version}`
+    return this.waiting || !settled
+  }
+
+  /** The pictures after the runs, each stroke with its override now. A picture is drawn again only when its span changed or holds a stale stroke (full: every one). */
+  private drawPictures(input: InkPaint, runs: Run[], full: boolean, stale: readonly number[]): void {
+    this.runs = runs
+    const fresh = (lo: number, hi: number): boolean => !full && !stale.some((at) => at >= lo && at < hi)
+    const { viewport, camera } = input
     const visible = visibleRegion(viewport, camera)
-    const order = this.order
-    const draw = (context: CanvasRenderingContext2D, from: number, to: number): void => {
-      for (let i = from; i < to; i++) {
-        const ink = order[i]
-        const override = overrides?.get(ink.node.id)
-        if (override?.opacity === 0) continue
-        // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
-        if (!override?.matrix) {
-          const bounds = inkBounds(ink.node, ink.offset)
-          if (!bounds || !regionsIntersect(bounds, visible)) continue
-        }
-        drawInk(context, ink, 0, override)
-      }
-    }
-    const baseEnd = runs.length ? runs[0].lo : order.length
-    if (baseEnd !== this.baseEnd || !fresh(0, baseEnd)) {
-      this.baseEnd = baseEnd
-      const context = prepare(base, viewport, camera)
-      if (!context) return
-      if (input.selected.length) {
-        const selected = new Set(input.selected)
-        for (const ink of order) {
-          if (!selected.has(ink.node.id) || overrides?.has(ink.node.id)) continue
-          const bounds = inkBounds(ink.node, ink.offset)
-          if (bounds && regionsIntersect(bounds, visible)) drawGlow(context, ink, camera.zoom)
-        }
-      }
-      draw(context, 0, baseEnd)
-    }
-    // Each picture: an earlier picture of the same span when it is fresh, else drawn again.
     const old = this.pictures
     this.pictures = runs.map((run, i) => {
       const lo = run.hi
-      const hi = runs[i + 1]?.lo ?? order.length
+      const hi = runs[i + 1]?.lo ?? this.order.length
       const same = old.findIndex((picture) => picture.lo === lo && picture.hi === hi)
       if (same >= 0 && fresh(lo, hi)) return old.splice(same, 1)[0]
       const picture = { canvas: old.pop()?.canvas ?? document.createElement('canvas'), lo, hi }
       const context = prepare(picture.canvas, viewport, camera)
-      if (context) draw(context, lo, hi)
+      if (context) for (const at of this.strokesIn(visible, lo, hi)) this.drawAt(context, at)
       return picture
     })
     // Pictures no run uses: free their pixels.
@@ -466,7 +607,7 @@ export class InkLayers {
         if (override?.opacity === 0) continue
         // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
         if (!override?.matrix) {
-          const bounds = inkBounds(ink.node, ink.offset)
+          const bounds = this.bounds[i]
           if (!bounds || !regionsIntersect(bounds, visible)) continue
         }
         drawInk(context, ink, 0, override)

@@ -684,9 +684,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         // The learner's stroke first: it never waits for the scene's ink.
         if (dirty.active) paintActive(activeInkRef.current, activeRef.current, viewportRef.current, cameraRef.current)
         if (dirty.committed) applyContentTransform()
+        let again = false
         if (dirty.committed || dirty.playback) {
           const frame = playbackRef.current
-          inkLayersRef.current.paint(inkRef.current, liveInkRef.current, {
+          again = inkLayersRef.current.paint(inkRef.current, liveInkRef.current, {
             inks: paintInks(),
             ghosts: ghostInks(),
             transients: (frame?.inks ?? []) as readonly InkNode[],
@@ -697,7 +698,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             camera: cameraRef.current
           })
         }
-        if (fading) requestPaint({})
+        if (fading || again) requestPaint({ playback: again })
       }
       if (now) paint()
       else paintFrameRef.current = requestAnimationFrame(paint)
@@ -711,6 +712,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     () => () => {
       cancelFrame(paintFrameRef)
       cancelFrame(measureFrameRef)
+      inkLayersRef.current.dispose()
     },
     []
   )
