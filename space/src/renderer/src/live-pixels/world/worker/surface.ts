@@ -114,7 +114,7 @@ export const SURFACE = String.raw`
       return null;
     }
     const old = w.drawn, same = old && Math.abs(old.s - place.s) < 1e-6;
-    if (!w.stale && same && contains(old.crop, crop)) return null;
+    if (!w.stale && !w.sharpen && same && contains(old.crop, crop)) return null;
     // Quality falls only while a world moves. It renders sharp again when it rests.
     const quality = w.moving || (old && !same) ? w.quality : 0, res = QUALITY[quality];
     const W = Math.ceil(((crop.r - crop.l) * res) / 2) * 2, H = Math.ceil(((crop.b - crop.t) * res) / 2) * 2;
@@ -134,6 +134,8 @@ export const SURFACE = String.raw`
   const renderPlan = (plan) => {
     const { w, place, crop, quality, W, H } = plan;
     const direct = isDirect(lookOf(w)), samples = samplesAt(quality);
+    // A world that is stale can show something new. A new zoom or a sharp picture at rest cannot.
+    if (w.stale) w.content++;
     if (!w.output || w.output.width !== W || w.output.height !== H || w.output.direct !== direct || (direct && w.output.samples !== samples)) {
       if (w.output) giveOutput(w.output);
       w.output = takeOutput(W, H, direct, samples);
@@ -141,6 +143,7 @@ export const SURFACE = String.raw`
     renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output, samples, surface.dpr);
     w.drawn = { s: place.s, crop, quality };
     w.stale = false;
+    w.sharpen = false;
     w.moving = false;
     w.waited = 0;
     w.renders = (w.renders || 0) + 1;
@@ -242,8 +245,8 @@ export const SURFACE = String.raw`
           w.timeMoved = false;
         }
         // At rest a world goes sharp once, and then nothing renders.
-        if (!w.moving && w.drawn && w.drawn.quality > 0) w.stale = true;
-        if (!w.stale && w.drawn && w.reach && !cropMoved(w)) continue;
+        if (!w.moving && w.drawn && w.drawn.quality > 0) w.sharpen = true;
+        if (!w.stale && !w.sharpen && w.drawn && w.reach && !cropMoved(w)) continue;
         const planned = meter ? realNow() : 0;
         try { const plan = planWorld(w); if (plan) plans.push(plan); } catch (e) { fail(w, e); }
         if (meter) meter.planMs += realNow() - planned;
@@ -309,6 +312,7 @@ export const SURFACE = String.raw`
     let target = null;
     try {
       measureReach(w, true);
+      w.content++;
       const nominal = { l: -w.w / 2, t: -w.h / 2, r: w.w / 2, b: w.h / 2 };
       const reach = !w.reach ? null : w.reach.full ? nominal : w.reach;
       if (!reach) return null;

@@ -152,6 +152,9 @@ flowchart LR
   serve only the fit of the floor and the focus.
 - The floor's shadow pass borrows the world's layers and `scene.overrideMaterial`, and
   gives them back after the pass, also after an error.
+- Film: depth of field gathers at half size and joins by depth. The floor's reflection
+  blurs in a pass of a third of the size. The floor's shadow map holds its last world,
+  so a render with no new content (a zoom, the sharp picture at rest) keeps it.
 - Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
   real alpha. The last pass writes premultiplied colour.
 - Toon and plain: the direct path. The scene renders once into the world's 8-bit

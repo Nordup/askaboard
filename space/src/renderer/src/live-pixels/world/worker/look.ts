@@ -22,6 +22,11 @@
  * - The shadow on the floor has its own map (renderFloorShadow). Its blur grows
  *   with the height of what casts it, so the shadow is sharp at contact and soft
  *   far from it. The light's shadow map stays for objects on each other.
+ * - Depth of field gathers at half size, and the blur joins the sharp picture by
+ *   depth. Pixels in focus and empty pixels stay cheap, and a blurred pixel reads
+ *   about 19 textures in place of 54.
+ * - The floor's reflection blurs in a pass of a third of the size, so a floor pixel
+ *   reads two textures in place of 17.
  */
 export const LOOK = String.raw`
   const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
@@ -85,7 +90,7 @@ export const LOOK = String.raw`
     holding = w;
     try { renderer.render(w.scene, camera); } finally { holding = null; }
   };
-  let quadScene = null, quadCam = null, quad = null, dofMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
+  let quadScene = null, quadCam = null, quad = null, dofMat = null, joinMat = null, mirrorMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
   /** The measuring switches (SPACE_WORLD_TUNE), read once at boot. tuned: what they force on every look; null when they force nothing. */
   let tune = {}, tuned = null;
   const setTune = (given) => {
@@ -119,21 +124,53 @@ export const LOOK = String.raw`
     quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
     quad.frustumCulled = false;
     quadScene.add(quad);
-    dofMat = new THREE.ShaderMaterial({ ...noTone(),
-      uniforms: { tC: { value: null }, tD: { value: null }, focus: { value: 10 }, ap: { value: 0.5 }, near: { value: 0.1 }, far: { value: 400 }, px: { value: new THREE.Vector2() }, scale: { value: 1 } },
-      vertexShader: QUAD_VS,
+    const dofUniforms = { tC: { value: null }, tD: { value: null }, focus: { value: 10 }, ap: { value: 0.5 }, near: { value: 0.1 }, far: { value: 400 }, px: { value: new THREE.Vector2() }, scale: { value: 1 } };
+    const DOF_COMMON = [
+      '#include <packing>',
+      'uniform sampler2D tC, tD; uniform float focus, ap, near, far, scale; uniform vec2 px; varying vec2 vUv;',
+      'float depthAt(vec2 u){ return -perspectiveDepthToViewZ(texture2D(tD, u).x, near, far); }',
+      'float coc(vec2 u){ return clamp(abs(depthAt(u) - focus) / focus * ap * 26.0, 0.0, 11.0) * scale; }'
+    ];
+    // Half size: each pixel gathers what falls on it. Its taps read the sharp picture, so no detail of the blur is lost to this size.
+    dofMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: dofUniforms, vertexShader: QUAD_VS,
       fragmentShader: [
-        '#include <packing>',
-        'uniform sampler2D tC, tD; uniform float focus, ap, near, far, scale; uniform vec2 px; varying vec2 vUv;',
-        'float coc(vec2 u){ float z = -perspectiveDepthToViewZ(texture2D(tD, u).x, near, far); return clamp(abs(z - focus) / focus * ap * 26.0, 0.0, 11.0) * scale; }',
+        ...DOF_COMMON,
         'void main(){ float c0 = coc(vUv); vec4 sum = texture2D(tC, vUv); float w = 1.0;',
         'if (c0 < 0.4 || ap <= 0.0) { gl_FragColor = sum; return; }',
         // Most of a crop is empty: a pixel with nothing near it needs no blur.
         'float e = 0.0; for (int i = 0; i < 6; i++) { float a = float(i) * 1.0472; e = max(e, 1.0 - texture2D(tD, vUv + vec2(cos(a), sin(a)) * 11.0 * scale * px).x); }',
         'if (sum.a == 0.0 && e == 0.0) { gl_FragColor = sum; return; }',
-        'for (int i = 1; i < 26; i++) { float a = float(i) * 2.399963; float r = sqrt(float(i) / 26.0) * c0; vec2 u = vUv + vec2(cos(a), sin(a)) * r * px;',
+        'for (int i = 1; i < 14; i++) { float a = float(i) * 2.399963; float r = sqrt(float(i) / 14.0) * c0; vec2 u = vUv + vec2(cos(a), sin(a)) * r * px;',
         '  float k = smoothstep(r - 1.0, r + 0.5, coc(u) + 0.5); sum += texture2D(tC, u) * k; w += k; }',
         'gl_FragColor = sum / w; }'
+      ].join('\n')
+    });
+    // Full size: a pixel in focus stays sharp. Any other pixel takes the four nearest pixels of the blur, each by how near its depth is, so the blur
+    // of one object does not cross onto another at a different depth.
+    joinMat = new THREE.ShaderMaterial({ ...noTone(), uniforms: { ...dofUniforms, tB: { value: null }, halfPx: { value: new THREE.Vector2() } }, vertexShader: QUAD_VS,
+      fragmentShader: [
+        ...DOF_COMMON,
+        'uniform sampler2D tB; uniform vec2 halfPx;',
+        'void main(){ vec4 sharp = texture2D(tC, vUv); float d0 = depthAt(vUv), c0 = clamp(abs(d0 - focus) / focus * ap * 26.0, 0.0, 11.0) * scale;',
+        'if (c0 < 0.4 || ap <= 0.0) { gl_FragColor = sharp; return; }',
+        'vec4 soft = texture2D(tB, vUv); if (sharp.a == 0.0 && soft.a == 0.0) { gl_FragColor = sharp; return; }',
+        'vec2 f = vUv / halfPx - 0.5, t = fract(f), o = (floor(f) + 0.5) * halfPx; vec4 sum = vec4(0.0); float tot = 0.0;',
+        'for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) { vec2 u = o + vec2(float(i), float(j)) * halfPx;',
+        '  float w = (i == 0 ? 1.0 - t.x : t.x) * (j == 0 ? 1.0 - t.y : t.y) * exp(-abs(depthAt(u) - d0) / (0.04 * d0)) + 1e-4; sum += texture2D(tB, u) * w; tot += w; }',
+        'gl_FragColor = mix(sharp, sum / tot, smoothstep(0.4, 1.2, c0)); }'
+      ].join('\n')
+    });
+    // The floor's reflection, blurred, at the size of the mirror image. The mirror image fades with its height above the floor: the far part of an object leaves no end you can see.
+    mirrorMat = new THREE.ShaderMaterial({ ...noTone(),
+      uniforms: { tR: { value: null }, tD: { value: null }, spread: { value: new THREE.Vector2() }, toWorld: { value: new THREE.Matrix4() }, floorY: { value: 0 }, fadeH: { value: 1 } },
+      vertexShader: QUAD_VS,
+      fragmentShader: [
+        'uniform sampler2D tR, tD; uniform float floorY, fadeH; uniform vec2 spread; uniform mat4 toWorld; varying vec2 vUv;',
+        'float fade(vec2 u){ vec4 p = toWorld * vec4(u * 2.0 - 1.0, texture2D(tD, u).x * 2.0 - 1.0, 1.0); float h = max(0.0, floorY - p.y / p.w) / fadeH; return exp(-h * h * 2.2); }',
+        'void main(){ vec3 c = vec3(0.0);',
+        'for (int i = 0; i < 8; i++) { float a = float(i) * 2.399963; float r = sqrt((float(i) + 0.5) / 8.0); vec2 u = vUv + vec2(cos(a), sin(a)) * r * spread;',
+        '  c += min(texture2D(tR, u).rgb, vec3(2.0)) * fade(u); }',
+        'gl_FragColor = vec4(c / 8.0, 1.0); }'
       ].join('\n')
     });
     // Bloom: a pyramid. A bright pass, 13-tap down passes, tent up passes with one weight per level. UnrealBloomPass gave this look
@@ -256,16 +293,11 @@ export const LOOK = String.raw`
     const reflection = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, toneMapped: false,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
-      uniforms: { tR: { value: null }, tD: { value: null }, tM: { value: floorMask }, amount: { value: 0.3 }, spread: { value: new THREE.Vector2() }, toWorld: { value: new THREE.Matrix4() }, floorY: { value: 0 }, fadeH: { value: 1 } },
+      uniforms: { tR: { value: null }, tM: { value: floorMask }, amount: { value: 0.3 } },
       vertexShader: 'varying vec2 vUv; varying vec4 vC; void main(){ vUv = uv; vC = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = vC; }',
       fragmentShader: [
-        'uniform sampler2D tR, tD, tM; uniform float amount, floorY, fadeH; uniform vec2 spread; uniform mat4 toWorld; varying vec2 vUv; varying vec4 vC;',
-        // The mirror image fades with its height above the floor: the far part of an object leaves no end you can see.
-        'float fade(vec2 u){ vec4 p = toWorld * vec4(u * 2.0 - 1.0, texture2D(tD, u).x * 2.0 - 1.0, 1.0); float h = max(0.0, floorY - p.y / p.w) / fadeH; return exp(-h * h * 2.2); }',
-        'void main(){ vec2 s = vC.xy / vC.w * 0.5 + 0.5; vec3 c = vec3(0.0); float tot = 0.0;',
-        'for (int i = 0; i < 8; i++) { float a = float(i) * 2.399963; float r = sqrt((float(i) + 0.5) / 8.0); vec2 d = vec2(cos(a), sin(a)) * r * spread; vec2 u = s + d;',
-        '  c += min(texture2D(tR, u).rgb, vec3(2.0)) * fade(u); tot += 1.0; }',
-        'c = c / tot * texture2D(tM, vUv).r * amount; float m = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c, min(m, 1.0)); }'
+        'uniform sampler2D tR, tM; uniform float amount; varying vec2 vUv; varying vec4 vC;',
+        'void main(){ vec3 c = texture2D(tR, vC.xy / vC.w * 0.5 + 0.5).rgb * texture2D(tM, vUv).r * amount; float m = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c, min(m, 1.0)); }'
       ].join('\n')
     });
     const floorMesh = new THREE.Mesh(new THREE.CircleGeometry(1, 96), reflection);
@@ -377,8 +409,9 @@ export const LOOK = String.raw`
     w.floorSpan = 2 * e;
     w.floorY = y;
     w.floorHeight = r * 0.45;
-        w.lightSlope.set(dir.x / dir.y, dir.z / dir.y);
+    w.lightSlope.set(dir.x / dir.y, dir.z / dir.y);
     w.floorBuilt = true;
+    w.content++;
   };
 
   const targetOptions = (samples, depth) => ({ type: tune.hdr === 0 ? THREE.UnsignedByteType : THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
@@ -451,10 +484,9 @@ export const LOOK = String.raw`
     return p.up[bottom].texture;
   };
 
-  /** The floor's shadow: only casters, from under the floor. A world with no casters clears it. */
-  const renderFloorShadow = (w, look) => {
-    const target = shadowTarget();
-    const view = w.lightView, u = w.catcher.uniforms, marks = [], scene = w.scene, own = scene.overrideMaterial, bit = 1 << SHADOW_LAYER;
+  /** The casters of the floor's shadow: only they, from under the floor. A world with no casters clears the map. */
+  const drawFloorShadow = (w, target) => {
+    const view = w.lightView, marks = [], scene = w.scene, own = scene.overrideMaterial, bit = 1 << SHADOW_LAYER;
     // Layers and the override are the world's. This pass borrows them: only what casts a shadow stands on its layer, and all goes back after it.
     scene.traverse((o) => { marks.push(o, o.layers.mask); o.layers.mask = 0; });
     w.root.traverse((o) => { if (o.castShadow) o.layers.mask = bit; });
@@ -468,6 +500,15 @@ export const LOOK = String.raw`
     } finally {
       scene.overrideMaterial = own;
       for (let i = 0; i < marks.length; i += 2) marks[i].layers.mask = marks[i + 1];
+    }
+  };
+  /** The floor's shadow. The map holds its last world: a render for a new zoom or a sharp picture at rest changes no caster, so the map stands. */
+  const renderFloorShadow = (w, look) => {
+    const target = shadowTarget(), view = w.lightView, u = w.catcher.uniforms;
+    if (target.heldBy !== w || target.heldContent !== w.content) {
+      drawFloorShadow(w, target);
+      target.heldBy = w;
+      target.heldContent = w.content;
     }
     u.tS.value = target.texture;
     u.toLight.value.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse);
@@ -527,7 +568,7 @@ export const LOOK = String.raw`
       // Reflection: the world mirrored in the floor, into a half-size target.
       if (floor) {
         const root = w.root, sy = root.scale.y, py = root.position.y, castShadow = w.keyLight.castShadow;
-        const mirror = mirrorTarget(Math.ceil(IW / 3), Math.ceil(IH / 3));
+        const mirrorW = Math.ceil(IW / 3), mirrorH = Math.ceil(IH / 3), mirror = mirrorTarget(mirrorW, mirrorH), blurred = flatTarget('mirror-blur', mirrorW, mirrorH);
         root.scale.y = -sy; root.position.y = 2 * w.floorY - py; root.updateMatrixWorld(true);
         w.floorGroup.visible = false;
         w.keyLight.castShadow = false;
@@ -542,13 +583,15 @@ export const LOOK = String.raw`
           root.scale.y = sy; root.position.y = py; root.updateMatrixWorld(true);
           w.floorGroup.visible = true;
         }
-        const r = w.reflection.uniforms;
+        const r = mirrorMat.uniforms;
         r.tR.value = mirror.texture;
         r.tD.value = mirror.depthTexture;
         r.toWorld.value.copy(camera.matrixWorld).multiply(camera.projectionMatrixInverse);
         r.floorY.value = w.floorY;
         r.fadeH.value = w.floorHeight;
         r.spread.value.set(((12 * s) / FILM_SCALE) / iw, ((12 * s) / FILM_SCALE) / ih);
+        pass(mirrorMat, blurred);
+        w.reflection.uniforms.tR.value = blurred.texture;
       }
 
       const scene = sceneTarget(IW, IH, look.name !== 'film', samples);
@@ -558,12 +601,15 @@ export const LOOK = String.raw`
 
       let sharp = scene.texture;
       if (look.dof > 0 && camera.isPerspectiveCamera) {
-        const a = flatTarget('a', IW, IH), u = dofMat.uniforms;
+        const half = flatTarget('dof', Math.ceil(IW / 2), Math.ceil(IH / 2)), a = flatTarget('a', IW, IH), u = dofMat.uniforms;
         u.tC.value = scene.texture; u.tD.value = scene.depthTexture;
         u.focus.value = w.bounds.isEmpty() ? 10 : camera.position.distanceTo(w.bounds.getCenter(reachVector()));
         u.ap.value = look.dof; u.near.value = camera.near; u.far.value = camera.far;
         u.px.value.set(1 / IW, 1 / IH); u.scale.value = scale / FILM_SCALE;
-        pass(dofMat, a);
+        pass(dofMat, half);
+        joinMat.uniforms.tB.value = half.texture;
+        joinMat.uniforms.halfPx.value.set(1 / half.width, 1 / half.height);
+        pass(joinMat, a);
         sharp = a.texture;
       }
       const glow = look.bloom > 0 ? renderBloom(sharp, IW, IH, box, W, H, scale, look) : sharp;
