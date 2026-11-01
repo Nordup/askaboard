@@ -12,7 +12,7 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-10-31)
+## Status (2026-11-01)
 
 | Area | State |
 | --- | --- |
@@ -43,6 +43,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Competitor and strategy check (2026-10-29) | Clicky (heyclicky.com) launched real-time graphics for learning on the screen: [`competitors.md`](competitors.md). The plan stays (decision P15): the core loop is the agent's explanation with animations while the learner talks with it. Screen overlay, phone photos, a continuous tutor and other devices are later layers ([`strategy.md`](strategy.md), "After Clicky") |
 | Tool text reaches Codex whole (2026-10-31): the plugin stopped being an Agent Plugin, which Codex cut at 1,000 bytes (I30, plugin 0.1.2); unknown scene options are errors (B24); batch G closed with no change to the guide (T33) | Done. Tested through the plugin with the app's Codex binary. Not yet seen in a real voice session, and the board news hook in Codex is not confirmed |
 | One world on the board (P18) | All slices are built (B25), and a world is the only way to run code on the board (P19): [`one-world-architecture.md`](one-world-architecture.md), [`one-world-plan.md`](one-world-plan.md). The goal is P16. It replaces the scene library track (W12). Study and proof code: [`drafts/library-landscape-2026-10-31/`](drafts/library-landscape-2026-10-31/README.md). Saved results: [`design-images/2026-10-31-frameless-proofs/`](design-images/2026-10-31-frameless-proofs/). |
+| Rendering, performance and data safety (2026-11-01) | Done on `main`. Worlds use the toon look by default on `WebGLRenderer` (P20, P21, A9), and four outside reviews are fixed (B26-B53, A6-A8). Measured on the M1 Air against `d6b153c`: a pan of the big board takes the renderer from 105% to 24% CPU, a page paint from 3.4 ms to 0.3 ms, the GPU from 65% to 16%, and the worst frame from 96 ms to 20 ms. World speed and start-up did not change in this round, and memory on boards is 20 to 60 MB higher because of the ink tiles. Not checked on an Intel GPU or an iPad. |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | App packaging, signing, auto-update | Later |

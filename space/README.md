@@ -29,7 +29,8 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 
 - **Learning folder and boards.** Open a folder. Any `*.board.json` file in it
   is a board. New boards go to `boards/`. The app autosaves and reloads a
-  board when another program changes it on disk.
+  board when another program changes it on disk. If a save fails at close,
+  the board goes to a recovery file and a dialog offers to try again.
 - **Ink with pressure.** Pen, highlighter, stroke eraser, lasso select,
   undo and redo, pan and zoom.
 - **Editable document.** A board holds ink, frames, text with math, SVG and
@@ -129,7 +130,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
-| `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the macOS desktop. The lab sets it. |
+| `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the macOS desktop. The lab, the benchmarks and the render run set it. |
 
 The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 
@@ -162,6 +163,11 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
   folder with a v2 board (frames, text, math, SVG, an image, ink) and an old v1 board.
 - `scripts/strokes/` holds sample handwriting: `two-plus-two.json` and `equals-four.json`.
 - `node scripts/trace-report.mjs <file|dir>` summarises session traces.
+- `node scripts/perf/render.mjs` measures what the worlds and the board cost on
+  this machine, with history in `.lab/perf/render-history.jsonl`.
+  `SPACE_WORLD_TUNE` changes one render setting for a run. See
+  [`scripts/perf/README.md`](scripts/perf/README.md). In the app,
+  View > Show performance shows the same numbers in a small pill.
 - `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus` runs the
   fixed agent scenarios on its own instance (port 47870). Scenarios: S1–S4,
   P1–P3 (a busy board) and V1 ("drew while talking"). `--client codex` runs

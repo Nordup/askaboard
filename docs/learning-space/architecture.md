@@ -352,7 +352,7 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   buffer): text sizes, and through `sceneHost` html
   layout (`html()`, `image()`, copies of board material), empty space
   (`space()`) and an item's content (`copy()`), answered by
-  `renderer/live/host.ts` (the HTML converter, image import into
+  `src/renderer/src/live/host.ts` (the HTML converter, image import into
   `assets/`, a hidden copy of the content layer for layout). Each program's
   answers are recorded in its stage log entry, so a rebuild of the stage,
   a cut or a replay gets the same answers.
@@ -380,7 +380,8 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `board/playback.ts` holds per-node playback looks (reveal, transform,
   params) that the board applies while a scene plays; the board file always
   holds the final state.
-- **Worlds** (`live` nodes, mode `world`; decision P19): one sandboxed iframe
+- **Worlds** (`live` nodes, mode `world`; decision P19): three.js 0.187.0 on
+  `WebGLRenderer` (A9). One sandboxed iframe
   of the `live-item://` origin holds one worker with one WebGL renderer, and
   that worker draws all worlds of a board. The pictures show between the page
   content and the ink. The code is in `src/renderer/src/live-pixels/`
