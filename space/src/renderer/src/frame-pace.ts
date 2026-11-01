@@ -21,7 +21,8 @@ if (hz) {
   const fire = (): void => {
     native((now) => {
       armed = false
-      last = now
+      // The clock, not `now`: that is the frame's begin time, which lags here, and the wait would come out short.
+      last = performance.now()
       const callbacks = [...queue.values()]
       queue.clear()
       for (const callback of callbacks) callback(now)
