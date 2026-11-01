@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -32,11 +32,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { findAppPage } from './app-page.mjs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
-  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--fast]
+  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N]
                                                  strokes in board coordinates: [[[x,y,p],...],...];
                                                  pans the board first so every point is on screen;
                                                  --tool eraser drags the eraser along the strokes;
-                                                 --fast sends each stroke in one burst (no pen-speed delays)
+                                                 --fast sends each stroke in one burst (no pen-speed delays);
+                                                 --hz sends N samples per second, as a pen does, with no wait for each answer
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
   click <x> <y> [--shift]                        window CSS pixels
@@ -166,7 +167,7 @@ function parseStrokes(text) {
   return strokes
 }
 
-async function draw(cdp, strokes, tool, pan, fast = false) {
+async function draw(cdp, strokes, tool, pan, fast = false, hz = 0) {
   await requireDevHook(cdp, { board: true })
   await evaluate(cdp, `window.__spaceDev.setTool(${JSON.stringify(tool)})`)
   // Input only reaches the board where the canvas is on screen: pan to the strokes first.
@@ -210,6 +211,22 @@ async function draw(cdp, strokes, tool, pan, fast = false) {
       for (const point of stroke.slice(1)) sent.push(pen('mouseMoved', point, 1))
       sent.push(pen('mouseReleased', stroke[stroke.length - 1], 0))
       await Promise.all(sent)
+    }
+  } else if (hz) {
+    // --hz: on the clock. A wait for each answer would give one sample per frame, because Chromium holds a move for the next frame.
+    for (const stroke of mapped) {
+      await pen('mouseMoved', stroke[0], 0)
+      await sleep(16)
+      const start = performance.now()
+      const sent = [pen('mousePressed', stroke[0], 1)]
+      for (let i = 1; i < stroke.length; i++) {
+        sent.push(pen('mouseMoved', stroke[i], 1))
+        const wait = start + (i * 1000) / hz - performance.now()
+        if (wait >= 2) await sleep(wait)
+      }
+      sent.push(pen('mouseReleased', stroke[stroke.length - 1], 0))
+      await Promise.all(sent)
+      await sleep(20)
     }
   } else {
     for (const stroke of mapped) {
@@ -389,6 +406,8 @@ async function main() {
   const tool = takeOption('--tool') ?? 'pen'
   if (!['pen', 'highlighter', 'eraser'].includes(tool)) throw new Failure('--tool must be pen, highlighter or eraser.')
   const inline = takeOption('--strokes')
+  const hz = Number(takeOption('--hz') ?? 0)
+  if (!Number.isFinite(hz) || hz < 0) throw new Failure('--hz must be a positive number.')
   const steps = Number(takeOption('--steps') ?? 12)
   if (!Number.isInteger(steps) || steps < 1) throw new Failure('--steps must be a positive integer.')
   const fastIndex = args.indexOf('--fast')
@@ -414,7 +433,7 @@ async function main() {
   if (command === 'draw') {
     const strokes = inline ? parseStrokes(inline) : rest[0] ? readStrokes(rest[0]) : null
     if (!strokes) throw new Failure('draw needs a strokes file, "-" for stdin, or --strokes.')
-    run = (cdp) => draw(cdp, strokes, tool, !noPan, fast)
+    run = (cdp) => draw(cdp, strokes, tool, !noPan, fast, hz)
   } else if (command === 'key') {
     if (!rest[0]) throw new Failure('key needs a combo, for example v, Delete or Meta+z.')
     parseCombo(rest[0])

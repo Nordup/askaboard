@@ -11,7 +11,7 @@ Change one thing, measure it, and compare. The scripts write to `space/.lab/perf
 Run `npm run build` first. From `space/`:
 
 ```sh
-node scripts/perf/render.mjs --label before                     # all scenes, about 3 minutes
+node scripts/perf/render.mjs --label before                     # all default scenes, about 8 minutes
 node scripts/perf/render.mjs --scenes film,plain --label after  # the table shows the change against the last equal run
 node scripts/perf/render.mjs --scenes film --tune '{"msaa":0}'
 node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"adaptive":0}]'
@@ -19,6 +19,8 @@ node scripts/perf/render.mjs --report                           # writes .lab/pe
 ```
 
 A run is uncapped by default (tune key `uncapped: 1`): no picture waits for a page paint or a display frame, and Chromium starts with `--disable-frame-rate-limit` and `--disable-gpu-vsync`. So `pict/s` and `fps` show headroom, and they can pass 60 on a 60 Hz screen. `--capped` runs as a normal user does. Each history line has `uncapped`, and a run compares only with a run of the same state. History lines before 2026-11-01 have no `uncapped` field: they are capped.
+
+`pen` and `bigboard` numbers change with the pace of the input. The sender keeps a clock (240 and 120 events a second) and does not wait for each answer: an event that waits holds for one frame, so 3,000 samples took 60 s. The `pan` of `ink` and `film` still waits, so its input rate is lower.
 
 Other options: `--seconds 10`, `--no-pan`, `--shots <folder>` (a screenshot of each scene after it plays), `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
 
@@ -34,6 +36,11 @@ One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its
 | `ink` | The busy board, no world. |
 | `three-film`, `many-film` | `three` and `many` in the film look. Not in the default run. Runs before 2026-11-01 of `three`, `many` and `toon` are film or hand-made: compare them with these, or with care. |
 | `shapes` | Not in the default run. One world with a torus knot, a box, a texture, a glow, glass, instances and a line: for looking at a style. |
+| `pen` | One pressure stroke of 3,000 samples at 240 Hz (`drive.mjs draw --hz 240`, real pointer events, 12.5 s). Phase `empty`: an empty board. Phase `busy`: the busy board of `ink`, all in view. |
+| `bigboard` | A board file with 5,000 learner strokes and about 240 other items (`boardFile` in `scripts/bench/busy.mjs`). 8 s of wheel pan and pinch at 120 events a second. Phase `pan`: all of the board in view. Phase `near`: zoom about 1. |
+| `memory` | Heaps and processes after a fresh start, after a 60 s scene, after its replay, after opening 10 boards of 300 strokes in turn, and after drawing and erasing 500 strokes. About 3 minutes. |
+| `start` | The built app, 3 starts. Run 1 has no user data: a first start. Runs 2 and 3 use the same user data, with the same empty board. |
+| `meter` | Not in the default run. The busy board, with `window.__spaceDev.perf` off and on, 15 s still and 15 s in pan and zoom. Run it once uncapped and once `--capped`. |
 
 Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has the window size and pixel ratio, the camera zoom, the top 5 processes, the commit and dirty flag, the three.js and Electron versions, the machine, the tune and the label. A table column with `-` has no value: `ink` has no world numbers. A line `PROBLEM` means that the run is not valid, and the exit code is 1.
 
@@ -56,6 +63,29 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `load` | The 1-minute load average at the end of the phase. |
 | `seen` | The share of the app window that shows on the screen, at the start of the phase. |
 | `zoom` | The board zoom. `MP` changes with its square, so compare only runs with the same zoom. |
+
+`pen`, `bigboard`, `memory`, `start` and `meter` also write `detail` in their history line, and the run prints it under the table. In `pen` and `bigboard`, a page script measures with no change to the app: `render.mjs` wraps `requestAnimationFrame` (`RECORDER`), and Chromium's `Performance.getMetrics` gives the CPU. In a pen phase the numbers start at the pen down and end 300 ms after the pen up, so they hold the commit of the stroke.
+
+| Field | Meaning |
+| --- | --- |
+| `frameMedianMs`, `frameP95Ms`, `frameWorstMs`, `framesOver20` | The interval between two animation frames, from the clock. Uncapped, the median is low and has little meaning: read `p95` and the worst. |
+| `longTasks`, `longTaskWorstMs` | Long tasks of the main thread, and the longest one. |
+| `paints`, `paintTotalMs`, `paintMedianMs`, `paintP95Ms`, `paintWorstMs` | The time in the app's animation frame callbacks. In a pen phase that is the paint of the active layer. It is JavaScript and canvas calls, not the raster, which runs in the GPU process. |
+| `paintStartMs`, `paintEndMs` | The median paint of the first and the last quarter of the phase. In `pen` this shows how the paint grows with the length of the stroke. |
+| `latencyMedianMs`, `latencyP95Ms`, `latencyWorstMs` | From the oldest pen sample that no paint shows yet to the end of the next paint. The display adds its own time after that. |
+| `samples` | Pen samples that the page got, coalesced ones too. |
+| `mainThreadCpuMs`, `mainThreadCpuShare` | CPU of the page's main thread in the phase (`ThreadTime`), in ms and in % of one core. |
+| `rendererCpuMs`, `rendererCpuShare` | CPU of the whole page process (`ProcessTime`): the main thread, the compositor, the raster threads and the world worker. |
+| `scriptMs`, `wallMs` | JavaScript time of the page (`ScriptDuration`), and the length of the phase. |
+| `committed` | `pen`: the stroke is on the board after the phase. |
+| `items`, `strokes`, `others`, `openMs` | `bigboard`: what the board holds, and the time of `open_board` to a painted board. |
+| `pageHeapMb`, `workerHeapMb`, `stageHeapMb` | `memory`: `Runtime.getHeapUsage` after `HeapProfiler.collectGarbage`. The worker is a thread of a renderer, so it has no RSS of its own. The history line has each target in `heap`. |
+| `rendererRssMb`, `gpuRssMb`, `mainRssMb`, `allRssMb` | `memory`: RSS from `ps`, the sum per process type. There is more than one renderer: the page, the stage and the snapshot window. `rendererLargestRssMb` is the largest. `processes` in the line has each one. macOS compresses idle pages, so RSS can fall while the app holds the same memory. |
+| `rendererFootprintMb`, `gpuFootprintMb`, `allFootprintMb` | `memory`: the physical footprint from `top`, which also counts compressed pages. Use this number for growth. `footprint` in the line has each process. |
+| `growth...` | `memory`: the change from the phase `fresh`. |
+| `strokesDrawn`, `strokesLeft` | `memory`: the items after the drawing and after the eraser. |
+| `windowMs`, `boardMs`, `mcpMs`, `cold` | `start`: from the spawn of the process to the first contentful paint of the window, to the board in the page plus two frames, and to the open MCP port. `cold`: no user data. |
+| `meter`, `rendererCpuShare` | `meter`: whether the page meter ran, and the CPU of the page process. `util%` of the line is the GPU. |
 
 `wall ms` is the number for the frame budget. `GPU ms` is not. ANGLE's Metal backend adds up the GPU start-to-end span of each command buffer, with no handling of overlap (`QueryMtl.mm`, `onCommandBufferCompleted`). So `GPU ms` grows with the number of command buffers: a test with `gl.finish` after each pass took `three` from 40.6 to 314 ms, and `wall ms` stayed at 20.5 to 20.9 ms. Compare `GPU ms` only between runs with the same passes. `wall ms` has a fence poll step of about 1 to 4 ms, and it includes GPU work of other apps that comes first.
 
@@ -213,3 +243,5 @@ All times are seconds from the agent's start (replay: from the first call).
 - Codex `model_s` is an estimate: the CLI start and the hook are outside the rollout span.
 - The trace cuts args at 200 KB: a replay sends the cut text and says so.
 - One perf run at a time per script (fixed instance names `perf` and `perf-replay`).
+- `pen`: the input comes through CDP, so the latency has no digitizer or OS time, and it ends at the page's paint, not at the display. The busy phase shows the whole board at a lower zoom, so its stroke has fewer pixels than the empty phase.
+- `start` measures an empty board. A start on a big last board is not in it.

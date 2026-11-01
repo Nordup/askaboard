@@ -134,3 +134,55 @@ export async function seedBusy(area, mcp) {
   const learner = learnerItems(dx, dy)
   return { centre: [dx, dy], agent_items: agent.length, learner_pieces: learner.length, learner }
 }
+
+const LINES = ['3 + 4 = 7', '12 - 5 = 7', 'x + 2 = 5', '9 - 3 = 6', '4 x 3 = 12', '10 = 4 + 6', '7 + 8 = 15', '2x = 8 ?']
+
+/**
+ * The text of a board file: `strokes` learner strokes of handwriting in rows, with
+ * `others` items spread among them (text, some with maths, drawings and frames with
+ * a child). The list is fixed, so every run gets the same board. It writes the
+ * file in place of `seedBusy` where drawing each stroke by hand takes minutes.
+ * Returns the text and the rect ({x, y, width, height}) that it fills.
+ */
+export function boardFile({ strokes, others }) {
+  const nodes = []
+  let seq = 0
+  const node = (fields) => {
+    seq++
+    nodes.push({ z: seq, author: 'learner', seq, ...fields })
+  }
+  const columns = Math.max(4, Math.round(Math.sqrt(strokes * 0.074))) // A line is about 7 strokes: this gives a board of 3 : 2.
+  const pitch = [340, 120]
+  let drawn = 0
+  for (let row = 0; drawn < strokes; row++) {
+    for (let column = 0; column < columns && drawn < strokes; column++) {
+      const x = column * pitch[0]
+      const y = row * pitch[1]
+      for (const points of text(LINES[(row * 3 + column) % LINES.length], x, y, 44 + ((row + column) % 3) * 6)) {
+        if (drawn === strokes) break
+        const ox = Math.min(...points.map((p) => p[0]))
+        const oy = Math.min(...points.map((p) => p[1]))
+        const p = 0.45 + (drawn % 7) * 0.05
+        node({ id: `s_b${seq}`, kind: 'ink', x: ox, y: oy, tool: 'pen', color: 'rgba(235, 238, 242, 0.92)', width: 2.4, points: points.map(([px, py]) => [Math.round((px - ox) * 10) / 10, Math.round((py - oy) * 10) / 10, p]) })
+        drawn++
+      }
+    }
+  }
+  const width = columns * pitch[0]
+  const height = nodes.reduce((bottom, n) => Math.max(bottom, n.y + 60), 0)
+  for (let i = 0; i < others; i++) {
+    const x = (i * 0.618034 % 1) * (width - 300)
+    const y = (i * 0.754878 % 1) * (height - 160)
+    const id = `n_b${seq}`
+    if (i % 5 === 0) node({ id, kind: 'text', x, y, text: `Note ${i}: the area is $\\frac{${i + 1}}{2}$ of the whole.`, style: { fontSize: '26px' } })
+    else if (i % 5 === 1) node({ id, kind: 'text', x, y, text: `Step ${i}: do the same to **both sides**.`, style: { fontSize: '24px' } })
+    else if (i % 5 === 2 || i % 5 === 3) {
+      const markup = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120" width="200" height="120"><circle cx="60" cy="60" r="44" fill="none" stroke="currentColor" stroke-width="3"/><path d="M60,60 L60,16 A44,44 0 ${i % 2},1 104,60 Z" fill="#5b8def"/><line x1="120" y1="100" x2="190" y2="20" stroke="currentColor" stroke-width="3"/></svg>`
+      node({ id, kind: 'svg', x, y, markup, style: { width: '200px', height: '120px', color: '#d9e6ed' } })
+    } else {
+      node({ id, kind: 'frame', x, y, style: { width: '280px', height: '140px', padding: '16px', background: 'rgba(91, 141, 239, 0.12)', borderRadius: '12px' } })
+      node({ id: `n_b${seq}`, kind: 'text', parent: id, x: 16, y: 16, text: `Frame ${i}`, style: { fontSize: '22px' } })
+    }
+  }
+  return { text: JSON.stringify({ format: 'learning-space.board', version: 2, nextSeq: seq + 1, nodes }), rect: { x: 0, y: 0, width, height }, strokes: drawn, items: nodes.length - drawn }
+}

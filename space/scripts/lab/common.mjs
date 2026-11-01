@@ -154,9 +154,10 @@ function setupFolder(folder) {
 /**
  * Start a lab app: scratch HOME, user-data-dir, learning folder and traces under
  * SCRATCH/<name>/. Detached, so it outlives the script; the state file holds the
- * exact PIDs to stop. fresh: start from an empty folder and board.
+ * exact PIDs to stop. fresh: start from an empty folder and board. spawnOnly: return
+ * right after the spawn, with the clock of the spawn in `spawnedAt`: the caller times the start.
  */
-export async function startInstance({ name, mcpPort, debugPort, built = false, fresh = false }) {
+export async function startInstance({ name, mcpPort, debugPort, built = false, fresh = false, spawnOnly = false }) {
   if (mcpPort === FOUNDER_PORT) throw new Error(`Port ${FOUNDER_PORT} is the founder's app. Pick another.`)
   const inst = instance(name)
   const running = readState(name)
@@ -177,6 +178,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces, SPACE_NO_FOCUS: '1' }
   delete env.ELECTRON_RUN_AS_NODE
   const logFd = openSync(inst.log, 'a')
+  const spawnedAt = Date.now()
   let child
   if (!built) {
     child = spawn(join(SPACE, 'node_modules/.bin/electron-vite'), ['dev', '--', `--user-data-dir=${inst.userData}`], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd], detached: true })
@@ -188,6 +190,7 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   child.unref()
   const state = { name, mode: built ? 'built' : 'dev', mcpPort, debugPort, pids: [child.pid], launcher: child.pid, owner: process.pid, started: new Date().toISOString(), ...inst }
   writeFileSync(inst.stateFile, JSON.stringify(state, null, 2))
+  if (spawnOnly) return { ...state, spawnedAt }
   try {
     const deadline = Date.now() + 120_000
     while (!(await portInUse(mcpPort))) {
@@ -345,10 +348,10 @@ export const resultText = (result) => result?.content?.filter((c) => c.type === 
 
 // ---------- CDP ----------
 
-/** Attach to the app page (not the hidden snapshot window). Events go to on(method, params). */
-export async function cdpConnect(port) {
+/** Attach to the app page (not the hidden snapshot window), or to the target at socketUrl. Events go to on(method, params). */
+export async function cdpConnect(port, socketUrl = null) {
   // The board window by its URL; a loading stage page (empty URL) is never picked.
-  const page = await findAppPage(port)
+  const page = socketUrl ? { webSocketDebuggerUrl: socketUrl } : await findAppPage(port)
   const socket = new WebSocket(page.webSocketDebuggerUrl)
   await new Promise((ok, fail) => {
     socket.onopen = ok
