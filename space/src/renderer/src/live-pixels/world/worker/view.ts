@@ -356,6 +356,14 @@ export const VIEW = String.raw`
     for (let i = 0; i < list.length; i++) walkReach(w, list[i]);
   };
 
+  // In a paint no code of a world runs, so one walk of the matrices serves the check, the bounds, the points and all render passes of that world.
+  let paintId = 0, painting = false;
+  const worldMatrices = (w) => {
+    if (painting && w.matrixAt === paintId) return;
+    w.matrixAt = paintId;
+    w.scene.updateMatrixWorld();
+  };
+
   /** The camera with its nominal frustum, no crop. */
   const nominalCamera = (w) => {
     const c = w.camera;
@@ -375,9 +383,14 @@ export const VIEW = String.raw`
       return;
     }
     if (w.reachSet === 'full') { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
-    w.scene.updateMatrixWorld();
+    worldMatrices(w);
     const floor = floorOn(w);
-    if (stage || (floor && !w.floorBuilt) || ((w.look.name === 'toon' ? w.floor && !w.floorBuilt : true) && w.samples++ % SAMPLE_EVERY === 0)) sampleStage(w);
+    if (stage || (floor && !w.floorBuilt) || ((w.look.name === 'toon' ? w.floor && !w.floorBuilt : true) && w.samples++ % SAMPLE_EVERY === 0)) {
+      sampleStage(w);
+      // A fit moves the floor and the light.
+      w.matrixAt = -1;
+      worldMatrices(w);
+    }
     nominalCamera(w);
     if (!tools) tools = { view: new THREE.Matrix4(), toCamera: new THREE.Matrix4(), before: new THREE.Matrix4(), bone: new THREE.Matrix4(), whole: new THREE.Matrix4(), none: new THREE.Matrix4(), box: new Float64Array(6) };
     const c = w.camera;
@@ -406,6 +419,9 @@ export const VIEW = String.raw`
 
   /** The placement in surface pixels. */
   const placed = (w) => {
+    const out = w.place;
+    if (painting && w.placeAt === paintId) return out;
+    w.placeAt = paintId;
     const p = w.placement, cam = surface.camera, dpr = surface.dpr, m = p.matrix;
     const k = Math.max(1e-4, Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])));
     const a = m[0] / k, b = m[1] / k, c = m[2] / k, d = m[3] / k;
@@ -415,7 +431,8 @@ export const VIEW = String.raw`
     let cy = ((by - cam.y) * cam.zoom + surface.margin) * dpr;
     // A crop has whole pixels from the anchor, so a whole anchor keeps the output sharp in a pan.
     if (plain) { cx = Math.round(cx); cy = Math.round(cy); }
-    return { s: cam.zoom * dpr * k, cx, cy, a, b, c, d, plain };
+    out.s = cam.zoom * dpr * k; out.cx = cx; out.cy = cy; out.a = a; out.b = b; out.c = c; out.d = d; out.plain = plain;
+    return out;
   };
 
   /** A box in nominal pixels, snapped out to the grid, or null when empty. */

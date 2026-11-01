@@ -285,19 +285,26 @@ export const REALM = String.raw`
   const drawTick = (w, dt) => {
     if (dt > 0) w.timeMoved = true;
     syncParts(w);
+    const began = meter ? realNow() : 0;
     inside(w, () => {
-      const list = [...w.callbacks.values()];
-      w.callbacks.clear();
+      // Two maps and one list stay with the world, so a tick allocates none. A callback can ask for the next frame or end its own.
+      const list = w.callbacks, frames = w.framesNow, asked = list.size;
+      w.callbacks = w.callbacksNext;
+      w.callbacksNext = list;
       const t = w.tickMs / 1000;
-      for (const cb of list) { try { cb(w.tickMs); } catch (e) { fail(w, e); return; } }
-      for (const fn of [...w.frames]) { try { fn(t, dt); } catch (e) { fail(w, e); return; } }
+      try { for (const cb of list.values()) cb(w.tickMs); } catch (e) { list.clear(); fail(w, e); return; }
+      list.clear();
+      frames.length = 0;
+      for (let i = 0; i < w.frames.length; i++) frames.push(w.frames[i]);
+      try { for (let i = 0; i < frames.length; i++) frames[i](t, dt); } catch (e) { fail(w, e); return; }
       // A tick asks for a check, not for a render: most worlds at rest change nothing (picture.ts).
-      if (list.length || w.frames.length) {
+      if (asked || w.frames.length) {
         w.ticked = true;
         w.count++;
         if (w.count === 1) post({ type: 'alive', key: w.key, frames: w.count, tick: w.tick });
       }
     });
+    if (meter) { meter.ticks++; meter.tickMs += realNow() - began; }
     if (!w.failed && w.captures.length) takeStill(w);
   };
   // One frame at item time ms: timers due by then, then the drawing. 'tick' is the grid tick of that time.
@@ -544,12 +551,12 @@ export const REALM = String.raw`
       clock: m.clock || { t: 0, at: 0, rate: 0 },
       view: Object.assign({ t: 0, playing: false, active: false, ended: true, step: null }, m.scene),
       timeline: m.timeline || null,
-      timers: new Map(), timerHeap: [], callbacks: new Map(), frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
+      timers: new Map(), timerHeap: [], callbacks: new Map(), callbacksNext: new Map(), framesNow: [], frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
       pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0,
       cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
-      output: null, drawn: null, floorBuilt: false
+      output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1
     };
     if (w.view.step === undefined) w.view.step = null;
     for (const pin of m.pins || []) addPin(w, pin);

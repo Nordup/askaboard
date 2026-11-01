@@ -224,14 +224,18 @@ export const SURFACE = String.raw`
     if (!surface.camera || dead) return;
     let changed = surface.dirty;
     core = true;
+    paintId++;
+    painting = true;
     try {
       const plans = [];
       for (const w of worlds.values()) {
         const p = w.placement;
         if (!p || !p.shown || w.failed || !(w.setUp || w.ran)) continue;
+        const began = meter ? realNow() : 0;
         if (w.ticked) {
           w.ticked = false;
           const changed = pictureChanged(w);
+          if (meter) meter.checkMs += realNow() - began;
           if (changed) w.stale = true;
           w.moving = changed && w.timeMoved;
           if (w.moving) w.movedAt = sent;
@@ -240,7 +244,9 @@ export const SURFACE = String.raw`
         // At rest a world goes sharp once, and then nothing renders.
         if (!w.moving && w.drawn && w.drawn.quality > 0) w.stale = true;
         if (!w.stale && w.drawn && w.reach && !cropMoved(w)) continue;
+        const planned = meter ? realNow() : 0;
         try { const plan = planWorld(w); if (plan) plans.push(plan); } catch (e) { fail(w, e); }
+        if (meter) meter.planMs += realNow() - planned;
       }
       plans.sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || b.pixels * (1 + 2 * b.w.waited) - a.pixels * (1 + 2 * a.w.waited));
       let spent = 0, pixels = 0;
@@ -280,6 +286,7 @@ export const SURFACE = String.raw`
       picturePixels = pixels;
       watchGpu();
     } finally {
+      painting = false;
       core = false;
     }
   };

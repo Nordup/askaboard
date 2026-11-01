@@ -486,11 +486,14 @@ export const LOOK = String.raw`
     const iw = inner.r - inner.l, ih = inner.b - inner.t;
     const IW = Math.max(2, Math.min(W, Math.ceil(iw * res))), IH = Math.max(2, Math.min(H, Math.ceil(ih * res)));
     const box = new THREE.Vector4((inner.l - crop.l) / cw, (crop.b - inner.b) / ch, iw / cw, ih / ch);
+    // The passes share one walk of the matrices. The mirror pass walks the part that it flips by itself.
+    worldMatrices(w);
     const saved = {
-      target: renderer.getRenderTarget(), autoClear: renderer.autoClear, tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,
+      matrices: w.scene.matrixWorldAutoUpdate, target: renderer.getRenderTarget(), autoClear: renderer.autoClear, tone: renderer.toneMapping, exposure: renderer.toneMappingExposure,
       shadows: renderer.shadowMap.enabled, type: renderer.shadowMap.type, autoUpdate: renderer.shadowMap.autoUpdate, alpha: renderer.getClearAlpha()
     };
     try {
+      w.scene.matrixWorldAutoUpdate = false;
       renderer.autoClear = true;
       renderer.toneMapping = THREE.NoToneMapping;
       renderer.toneMappingExposure = 1;
@@ -576,6 +579,7 @@ export const LOOK = String.raw`
     } finally {
       endToon();
       rendering = null;
+      w.scene.matrixWorldAutoUpdate = saved.matrices;
       renderer.setRenderTarget(saved.target);
       renderer.autoClear = saved.autoClear;
       renderer.toneMapping = saved.tone;

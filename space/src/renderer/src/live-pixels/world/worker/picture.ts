@@ -121,7 +121,7 @@ export const PICTURE = String.raw`
 
   const readWorld = (w) => {
     const c = w.camera, s = w.scene;
-    s.updateMatrixWorld();
+    worldMatrices(w);
     c.updateMatrixWorld();
     putMatrix(c.matrixWorld);
     for (let i = 0; i < CAMERA.length; i++) readValue(c[CAMERA[i]], 0);

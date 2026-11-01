@@ -51,6 +51,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `timer` | The source of `GPU ms`. `timer`: `EXT_disjoint_timer_query_webgl2`, which works on the M1. `fence`: wall time from flush to fence, which is not pure GPU time. |
 | `wall ms` | Wall time from the first render call of a picture to its fence. |
 | `CPU ms` | Worker CPU time per picture in the render calls and the bitmap transfer. It does not include the world's own frame code. |
+| `tick`, `check`, `plan` | Worker CPU in ms per second of the phase: the world's frame code (`ticksPerSecond` in the history line says how many ticks), the picture check, the plan of reach and crops. They also count ticks that give no picture. |
 | `fps` | Page paints in one second (`requestAnimationFrame`). The meter's own loop asks for these paints. |
 | `worst` | The longest page frame in the phase, in ms. |
 | `drop` | Page frames over 20 ms in the phase. |
