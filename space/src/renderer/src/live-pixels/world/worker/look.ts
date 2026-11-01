@@ -509,7 +509,7 @@ export const LOOK = String.raw`
       const floor = on && w.floorBuilt;
       if (w.floorGroup) w.floorGroup.visible = floor;
       aimCamera(w, s, inner);
-      w.inkPass.visible = false;
+      w.inkPass.visible = w.inkGroup.visible = false;
 
       if (direct) {
         if (look.name === 'toon') beginToon(w, look, W, H, inkScale * res);

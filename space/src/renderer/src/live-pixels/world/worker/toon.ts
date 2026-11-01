@@ -12,7 +12,8 @@
  * on Mesh collects what three really draws, and the last object of the render list
  * draws the hulls. So the hulls sit in the same render call as the scene: they get
  * its anti-aliasing and its depth, with no pass of their own and no program change
- * per mesh. Line and Points are no Mesh, so they get none.
+ * per mesh. Line and Points are no Mesh, so they get none. Rigid meshes that share a
+ * geometry share one instanced hull, which is one draw (inkBatches).
  *
  * What a world's code can change, from one value to all of it:
  * - world.look.shades, .steps, .soft, .outline, .ink, .see, and any light;
@@ -123,6 +124,80 @@ export const TOON = String.raw`
     g.setAttribute('lsInk', new THREE.BufferAttribute(out, 3));
   };
 
+  /** Meshes of one geometry from this count share one instanced draw of their hulls. */
+  const INK_BATCH = 2;
+  /** The number of this render: a mesh with this number has its hull in a batch. */
+  let inkRender = 0;
+  const inkFull = () => {
+    const u = inkMaterial.uniforms.inkAlpha;
+    if (u.value !== 1) { u.value = 1; inkMaterial.uniformsNeedUpdate = true; }
+  };
+  /**
+   * The batch of a geometry, in the world's stage. three uploads an instance matrix when it walks the scene, so a batch is an object of the scene,
+   * and the walk of the look finds its meshes before that. Its matrix stays the identity: its instances hold world matrices.
+   */
+  const inkBatch = (w, geometry, n) => {
+    let batch = w.inkBatches.get(geometry);
+    if (batch && batch.instanceMatrix.count < n) { w.inkGroup.remove(batch); batch.dispose(); batch = null; }
+    if (!batch) {
+      batch = new THREE.InstancedMesh(geometry, inkMaterial, Math.ceil(n * 1.5));
+      batch.frustumCulled = false;
+      batch.renderOrder = 1e9;
+      batch.matrixAutoUpdate = false;
+      batch.matrixWorldAutoUpdate = false;
+      batch.onBeforeRender = inkFull;
+      w.inkGroup.add(batch);
+      w.inkBatches.set(geometry, batch);
+    }
+    return batch;
+  };
+  /** A mesh whose hull fits a batch: rigid, one material, in full opacity, with no mirror in its matrix and no hook of its own on the render. */
+  const inkRigid = (o, camera) => {
+    const m = o.material;
+    return !o.isInstancedMesh && !o.isSkinnedMesh && !o.morphTargetInfluences && !Array.isArray(m) && isToon(m) && m.visible && m.depthWrite && !!o.geometry.attributes.lsInk
+      && (!m.transparent || m.opacity === 1) && o.onBeforeRender === THREE.Mesh.prototype.onBeforeRender && o.layers.test(camera.layers) && o.matrixWorld.determinant() > 0;
+  };
+  /** Before a render: every mesh that shows gets its ink directions, and meshes that share a geometry get their batch. */
+  const gatherInk = (w, camera) => {
+    const lists = w.inkLists;
+    for (const list of lists.values()) list.length = 0;
+    const walk = (o) => {
+      if (!o.visible || o === w.inkPass || o === w.inkGroup) return;
+      if (o.isMesh) {
+        weldInk(o.geometry);
+        if (inkRigid(o, camera)) {
+          let list = lists.get(o.geometry);
+          if (!list) lists.set(o.geometry, (list = []));
+          list.push(o);
+        }
+      }
+      for (const child of o.children) walk(child);
+    };
+    walk(w.scene);
+    inkRender++;
+    for (const [geometry, list] of lists) {
+      const n = list.length;
+      if (n < INK_BATCH) {
+        const old = w.inkBatches.get(geometry);
+        if (old) old.visible = false;
+        if (!n) {
+          if (old) { w.inkGroup.remove(old); old.dispose(); w.inkBatches.delete(geometry); }
+          lists.delete(geometry);
+        }
+        continue;
+      }
+      const batch = inkBatch(w, geometry, n), out = batch.instanceMatrix.array;
+      for (let i = 0, k = 0; i < n; i++, k += 16) {
+        const e = list[i].matrixWorld.elements;
+        for (let j = 0; j < 16; j++) out[k + j] = e[j];
+        list[i].lsInkRender = inkRender;
+      }
+      batch.count = n;
+      batch.visible = true;
+      batch.instanceMatrix.needsUpdate = true;
+    }
+  };
+
   const drawInk = (r, scene, camera) => {
     const u = inkMaterial.uniforms;
     for (let i = 0; i < inkQueue.length; i += 4) {
@@ -167,7 +242,7 @@ export const TOON = String.raw`
     Object.defineProperty(physical, 'transparent', { configurable: true, set(v) { this._transparent = v; }, get() { return this._transparent || (!!toonWorld && isToon(this) && glassOf(this)); } });
 
     THREE.Mesh.prototype.onBeforeRender = function (r, scene, camera, geometry, m, group) {
-      if (toonWorld && toonWorld.look.outline > 0 && isToon(m) && m.depthWrite && geometry.attributes.lsInk) inkQueue.push(this, geometry, group, m);
+      if (toonWorld && toonWorld.look.outline > 0 && isToon(m) && m.depthWrite && geometry.attributes.lsInk && this.lsInkRender !== inkRender) inkQueue.push(this, geometry, group, m);
     };
     inkMaterial = new THREE.ShaderMaterial({
       side: THREE.BackSide, transparent: true, toneMapped: false, vertexShader: INK_VERTEX, fragmentShader: INK_FRAGMENT,
@@ -182,10 +257,13 @@ export const TOON = String.raw`
   /** The world's parts of the look. */
   const dressToon = (w) => {
     const hemi = new THREE.HemisphereLight(TOON_SKY, TOON_GROUND, TOON_FILL);
-    const pass = inkPass();
-    w.stage.add(hemi, pass);
+    const pass = inkPass(), batches = new THREE.Group();
+    w.stage.add(hemi, pass, batches);
     w.toonFill = hemi;
     w.inkPass = pass;
+    w.inkGroup = batches;
+    w.inkBatches = new Map();
+    w.inkLists = new Map();
     w.toonFragment = TOON_LOOK.fragment;
     w.toonUniforms = { toonShades: { value: new THREE.Vector3() }, toonSteps: { value: new THREE.Vector2() }, toonSoft: { value: 0 }, toonGlass: { value: 1 } };
   };
@@ -209,9 +287,9 @@ export const TOON = String.raw`
     ink.inkWidth.value.set((2 * width) / W, (2 * width) / H);
     ink.inkColor.value.set(look.ink);
     ink.inkAlpha.value = 1;
-    w.inkPass.visible = look.outline > 0;
+    w.inkPass.visible = w.inkGroup.visible = look.outline > 0;
     // Before the render: three uploads a geometry's buffers when it walks the scene.
-    if (look.outline > 0) w.scene.traverse((o) => { if (o.isMesh && o !== w.inkPass) weldInk(o.geometry); });
+    if (look.outline > 0) gatherInk(w, w.camera);
     toonWorld = w;
   };
   const endToon = () => { toonWorld = null; inkQueue.length = 0; };
