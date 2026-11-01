@@ -191,8 +191,10 @@ export const TOON = String.raw`
       let moved = batch.count !== n || !batch.lsInkFilled;
       for (let i = 0, k = 0; i < n; i++, k += 16) {
         const e = list[i].matrixWorld.elements;
+        // out holds floats and e holds doubles: only the rounded number can match.
         for (let j = 0; j < 16; j++) {
-          if (out[k + j] !== e[j]) { out[k + j] = e[j]; moved = true; }
+          const v = Math.fround(e[j]);
+          if (out[k + j] !== v) { out[k + j] = v; moved = true; }
         }
         list[i].lsInkRender = inkRender;
       }
