@@ -334,7 +334,9 @@ flowchart LR
 - **Whose load.** A parse goes on after its world's turn, so "who runs now" cannot name
   the owner, and the base of a file URL cannot either: `/file/` has one base per worker,
   and a loader keeps a path relative. So ownership follows the loader. Each world has its
-  own manager, on top of three's default one, whose `onLoad` and handlers go on working.
+  own real manager, so `loader.manager.onLoad` fires for that world's items. Each item
+  also goes through three's default manager, whose `onLoad`, URL modifier and handlers go
+  on working. A world's own modifier runs first, and its own handler comes first.
   A loader made with no manager takes the manager of the world that runs (`runner` in
   `realm.ts`), and the loaders of a parse get it from their parent. A manager that a world
   makes is claimed the same way. An item belongs to its manager, at any URL (https, blob,

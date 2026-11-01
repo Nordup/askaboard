@@ -191,24 +191,36 @@ export const FILES = String.raw`
 
   /** Called once, when three is here: items of a loading manager count as loads of its world, and images load with no document. */
   const watchLoaders = () => {
-    const shared = THREE.DefaultLoadingManager, plain = { itemStart: shared.itemStart, itemEnd: shared.itemEnd, resolveURL: shared.resolveURL };
-    /** Manager m works for world w, or for no world (null). from: its own functions. */
+    const shared = THREE.DefaultLoadingManager;
+    const plain = { itemStart: shared.itemStart, itemEnd: shared.itemEnd, itemError: shared.itemError, resolveURL: shared.resolveURL, getHandler: shared.getHandler };
+    /** Manager m works for world w, or for no world (null). from: its own functions. World code runs in itemEnd, and a throw there must not leave a load open. */
     const claim = (m, w, from) => {
       const { itemStart, itemEnd, resolveURL } = from;
       m.lsClaimed = true;
       m.itemStart = (url) => { loadStarted(w); itemStart.call(m, url); };
-      m.itemEnd = (url) => { itemEnd.call(m, url); loadEnded(w); };
+      m.itemEnd = (url) => { try { itemEnd.call(m, url); } finally { loadEnded(w); } };
       m.resolveURL = (url) => (w ? namedUrl(resolveURL.call(m, url), w) : resolveURL.call(m, url));
       return m;
     };
     claim(shared, null, plain);
-    // A world's manager stands in for the default one, so that manager's handlers and its onLoad go on working. A loader of a parse gets its parent's manager, so it stays with the world.
+    /** A loader that names no manager stands for the default one, so its world's manager is a real one of its own, and each item also goes through the default one: its onLoad, modifier and handlers go on working. */
+    const worldManager = (w) => {
+      const m = new THREE.LoadingManager(), own = { ...m };
+      m.itemError = (url) => { try { own.itemError.call(m, url); } finally { plain.itemError.call(shared, url); } };
+      m.getHandler = (file) => own.getHandler.call(m, file) || plain.getHandler.call(shared, file);
+      return claim(m, w, {
+        itemStart: (url) => { own.itemStart.call(m, url); plain.itemStart.call(shared, url); },
+        itemEnd: (url) => { try { own.itemEnd.call(m, url); } finally { plain.itemEnd.call(shared, url); } },
+        resolveURL: (url) => plain.resolveURL.call(shared, own.resolveURL.call(m, url))
+      });
+    };
+    // A loader of a parse gets its parent's manager, so it stays with the world.
     Object.defineProperty(THREE.Loader.prototype, 'manager', {
       configurable: true,
       get() { return this.lsManager; },
       set(m) {
         const w = runner();
-        if (w && m === shared) m = w.manager || (w.manager = claim(Object.create(shared), w, plain));
+        if (w && m === shared) m = w.manager || (w.manager = worldManager(w));
         else if (w && !m.lsClaimed) claim(m, w, m);
         this.lsManager = m;
       }
