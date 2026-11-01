@@ -270,6 +270,9 @@ function registerIpc(): void {
   ipcMain.on(IPC.devHooks, (event) => {
     event.returnValue = remoteDebugPort !== null
   })
+  ipcMain.on(IPC.devClose, () => {
+    if (remoteDebugPort !== null) mainWindow?.close()
+  })
   ipcMain.on(IPC.worldTune, (event) => {
     event.returnValue = worldTune
   })

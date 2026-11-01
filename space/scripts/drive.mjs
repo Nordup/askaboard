@@ -544,8 +544,7 @@ async function main() {
   } else if (command === 'close') {
     run = async (cdp) => {
       await requireDevHook(cdp)
-      // The page may go before it answers: the call does not wait.
-      void evaluate(cdp, 'window.close()').catch(() => undefined)
+      await evaluate(cdp, 'window.__spaceDev.close()')
       await sleep(100)
     }
   } else if (command === 'eval-state') {

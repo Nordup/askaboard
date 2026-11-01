@@ -952,6 +952,8 @@ export function App() {
           }
         }
       },
+      /** Close the window as the red button does (scripts/drive.mjs close). */
+      close: () => space.devClose(),
       /** A node's rect in window CSS pixels, from the layout cache. */
       nodeRect: (id: string) => {
         const board = boardRef.current

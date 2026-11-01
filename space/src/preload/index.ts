@@ -59,6 +59,7 @@ const api: SpaceApi = {
   onBoardChanged: (listener) => listen(IPC.boardChanged, listener),
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),
   onFlushRequest: (listener) => listen<void>(IPC.flushRequest, () => listener()),
+  devClose: () => ipcRenderer.send(IPC.devClose),
   flushStarted: () => ipcRenderer.send(IPC.flushStarted),
   flushDone: (failed) => ipcRenderer.send(IPC.flushDone, failed),
 

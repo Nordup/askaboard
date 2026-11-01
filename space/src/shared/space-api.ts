@@ -625,6 +625,8 @@ export interface SpaceApi {
   onMenuCommand(listener: (command: MenuCommand) => void): Unsubscribe
   /** The window is about to close: call flushStarted() at once, save, then call flushDone() with the boards that could not be saved. */
   onFlushRequest(listener: () => void): Unsubscribe
+  /** Dev hook (SPACE_REMOTE_DEBUG only): close the window as the red button does. A page's window.close() does not ask main. */
+  devClose(): void
   flushStarted(): void
   flushDone(failed: FailedSave[]): void
 
@@ -692,6 +694,7 @@ export const IPC = {
   boardChanged: 'space:board-changed',
   menuCommand: 'space:menu-command',
   flushRequest: 'space:flush-request',
+  devClose: 'space:dev-close',
   flushStarted: 'space:flush-started',
   flushDone: 'space:flush-done',
   getAgentStatus: 'space:get-agent-status',
