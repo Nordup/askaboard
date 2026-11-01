@@ -139,7 +139,7 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - `text(str, o)`: typeset text, as a text item, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
 - `label(target, text, o)`: text placed next to target, clear of the scene's objects, the board's items and the view's edge. target: an object, a point [x, y], or a segment [[x1, y1], [x2, y2]]. o.at: a point on an object ([x, y], or a share 0..1 along its outline), or a share along the segment (default 0.5). o.side: "auto" (default), "center", above, below, left, right, above-left, above-right, below-left, below-right. o.gap (default 10). The label is handwritten; o.tex: true typesets it as maths, o.text: true as text. Other options as write or tex. It follows its target as the target moves or changes.
 - `around(target, o)`: a hand-drawn ink mark around an object, a point [x, y] or a board rect {x, y, width, height}, such as a part of a picture. o.shape: "circle" (default), "box" or "underline"; o.pad (default 8 points plus 8% of the target's larger side; 20 points around a point).<!-- code-items -->
-- `world(src, o)`: anything you build with code: plain three.js that sits on the board with no frame and casts a soft shadow on it. It links to the board through `.point(name)`, `.value(name)` and `.part(name)`. Read topic "scene-world" before your first world.<!-- /code-items -->
+- `world(src, o)`: anything you build with code: plain three.js that sits on the board with no frame. It links to the board through `.point(name)`, `.value(name)` and `.part(name)`. Read topic "scene-world" before your first world.<!-- /code-items -->
 <!-- html -->- `html(markup, o)`: board material from HTML (topic "html"): frames with layout, text, lists, math, inline SVG and pictures, made of the same items as the rest of the board. It returns one item, its root item. o.at (top-left) or o.center; without them, an empty place (topic "placement"). o.into, o.index and o.mode put it into a frame or in place of an item (topic "placement"). o.name, o.opacity. `.bounds` is exact at once. `obj.parts` lists the root's children as objects, and `obj.part(index or layer-name)` returns one. A part can be drawn, faded, erased, edited, marked and labelled, and it moves with its material.
 <!-- /html -->- `image(src, o)`: a picture from an https:// or data: URL, or from a file path in the learning folder (topic "images").
 - `copy(item, o)`: a copy of any object or board item (with everything inside it), as an object of this scene. o.at (top-left), o.center, o.by ([dx, dy]); without them, an empty place beside the original (or near o.near). o.name. A copy of ink is ink, a copy of material is material, and a copy of a group is a group.
@@ -206,9 +206,9 @@ A scene program can be a file in `boards/scenes/` of the learning folder, and fi
 <!-- topic: scene-world -->
 <!-- summary: world(src, o): everything you build with code: three-dimensional models, fields, simulations, and things the learner can touch. Plain three.js that sits on the board with no frame and links to labels, arrows and ink. Read it before your first world. -->
 
-Creates a world: plain three.js that lives on the board itself. A world is how you build anything that needs code: a model with real light and material, a field, a fluid, particles, a simulation, a shader, a picture drawn by code, or something the learner turns or drags. Everything you know about three.js applies here, and any library works.
+Creates a world: plain three.js that lives on the board itself. A world is how you build anything that needs code: a model of any shape, a field, a fluid, particles, a simulation, a shader, a picture drawn by code, or something the learner turns or drags. Everything you know about three.js applies here, and any library works.
 
-A world has no frame. It sits on the board, casts a soft shadow on it, and can reach anywhere. You write only what is specific to the idea, because the app provides the renderer, the render loop, the camera, the light and the floor. Do not create a renderer or a canvas.
+A world has no frame. It sits on the board and can reach anywhere. You write only what is specific to the idea, because the app provides the renderer, the render loop, the camera and the light. Do not create a renderer or a canvas.
 
 ```js
 const atom = world(`
@@ -230,10 +230,14 @@ await tween(atom.value("height"), 2, 3)
 - Use `world.add(...objects)` to add objects, and `world.camera`, `world.scene` and `world.root` as you would in three.js. Call `world.redraw()` after a change that happens outside a frame, such as a texture that has loaded.
 - The app measures how far a world reaches, so that nothing is cut off. When a shader moves vertices, the app cannot see that: tell it with `world.reach(r)`, in board points, or `world.reach("full")`.
 
-**How a world looks.** A world starts with a film look: soft image-based light, tone mapping, soft shadows and a gentle glow, and a floor that catches the shadow and a fading reflection. This is what makes an object feel real on the board, so keep it unless the idea asks for something else.
-- `world.look.gloss(c)`, `.metal(c)`, `.glass(c)`, `.glow(c)` and `.skin(c)` make materials that suit it. Any three.js material works too.
-- Change one part with `world.look.bloom = 0`. For flat work, where colours must stay exact, use `world.look = "plain"`.
-- `world.floor = false` removes the floor, and `world.floor = { y }` sets its height.
+**Build any model.** A model can be any mesh you can compute, so do not stop at the ready-made shapes. Write the vertices of a `THREE.BufferGeometry` yourself. Shape a form with `ExtrudeGeometry`, `LatheGeometry` or `TubeGeometry`. Displace a dense mesh, join parts with `mergeGeometries`, grow a form with `MarchingCubes`, or cut one with a library such as `three-bvh-csg`. `GLTFLoader` reads a model from a URL.
+- Animate a model with bones (`SkinnedMesh`), morph targets or keyframes. Drive them from t in `world.frame`, for example with `mixer.setTime(t)` on an `AnimationMixer`, so that a seek lands on the right pose.
+- A hand-made mesh needs its faces wound the right way and its normals computed. A mistake gives wrong shading and no error, so look at a preview.
+
+**How a world looks.** A world starts as a drawing that fits the ink: flat bands of light and a thin line around each shape. It keeps your colours and textures, works with any three.js material, and stays clear and light on any machine, so keep it unless the idea asks for something else.
+- Change the drawing with `world.look.shades` and `.steps` (the bands), `.outline` (the line width in pixels, 0 for none) and `.ink` (its colour). `world.look.fragment` replaces the shader, and `material.userData.toon = false` leaves one material out.
+- For real light and material, use `world.look = "film"`: soft light, soft shadows, a gentle glow and a floor with a fading reflection. It costs far more to draw, so use it when realism is what explains the idea. `world.look.gloss(c)`, `.metal(c)`, `.glass(c)`, `.glow(c)` and `.skin(c)` make materials that suit it, and `world.look.bloom = 0` changes one part.
+- In the film look, `world.floor = false` removes the floor, and `world.floor = { y }` sets its height. For flat work, where colours must stay exact, use `world.look = "plain"`.
 
 **Link a world to the board.** A world and the board are one space, so use the links: they are what make a world part of the explanation and not a picture beside it. In the world, `publish(name, target)` names something: an Object3D, a Vector3, or a function that gives [x, y, z]. In the scene:
 - `atom.point(name)` is a point that goes wherever a scene takes a point: `label`, the ends of `arrow` and `line`, `point`, `camera({to})` and `around`. The item follows the point as it moves, also after the scene ends, and it fades while the point is hidden.

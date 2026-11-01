@@ -148,6 +148,7 @@ voice, and the founder brought the old text back (I25).
 | --- | --- |
 | Every medium is an equal choice (I31, replaces I20) | The brief, "What you can put on the board" and the calibration list; the guide, the summary and first lines of topics `scene-world` and `html`. Not in a tool description. |
 | The picture carries the meaning (I31) | The brief, "Let the picture do the explaining" and the calibration list. |
+| A model can be any shape, and it moves (I33) | The brief, "Worlds made with code"; the guide, topic `scene-world`, "Build any model". |
 | Check a scene before the person sees it (I22, I25) | The brief, "Take the time it needs, and check your work"; the write_scene pointer to preview_scene; the preview_scene opening. |
 | Explain fully, then check (I21) | The brief only. |
 | Draw step by step, in front of the person | The brief ("Explain by drawing, one step at a time"); the instructions ("in front of the learner"); write_scene's opening. |
