@@ -1113,6 +1113,7 @@ button:focus-visible {
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
+ *   .menu__switch          a small on/off toggle in a .menu__control
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
@@ -1271,6 +1272,37 @@ button:focus-visible {
   flex-shrink: 0;
   align-items: center;
   min-height: 24px;
+}
+
+.menu__switch {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--bg-active);
+  cursor: pointer;
+}
+
+.menu__switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  content: '';
+}
+
+.menu__switch[aria-checked='true'] {
+  background: var(--accent);
+}
+
+.menu__switch[aria-checked='true']::after {
+  left: 14px;
+  background: var(--text-primary);
 }
 
 .menu__line {

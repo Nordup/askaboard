@@ -21,6 +21,8 @@ interface PersistedState {
   agentLooks: Record<string, AgentLook>
   /** View > Show performance. */
   showPerformance: boolean
+  /** The row "Uncapped frame rate" of the performance pill. It counts only while the pill is on. */
+  uncappedFrames: boolean
 }
 
 /**
@@ -41,7 +43,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, uncappedFrames: true }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -54,7 +56,8 @@ export function loadState(): void {
       lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {},
       setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : [],
       agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {},
-      showPerformance: raw.showPerformance === true
+      showPerformance: raw.showPerformance === true,
+      uncappedFrames: raw.uncappedFrames !== false
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -166,6 +169,15 @@ export function getShowPerformance(): boolean {
 
 export function setShowPerformance(value: boolean): void {
   state.showPerformance = value
+  saveStateNow()
+}
+
+export function getUncappedFrames(): boolean {
+  return state.uncappedFrames
+}
+
+export function setUncappedFrames(value: boolean): void {
+  state.uncappedFrames = value
   saveStateNow()
 }
 

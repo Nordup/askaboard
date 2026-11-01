@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useMenuDismiss } from '../lib/dismiss'
+import { setWorldUncapped } from '../live-pixels/world/surface'
 import { usePerfReading } from '../perf-meter'
 
 /** The dot: green from this frame rate, amber from the next, red below it. */
@@ -28,7 +29,8 @@ function Row({ name, value }: { name: string; value: string }) {
  * The top-bar performance pill (View > Show performance). It reads the render meter,
  * and while it is mounted the meter runs: a closed pill costs nothing. "Time per
  * picture" is wall time: the timer-query GPU time adds overlapping spans and reads too
- * high here (scripts/perf/README.md).
+ * high here (scripts/perf/README.md). While the pill is mounted and its row is on, worlds
+ * render uncapped: pictures per second then show the headroom. With the pill off, the cap holds.
  */
 export function PerfPill() {
   const reading = usePerfReading()
@@ -36,6 +38,18 @@ export function PerfPill() {
   const rootRef = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
   useMenuDismiss(open, rootRef, close)
+  const [uncapped, setUncapped] = useState<{ on: boolean; launched: boolean } | null>(null)
+  useEffect(() => void window.space.getUncappedFrames().then(setUncapped), [])
+  const uncappedOn = uncapped?.on ?? false
+  useEffect(() => {
+    setWorldUncapped(uncappedOn)
+    return () => setWorldUncapped(false)
+  }, [uncappedOn])
+  const flipUncapped = (): void => {
+    if (!uncapped) return
+    setUncapped({ ...uncapped, on: !uncapped.on })
+    void window.space.setUncappedFrames(!uncapped.on)
+  }
 
   const fps = reading?.fps ?? null
   const world = reading?.world && reading.world.pictures > 0 ? reading.world : null
@@ -70,6 +84,14 @@ export function PerfPill() {
           ) : (
             <div className="menu__line">No world moving</div>
           )}
+          <div className="menu__separator" />
+          <div className="menu__row">
+            <span className="menu__name">Uncapped frame rate</span>
+            <span className="menu__control">
+              <button className="menu__switch" role="switch" aria-checked={uncappedOn} aria-label="Uncapped frame rate" onClick={flipUncapped} />
+            </span>
+          </div>
+          {uncapped && uncapped.on !== uncapped.launched && <div className="menu__line">Restart to apply</div>}
         </div>
       )}
     </div>

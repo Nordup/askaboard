@@ -299,6 +299,8 @@ function registerIpc(): void {
   })
   handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
   handle(IPC.getShowPerformance, () => store.getShowPerformance())
+  handle(IPC.getUncappedFrames, () => ({ on: store.getUncappedFrames(), launched: uncappedAtLaunch }))
+  handle(IPC.setUncappedFrames, (on: unknown) => store.setUncappedFrames(on === true))
   handle(IPC.boardGuidePath, async () => {
     const rel = `${FOLDER_SETTINGS_DIR}/guide.md`
     const full = await requireSession().resolvePath(rel, { allowMissing: true })
@@ -427,6 +429,13 @@ async function capture(win: BrowserWindow, path: string): Promise<void> {
 }
 
 store.loadState()
+
+/** The switches need a restart, so they follow what was saved at launch: for a user with the pill off, the frame limit stays. */
+const uncappedAtLaunch = (store.getShowPerformance() && store.getUncappedFrames()) || !!worldTune?.uncapped
+if (uncappedAtLaunch) {
+  app.commandLine.appendSwitch('disable-frame-rate-limit')
+  app.commandLine.appendSwitch('disable-gpu-vsync')
+}
 registerIpc()
 
 void app.whenReady().then(async () => {

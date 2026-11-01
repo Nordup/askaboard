@@ -100,6 +100,14 @@ export function listenWorldStats(listener: ((stats: WorldStats) => void) | null)
   for (const surface of boardSurfaces) surface.send({ type: 'stats', on: !!listener })
 }
 
+let uncapped = false
+
+/** Tell every board surface, now and after a new worker: pictures wait only for the GPU. */
+export function setWorldUncapped(on: boolean): void {
+  uncapped = on
+  for (const surface of boardSurfaces) surface.send({ type: 'uncapped', on })
+}
+
 const keyOf = (key: WorldKey): string => `${key.node}\u0000${key.generation}`
 
 /** The placement of a world: its node and the playback overrides, so rotation, scale, fades and draw() reach the surface. */
@@ -289,7 +297,8 @@ export class WorldSurface {
   private begin(init: Extract<PageToWorld, { type: 'init' }>): void {
     const waiting = this.outbox ?? []
     const stats: PageToWorld[] = this.canvas && statsListener ? [{ type: 'stats', on: true }] : []
-    this.outbox = [{ ...init, tune }, ...stats, ...waiting]
+    const rate: PageToWorld[] = this.canvas && uncapped ? [{ type: 'uncapped', on: true }] : []
+    this.outbox = [{ ...init, tune }, ...stats, ...rate, ...waiting]
     this.opened = true
     this.flush()
   }

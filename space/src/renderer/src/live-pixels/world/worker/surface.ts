@@ -10,11 +10,13 @@
  * On demand. With nothing to tick and no change, nothing renders. The next
  * frame starts on "presented", when the GPU finished the last one, so a slow
  * page gets fewer pictures, and a world never fills the GPU ahead of the page.
+ * Uncapped (the performance pill, the benchmark), only the GPU fence paces the
+ * pictures, and the page shows the newest one it has.
  */
 export const SURFACE = String.raw`
   let THREE = null, renderer = null, canvas = null, compositeMat = null, compositeScene = null, compositeCam = null;
   const surface = { width: 0, height: 0, dpr: 1, margin: 0, camera: null, seq: 0, dirty: false };
-  let sent = 0, waiting = false, dead = false;
+  let sent = 0, waiting = false, dead = false, uncapped = false;
 
   const sizeSurface = (m) => {
     surface.dpr = m.dpr;
@@ -225,7 +227,7 @@ export const SURFACE = String.raw`
       const bitmap = canvas.transferToImageBitmap();
       if (meter) meterEnd(pixels, skipped);
       surface.dirty = false;
-      waiting = true;
+      waiting = !uncapped;
       sent++;
       post({ type: 'picture', n: sent, seq: surface.seq, camera: surface.camera, bitmap, points: boardPoints() }, [bitmap]);
       picturePixels = pixels;
@@ -380,6 +382,7 @@ export const SURFACE = String.raw`
     loop = true;
     let done = false;
     const go = () => { if (done) return; done = true; loop = false; frame(); };
+    if (uncapped) { nativeSetTimeout(go, 0); return; }
     nativeRaf(go);
     nativeSetTimeout(go, 100);
   };
@@ -413,6 +416,7 @@ export const SURFACE = String.raw`
     else if (m.type === 'add') addWorld(m.world);
     else if (m.type === 'remove') removeWorld(m.key);
     else if (m.type === 'stats') setStats(m.on);
+    else if (m.type === 'uncapped') { uncapped = m.on || !!tune.uncapped; if (uncapped) waiting = false; }
     else if (m.type === 'ping') post({ type: 'pong', n: m.n, running: current ? current.key.node : last ? last.key.node : null, info: infoNow() });
     else {
       const w = m.key ? worlds.get(idOf(m.key)) : null;
@@ -487,6 +491,7 @@ export const SURFACE = String.raw`
       };
       renderer.setClearColor(0x000000, 0);
       setTune(m.tune);
+      uncapped = !!tune.uncapped;
       sizeSurface(m);
       makeLook();
       makeSurface();

@@ -18,7 +18,9 @@ node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"ada
 node scripts/perf/render.mjs --report                           # writes .lab/perf/render-report.md, a table over commits
 ```
 
-Other options: `--seconds 10`, `--no-pan`, `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
+A run is uncapped by default (tune key `uncapped: 1`): no picture waits for a page paint or a display frame, and Chromium starts with `--disable-frame-rate-limit` and `--disable-gpu-vsync`. So `pict/s` and `fps` show headroom, and they can pass 60 on a 60 Hz screen. `--capped` runs as a normal user does. Each history line has `uncapped`, and a run compares only with a run of the same state. History lines before 2026-11-01 have no `uncapped` field: they are capped.
+
+Other options: `--seconds 10`, `--no-pan`, `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
 
 One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
 
@@ -35,7 +37,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 
 | Column | Meaning |
 | --- | --- |
-| `pict/s` | Pictures per second that the world worker sent to the page. It follows the scene: a world that turns gives up to one per display frame. A still world gives none. |
+| `pict/s` | Pictures per second that the world worker sent to the page. It follows the scene: a world that turns gives one per fence uncapped, and up to one per display frame `--capped`. A still world gives none. |
 | `GPU ms`, `p95` | The timer query per picture, median and 95th percentile. See the note under this table. |
 | `timer` | The source of `GPU ms`. `timer`: `EXT_disjoint_timer_query_webgl2`, which works on the M1. `fence`: wall time from flush to fence, which is not pure GPU time. |
 | `wall ms` | Wall time from the first render call of a picture to its fence. |
@@ -66,6 +68,7 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 | `adaptive` | 0: the resolution stays at the full share, so dynamic resolution hides no cost. Worlds still take turns inside the budget of a picture. |
 | `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
 | `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
+| `uncapped` | 1: pictures wait only for the GPU, and Chromium's frame limit is off. `render.mjs` sets it unless `--capped`. |
 
 A world costs much more CPU in its first 20 s: the renderer with the worker used about 80% of one core 0 to 11 s after the scene ended, and 12% after 25 s. Compare CPU only at the same time after start. GPU numbers do not show this.
 

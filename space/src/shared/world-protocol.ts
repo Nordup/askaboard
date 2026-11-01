@@ -165,6 +165,8 @@ export type PageToWorld =
   | { type: 'ping'; n: number }
   /** While on, the worker sends one `stats` message per second. */
   | { type: 'stats'; on: boolean }
+  /** While on, a picture waits only for the GPU: not for the page, not for a display frame. */
+  | { type: 'uncapped'; on: boolean }
   /** A pointer event. Send it only while the world's last `subscribe` says pointer. */
   | { type: 'pointer'; key: WorldKey; event: WorldPointer }
   /** What is at a board point. The answer is `picked` with the same request. */

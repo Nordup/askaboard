@@ -588,6 +588,9 @@ export interface SpaceApi {
   setSetupDontAsk(value: boolean): Promise<void>
   /** View > Show performance, as saved. */
   getShowPerformance(): Promise<boolean>
+  /** The pill's row "Uncapped frame rate": on, as saved, and launched, the state of Chromium's frame limit since this launch. */
+  getUncappedFrames(): Promise<{ on: boolean; launched: boolean }>
+  setUncappedFrames(on: boolean): Promise<void>
   /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
   /** What the folder's guide and instructions files change for agents now. */
@@ -663,6 +666,8 @@ export const IPC = {
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
   getShowPerformance: 'space:get-show-performance',
+  getUncappedFrames: 'space:get-uncapped-frames',
+  setUncappedFrames: 'space:set-uncapped-frames',
   boardGuidePath: 'space:board-guide-path',
   getGuideOverrides: 'space:get-guide-overrides',
   guideOverrides: 'space:guide-overrides',

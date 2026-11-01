@@ -9,7 +9,9 @@
  *   node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"adaptive":0}]'
  *   node scripts/perf/render.mjs --report
  *   node scripts/perf/render.mjs --scenes film --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
+ *   node scripts/perf/render.mjs --scenes film --burst       # CPU of the first 30 s of a world, one line in .lab/perf/render-burst.jsonl
  *
+ * A run is uncapped by default, so pict/s shows the real headroom. --capped: the cap of a normal user. Each history line has `uncapped`.
  * --no-pan: film without its pan phase. --dev: the dev renderer, not out/. The window opens at its normal place, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
@@ -313,6 +315,34 @@ async function profileScene(scene, state, cdp) {
   console.log(`written: ${file}, ${sampleFile}`)
 }
 
+/** CPU of the app in the first 30 s of a world, from the moment the scene is sent: % of one core per window. Renderer: all renderer processes. */
+async function burstScene(scene, state, cdp) {
+  const main = state.pids[0]
+  const group = (name) => (name.includes('Renderer') ? 'renderer' : name.includes('GPU') ? 'gpu' : name === 'WindowServer' ? 'windowserver' : 'other')
+  const start = Date.now()
+  const marks = []
+  const mark = async () => marks.push({ at: (Date.now() - start) / 1000, times: await processTimes(main) })
+  await mark()
+  const played = playScene(scene, state, cdp)
+  for (const second of [5, 10, 20, 30]) {
+    await sleep(Math.max(0, start + second * 1000 - Date.now()))
+    await mark()
+  }
+  await played
+  const windows = marks.slice(1).map((to, i) => {
+    const from = marks[i]
+    const used = {}
+    for (const [pid, { name, seconds }] of Object.entries(to.times)) {
+      const key = group(name)
+      used[key] = (used[key] ?? 0) + seconds - (from.times[pid]?.seconds ?? 0)
+    }
+    const percent = Object.fromEntries(Object.entries(used).map(([key, value]) => [key, Math.round((value / (to.at - from.at)) * 100)]))
+    return { from: Math.round(from.at), to: Math.round(to.at), ...percent }
+  })
+  for (const w of windows) console.log(`  ${w.from}-${w.to} s: renderer ${w.renderer ?? 0}%, gpu ${w.gpu ?? 0}%, windowserver ${w.windowserver ?? 0}%`)
+  appendFileSync(join(OUT, 'render-burst.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), scene, ...codeIdentity(), uncapped: !flag('--capped'), label: option('--label', null), windows })}\n`)
+}
+
 // ---------- One run ----------
 
 async function playScene(scene, state, cdp) {
@@ -352,7 +382,8 @@ async function seedInk(state, cdp) {
   await sleep(1000)
 }
 
-async function runScene(scene, { tune, label, seconds, dev, profile, noPan, identity }) {
+async function runScene(scene, { tune: given, label, seconds, dev, profile, burst, noPan, capped, identity }) {
+  const tune = capped ? given : { uncapped: 1, ...given }
   if (tune) process.env.SPACE_WORLD_TUNE = JSON.stringify(tune)
   else delete process.env.SPACE_WORLD_TUNE
   const state = await startInstance({ name: NAME, mcpPort: MCP_PORT, debugPort: DEBUG_PORT, built: !dev, fresh: true })
@@ -360,6 +391,10 @@ async function runScene(scene, { tune, label, seconds, dev, profile, noPan, iden
   let cdp = null
   try {
     cdp = await cdpConnect(DEBUG_PORT)
+    if (burst) {
+      await burstScene(scene, state, cdp)
+      return []
+    }
     if (scene === 'ink') await seedInk(state, cdp)
     else await playScene(scene, state, cdp)
     if (profile) {
@@ -369,7 +404,7 @@ async function runScene(scene, { tune, label, seconds, dev, profile, noPan, iden
     const motion = (ms) => panAndZoom(cdp, ms)
     const size = await cdp.evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, visibility: document.visibilityState, zoom: window.__spaceDev.state().zoom })')
     const windowAt = await windowShare(state.pids)
-    const base = { at: new Date().toISOString(), scene, label, mode: dev ? 'dev' : 'built', tune: tune ?? null, ...identity, window: { ...size, visibleShare: windowAt?.share ?? null, x: windowAt?.x ?? null, y: windowAt?.y ?? null, width: windowAt?.width ?? size.width, height: windowAt?.height ?? size.height } }
+    const base = { at: new Date().toISOString(), scene, label, mode: dev ? 'dev' : 'built', uncapped: !capped, tune: tune ?? null, ...identity, window: { ...size, visibleShare: windowAt?.share ?? null, x: windowAt?.x ?? null, y: windowAt?.y ?? null, width: windowAt?.width ?? size.width, height: windowAt?.height ?? size.height } }
     lines.push({ ...base, phase: scene === 'ink' ? 'pan' : 'hold', ...(await measure(cdp, seconds, scene === 'ink' ? motion : null)) })
     if (scene === 'film' && !noPan) lines.push({ ...base, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
     await cdp.evaluate('window.__spaceDev.perf.stop()')
@@ -414,7 +449,7 @@ function printTable(lines) {
   for (const row of rows) console.log(row.map((cell, i) => (i ? cell.padStart(widths[i]) : cell.padEnd(widths[i]))).join('  '))
 }
 
-const keyOf = (l) => JSON.stringify([l.scene, l.phase, l.tune, l.mode])
+const keyOf = (l) => JSON.stringify([l.scene, l.phase, l.tune, l.mode, !!l.uncapped])
 const readHistory = () => (existsSync(HISTORY) ? readFileSync(HISTORY, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [])
 
 function printChange(lines, before) {
@@ -462,7 +497,7 @@ async function main() {
   if (matrix && scenes.length !== 1) throw new Error('--matrix runs one scene: give one with --scenes.')
   const tune = option('--tune', null)
   const tunes = matrix ? JSON.parse(matrix) : [tune ? JSON.parse(tune) : null]
-  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), noPan: flag('--no-pan'), identity: codeIdentity() }
+  const common = { label: option('--label', null), seconds: Number(option('--seconds', '10')), dev: flag('--dev'), profile: flag('--profile'), burst: flag('--burst'), capped: flag('--capped'), noPan: flag('--no-pan'), identity: codeIdentity() }
   const done = guardRun(NAME, 'render')
   mkdirSync(OUT, { recursive: true })
   const before = readHistory()
@@ -481,7 +516,7 @@ async function main() {
   printChange(lines, before)
   const failed = lines.flatMap((line) => problems(line).map((text) => `${line.scene}:${line.phase}: ${text}`))
   for (const text of failed) console.log(`PROBLEM ${text}`)
-  console.log(`${common.identity.machine}, ${common.identity.commit}${common.identity.dirty ? ' (dirty)' : ''}, three ${common.identity.three}, Electron ${common.identity.electron}, window ${lines[0].window.width}x${lines[0].window.height} @${lines[0].window.dpr}`)
+  console.log(`${common.capped ? 'capped' : 'uncapped'}, ${common.identity.machine}, ${common.identity.commit}${common.identity.dirty ? ' (dirty)' : ''}, three ${common.identity.three}, Electron ${common.identity.electron}, window ${lines[0].window.width}x${lines[0].window.height} @${lines[0].window.dpr}`)
   if (failed.length) process.exitCode = 1
 }
 

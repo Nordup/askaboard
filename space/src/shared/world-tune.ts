@@ -19,4 +19,6 @@ export interface WorldTune {
   shadows?: number
   /** Overscan in CSS pixels per side. */
   surfaceMargin?: number
+  /** 1: no picture waits for a page paint or a display frame, and Chromium starts with its frame limit off. */
+  uncapped?: number
 }
