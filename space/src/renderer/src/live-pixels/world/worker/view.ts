@@ -144,7 +144,7 @@ export const VIEW = String.raw`
     return { l: Math.floor(l / GRID) * GRID, t: Math.floor(t / GRID) * GRID, r: Math.ceil(r / GRID) * GRID, b: Math.ceil(b / GRID) * GRID };
   };
 
-  const room = (w, s) => (w.look.bloom > 0 ? GLOW_ROOM * s : SOFT_ROOM);
+  const room = (w, s) => (lookOf(w).bloom > 0 ? GLOW_ROOM * s : SOFT_ROOM);
 
   /** What must be rendered now: reach cut by the surface, in nominal pixels from the anchor. Null when none of it is on the surface. */
   const cropFor = (w, place) => {
@@ -169,7 +169,7 @@ export const VIEW = String.raw`
   /** The part of a crop that holds the scene: reach and a soft edge. Outside it, only glow. */
   const innerOf = (w, s, crop) => {
     const reach = w.reach;
-    if (reach.full || !(w.look.bloom > 0)) return crop;
+    if (reach.full || !(lookOf(w).bloom > 0)) return crop;
     const inner = snapped(reach.l * s - SOFT_ROOM, reach.t * s - SOFT_ROOM, reach.r * s + SOFT_ROOM, reach.b * s + SOFT_ROOM);
     return { l: Math.max(crop.l, inner.l), t: Math.max(crop.t, inner.t), r: Math.min(crop.r, inner.r), b: Math.min(crop.b, inner.b) };
   };

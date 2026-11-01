@@ -8,6 +8,7 @@
 import type { BoardDigest, TextMatch } from './board-digest'
 import type { LearnerEditDelta } from './learner-edit'
 import type { BoardStories } from './scene-story'
+import type { WorldTune } from './world-tune'
 
 /** What the renderer knows about one board save. */
 export interface BoardSaveInfo {
@@ -553,6 +554,8 @@ export interface SpaceApi {
   readonly version: string
   /** Dev only (SPACE_REMOTE_DEBUG): the page exposes window.__spaceDev. */
   readonly devHooks: boolean
+  /** Measuring switches of the world surface (env SPACE_WORLD_TUNE), or null. */
+  readonly worldTune: WorldTune | null
 
   getInitialState(): Promise<Snapshot>
   /** Show the system folder picker. Resolves null when the user cancels. */
@@ -642,6 +645,7 @@ export interface SpaceApi {
 export const IPC = {
   appVersion: 'space:app-version',
   devHooks: 'space:dev-hooks',
+  worldTune: 'space:world-tune',
   getInitialState: 'space:get-initial-state',
   openFolderDialog: 'space:open-folder-dialog',
   openRecent: 'space:open-recent',

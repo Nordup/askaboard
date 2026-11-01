@@ -5,6 +5,7 @@ import { IPC, type SpaceApi, type Unsubscribe } from '@shared/space-api'
 // process answers this one synchronous call before the page script runs.
 const version = ipcRenderer.sendSync(IPC.appVersion) as string
 const devHooks = ipcRenderer.sendSync(IPC.devHooks) === true
+const worldTune = ipcRenderer.sendSync(IPC.worldTune) as SpaceApi['worldTune']
 
 function listen<T>(channel: string, listener: (payload: T) => void): Unsubscribe {
   const handler = (_event: IpcRendererEvent, payload: T): void => listener(payload)
@@ -18,6 +19,7 @@ const api: SpaceApi = {
   platform: process.platform,
   version,
   devHooks,
+  worldTune,
 
   getInitialState: () => ipcRenderer.invoke(IPC.getInitialState),
   openFolderDialog: () => ipcRenderer.invoke(IPC.openFolderDialog),

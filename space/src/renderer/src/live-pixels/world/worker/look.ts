@@ -55,6 +55,18 @@ export const LOOK = String.raw`
   /** The world whose passes run now. A failure in a pass belongs to it. */
   let rendering = null;
   let quadScene = null, quadCam = null, quad = null, dofMat = null, finalMat = null, floorMask = null, heightMat = null, brightMat = null, downMat = null, upMat = null;
+  /** The measuring switches (SPACE_WORLD_TUNE), read once at boot. tuned: what they force on every look; null when they force nothing. */
+  let tune = {}, tuned = null;
+  const setTune = (given) => {
+    tune = given || {};
+    const forced = {};
+    if (tune.bloom === 0) forced.bloom = 0;
+    if (tune.dof === 0) forced.dof = 0;
+    if (tune.shadows === 0) forced.shadows = false;
+    if (tune.env === 0) forced.environment = 0;
+    tuned = Object.keys(forced).length ? forced : null;
+  };
+  const lookOf = (w) => (tuned ? Object.assign({}, w.look, tuned) : w.look);
   const noTone = () => ({ toneMapped: false, depthTest: false, depthWrite: false, transparent: false, blending: THREE.NoBlending });
 
   const makeLook = () => {
@@ -277,7 +289,7 @@ export const LOOK = String.raw`
     w.floorBuilt = false;
     w.stale = true;
   };
-  const floorOn = (w) => !!w.floor;
+  const floorOn = (w) => !!w.floor && tune.floor !== 0;
 
   /**
    * Fit the floor and the key light to the world. film.js does this once. A world here can grow or travel after that,
@@ -316,11 +328,11 @@ export const LOOK = String.raw`
     w.floorBuilt = true;
   };
 
-  const targetOptions = (samples, depth) => ({ type: THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+  const targetOptions = (samples, depth) => ({ type: tune.hdr === 0 ? THREE.UnsignedByteType : THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
   // The plain look renders as three.js does to a canvas: materials write display colours, blending happens there, and a
   // ShaderMaterial's vec3(0.5) is 128 on screen. three.js does this for a target that says it is an XR target with an sRGB texture.
   const sceneTarget = (W, H, display) => sharedOf(display ? 'scene-display' : 'scene', W, H, () => {
-    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(4, true));
+    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(tune.msaa ?? 4, true));
     rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
     if (display) { rt.isXRRenderTarget = true; rt.texture.colorSpace = THREE.SRGBColorSpace; }
     return rt;
@@ -410,7 +422,7 @@ export const LOOK = String.raw`
 
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
   const renderWorld = (w, s, crop, inner, output) => {
-    const look = w.look, camera = w.camera;
+    const look = lookOf(w), camera = w.camera;
     rendering = w;
     // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
     const W = output.width, H = output.height, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;

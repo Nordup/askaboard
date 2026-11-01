@@ -3,6 +3,7 @@ import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type MenuCommand, type Snapshot } from '@shared/space-api'
+import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
@@ -56,6 +57,18 @@ if (remoteDebugPort !== null) {
   app.commandLine.appendSwitch('disable-background-timer-throttling')
   console.log(`remote debugging on 127.0.0.1:${remoteDebugPort} (dev hook)`)
 }
+
+/** Measuring switches of the world surface, for the render benchmark (scripts/perf/README.md). Never in a packaged app. */
+const worldTune: WorldTune | null = (() => {
+  const raw = process.env.SPACE_WORLD_TUNE
+  if (!raw || app.isPackaged) return null
+  try {
+    return JSON.parse(raw) as WorldTune
+  } catch {
+    console.error(`SPACE_WORLD_TUNE is not JSON: ${raw}`)
+    return null
+  }
+})()
 
 /**
  * Image nodes load learning-folder files as space-asset://folder/<relative path>.
@@ -225,6 +238,9 @@ function registerIpc(): void {
   ipcMain.on(IPC.devHooks, (event) => {
     event.returnValue = remoteDebugPort !== null
   })
+  ipcMain.on(IPC.worldTune, (event) => {
+    event.returnValue = worldTune
+  })
 
   handle(IPC.getInitialState, () => snapshot(true))
   handle(IPC.getAgentStatus, () => agentServer.status())
@@ -349,6 +365,11 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
+  // Render benchmark: the window stays in front with no focus, so its numbers are those of a visible window.
+  if (remoteDebugPort !== null && process.env.SPACE_ON_TOP === '1') {
+    win.setAlwaysOnTop(true, 'floating')
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {

@@ -104,6 +104,7 @@ export const SURFACE = String.raw`
     w.moving = false;
     w.waited = 0;
     w.renders = (w.renders || 0) + 1;
+    if (meter) meter.rendered++;
     w.shownPoints = measurePoints(w);
     firstPicture(w);
   };
@@ -202,6 +203,7 @@ export const SURFACE = String.raw`
       plans.sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || b.pixels * (1 + 2 * b.w.waited) - a.pixels * (1 + 2 * a.w.waited));
       let spent = 0, pixels = 0;
       skipped = 0;
+      if (meter) meterBegin();
       for (const plan of plans) {
         const cost = (plan.pixels / 1e6) * msPerMegapixel;
         if (pixels > 0 && spent + cost > PICTURE_MS) { plan.w.waited++; skipped++; continue; }
@@ -210,7 +212,7 @@ export const SURFACE = String.raw`
         try { renderPlan(plan); changed = true; } catch (e) { fail(plan.w, e); }
       }
       trimTargets();
-      if (!changed) return;
+      if (!changed) { if (meter) meterDrop(); return; }
       const list = [];
       for (const w of worlds.values()) if (w.placement && w.placement.shown && w.output && w.drawn && !w.culled) list.push(w);
       list.sort((a, b) => a.placement.z - b.placement.z);
@@ -219,7 +221,9 @@ export const SURFACE = String.raw`
       renderer.setClearColor(0x000000, 0);
       renderer.clear();
       for (const w of list) compositeWorld(w);
+      if (meter) meterStop();
       const bitmap = canvas.transferToImageBitmap();
+      if (meter) meterEnd(pixels, skipped);
       surface.dirty = false;
       waiting = true;
       sent++;
@@ -254,7 +258,7 @@ export const SURFACE = String.raw`
       const reach = !w.reach ? null : w.reach.full ? nominal : w.reach;
       if (!reach) return null;
       // The glow's room is in board points, so the size in points does not depend on the scale.
-      const glow = w.look.bloom > 0 ? GLOW_ROOM : SOFT_ROOM / 2;
+      const glow = lookOf(w).bloom > 0 ? GLOW_ROOM : SOFT_ROOM / 2;
       const pw = reach.r - reach.l + 2 * glow, ph = reach.b - reach.t + 2 * glow;
       const s = Math.max(0.1, Math.min(Math.max(1, Math.min(2, surface.dpr)), Math.sqrt(STILL_PIXELS / (pw * ph)), (STILL_MAX - 2 * GRID) / Math.max(pw, ph)));
       const crop = snapped((reach.l - glow) * s, (reach.t - glow) * s, (reach.r + glow) * s, (reach.b + glow) * s);
@@ -318,7 +322,7 @@ export const SURFACE = String.raw`
     slowPictures = slow ? slowPictures + 1 : 0;
     fastPictures = !slow && ms < GPU_LOW ? fastPictures + 1 : 0;
     const area = (w) => (w.drawn ? (w.drawn.crop.r - w.drawn.crop.l) * (w.drawn.crop.b - w.drawn.crop.t) * QUALITY[w.quality] : 0);
-    if (slowPictures >= DROP_AFTER) {
+    if (slowPictures >= DROP_AFTER && tune.adaptive !== 0) {
       slowPictures = 0;
       let pick = null;
       for (const w of worlds.values()) if (w.moving && !w.culled && w.quality < QUALITY.length - 1 && (!pick || area(w) > area(pick))) pick = w;
@@ -332,7 +336,7 @@ export const SURFACE = String.raw`
     }
   };
   const watchGpu = () => {
-    const gl = renderer.getContext(), sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), start = realNow();
+    const gl = renderer.getContext(), sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), start = realNow(), began = meter ? meter.began : 0;
     gl.flush();
     gpuBusy = true;
     const poll = () => {
@@ -341,6 +345,7 @@ export const SURFACE = String.raw`
       gl.deleteSync(sync);
       gpuBusy = false;
       gpu.ms = realNow() - start;
+      if (meter) meterFence(gpu.ms, realNow() - began);
       steer(gpu.ms);
       kick();
     };
@@ -407,6 +412,7 @@ export const SURFACE = String.raw`
     else if (m.type === 'presented') { if (m.n === sent) { waiting = false; kick(); } }
     else if (m.type === 'add') addWorld(m.world);
     else if (m.type === 'remove') removeWorld(m.key);
+    else if (m.type === 'stats') setStats(m.on);
     else if (m.type === 'ping') post({ type: 'pong', n: m.n, running: current ? current.key.node : last ? last.key.node : null, info: infoNow() });
     else {
       const w = m.key ? worlds.get(idOf(m.key)) : null;
@@ -480,6 +486,7 @@ export const SURFACE = String.raw`
         if (at) fail(at, error); else console.error(error);
       };
       renderer.setClearColor(0x000000, 0);
+      setTune(m.tune);
       sizeSurface(m);
       makeLook();
       makeSurface();

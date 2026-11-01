@@ -2,6 +2,8 @@
 // MessagePort. See docs/learning-space/one-world-architecture.md.
 // Board values are board points. Pixels are device pixels of the surface.
 
+import type { WorldTune } from './world-tune'
+
 /** Ticks per second of item time: the grid of previews and stills. */
 export const WORLD_TICK_HZ = 60
 
@@ -105,9 +107,45 @@ export interface WorldStart extends WorldKey {
   pins?: WorldPin[]
 }
 
+/** One window of rendering, about one second. Per-picture values are for the pictures in this window. Null: no picture in it. */
+export interface WorldStats {
+  /** Length of the window. */
+  seconds: number
+  pictures: number
+  picturesPerSecond: number
+  /** Where gpuMs comes from. 'fence': wall time from flush to fence, which is not pure GPU time. */
+  gpuSource: 'timer' | 'fence' | null
+  gpuMsMedian: number | null
+  gpuMsP95: number | null
+  /** Wall time from flush to fence. */
+  fenceMsMedian: number | null
+  /** Wall time from the first render call of a picture to its fence. */
+  pictureMsMedian: number | null
+  /** Worker CPU time in the render calls of a picture, with the transfer of the bitmap. */
+  cpuMsMedian: number | null
+  /** Lowest share of full resolution over the shown worlds, 1 to 0.5. */
+  resolution: number
+  /** Output pixels rendered per picture, in millions. */
+  megapixels: number | null
+  drawCalls: number | null
+  triangles: number | null
+  /** renderer.render calls per picture. */
+  passes: number | null
+  programs: number
+  textures: number
+  geometries: number
+  /** Shared render targets. */
+  targets: number
+  worldsAlive: number
+  /** Worlds rendered per picture. */
+  worldsRendered: number | null
+  /** Worlds per picture that waited for their turn. */
+  worldsWaited: number | null
+}
+
 export type PageToWorld =
   /** width and height: board element in CSS pixels. margin: overscan in CSS pixels per side. */
-  | { type: 'init'; width: number; height: number; dpr: number; margin: number }
+  | { type: 'init'; width: number; height: number; dpr: number; margin: number; tune?: WorldTune }
   | { type: 'resize'; width: number; height: number; dpr: number }
   /** Sent when the camera or a placement changes. seq grows by one each time. */
   | { type: 'view'; seq: number; camera: WorldCamera; placements: WorldPlacement[] }
@@ -123,6 +161,8 @@ export type PageToWorld =
   | { type: 'advance'; key: WorldKey; to: number; capture: boolean; request: number }
   | { type: 'capture'; key: WorldKey; request: number }
   | { type: 'ping'; n: number }
+  /** While on, the worker sends one `stats` message per second. */
+  | { type: 'stats'; on: boolean }
   /** A pointer event. Send it only while the world's last `subscribe` says pointer. */
   | { type: 'pointer'; key: WorldKey; event: WorldPointer }
   /** What is at a board point. The answer is `picked` with the same request. */
@@ -154,6 +194,7 @@ export type WorldToPage =
    * one names the world at fault. No `key` field: this message is for the surface, not for one world.
    */
   | { type: 'running'; running: WorldKey | null }
+  | { type: 'stats'; stats: WorldStats }
   /**
    * One finished surface picture, transferred. The page shows it in one paint,
    * together with its transform and its points, so everything stays in step.

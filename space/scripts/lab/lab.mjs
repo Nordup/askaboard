@@ -4,7 +4,7 @@
  * live-drawing experiments, with a scratch HOME, user-data-dir, traces and a
  * learning folder with one board under /private/tmp/claude-501/ls-lab/<name>/.
  *
- *   node scripts/lab/lab.mjs start [--name lab] [--built] [--fresh] [--no-code] [--no-html] [--brief <file>] [--mcp-port 47890] [--debug-port 9490]
+ *   node scripts/lab/lab.mjs start [--name lab] [--built] [--fresh] [--no-code] [--no-html] [--brief <file>] [--tune <json>] [--mcp-port 47890] [--debug-port 9490]
  *   node scripts/lab/lab.mjs stop [--name lab]
  *   node scripts/lab/lab.mjs status [--name lab]
  *
@@ -12,7 +12,8 @@
  * `electron .` on out/ (run `npm run build` first). --fresh starts with an empty
  * folder and board. --no-code sets the lab switch LS_LAB_NO_CODE=1 (no worlds
  * for agents; src/main/lab-switch.ts), --no-html LS_LAB_NO_HTML=1 (no HTML
- * material), --brief <file> LS_LAB_BRIEF (a draft brief). stop kills only the PIDs in the state file.
+ * material), --brief <file> LS_LAB_BRIEF (a draft brief), --tune <json> SPACE_WORLD_TUNE (measuring
+ * switches, scripts/perf/README.md). stop kills only the PIDs in the state file.
  */
 import { resolve } from 'node:path'
 import { args, alive, portInUse, readState, startInstance, stopInstance } from './common.mjs'
@@ -30,6 +31,9 @@ async function main() {
     const brief = option('--brief', null)
     if (brief) process.env.LS_LAB_BRIEF = resolve(brief)
     else delete process.env.LS_LAB_BRIEF
+    const tune = option('--tune', null)
+    if (tune) process.env.SPACE_WORLD_TUNE = tune
+    else delete process.env.SPACE_WORLD_TUNE
     const state = await startInstance({
       name,
       mcpPort: Number(option('--mcp-port', '47890')),

@@ -1,6 +1,7 @@
 import type { LiveNode } from '@shared/board-format'
 import { LIVE_ORIGIN } from '@shared/live-libs'
-import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldToPage } from '@shared/world-protocol'
+import type { PageToWorld, WorldCamera, WorldKey, WorldPlacement, WorldStart, WorldStats, WorldToPage } from '@shared/world-protocol'
+import type { WorldTune } from '@shared/world-tune'
 import type { WorldPoints } from '@shared/world-links'
 import type { NodeOverride } from '../../board/playback'
 import type { Camera, Point } from '../../board/types'
@@ -83,7 +84,21 @@ type Picture = Extract<WorldToPage, { type: 'picture' }>
 
 const IDENTITY: WorldPlacement['matrix'] = [1, 0, 0, 1, 0, 0]
 
-const margin = (): number => workerSide.WORLD_MARGIN
+/** The measuring switches of this run (SPACE_WORLD_TUNE). */
+const tune: WorldTune = window.space?.worldTune ?? {}
+
+const margin = (): number => tune.surfaceMargin ?? workerSide.WORLD_MARGIN
+
+/** The board surfaces, and who listens to their stats. While nobody listens, no worker measures. */
+const boardSurfaces: Set<WorldSurface> = (import.meta.hot?.data.boardSurfaces as Set<WorldSurface> | undefined) ?? new Set()
+if (import.meta.hot) import.meta.hot.data.boardSurfaces = boardSurfaces
+let statsListener: ((stats: WorldStats) => void) | null = null
+
+/** Ask every board surface for one snapshot per second, now and after a new worker. null ends it. */
+export function listenWorldStats(listener: ((stats: WorldStats) => void) | null): void {
+  statsListener = listener
+  for (const surface of boardSurfaces) surface.send({ type: 'stats', on: !!listener })
+}
 
 const keyOf = (key: WorldKey): string => `${key.node}\u0000${key.generation}`
 
@@ -167,6 +182,7 @@ export class WorldSurface {
     fixed?: { width: number; height: number; dpr: number }
   ) {
     this.context = canvas?.getContext('bitmaprenderer') ?? null
+    if (canvas) boardSurfaces.add(this)
     if (fixed) this.begin({ type: 'init', ...fixed, margin: 0 })
   }
 
@@ -272,7 +288,8 @@ export class WorldSurface {
   /** The first size: the waiting messages go after it. */
   private begin(init: Extract<PageToWorld, { type: 'init' }>): void {
     const waiting = this.outbox ?? []
-    this.outbox = [init, ...waiting]
+    const stats: PageToWorld[] = this.canvas && statsListener ? [{ type: 'stats', on: true }] : []
+    this.outbox = [{ ...init, tune }, ...stats, ...waiting]
     this.opened = true
     this.flush()
   }
@@ -287,6 +304,7 @@ export class WorldSurface {
     if (this.disposed) return
     this.answeredAt = performance.now()
     if (m.type === 'picture') this.picture(m)
+    else if (m.type === 'stats') statsListener?.(m.stats)
     else if (m.type === 'running') {
       if (this.running && (!m.running || keyOf(m.running) !== keyOf(this.running))) this.members.get(keyOf(this.running))?.settled()
       this.running = m.running
@@ -367,7 +385,7 @@ export class WorldSurface {
   }
 
   private resize(canvas: HTMLCanvasElement, vw: number, vh: number): void {
-    const dpr = window.devicePixelRatio || 1
+    const dpr = Math.min(window.devicePixelRatio || 1, tune.dpr ?? Infinity)
     const size = `${vw}x${vh}@${dpr}`
     if (size === this.size) return
     const first = !this.size
@@ -434,6 +452,7 @@ export class WorldSurface {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    boardSurfaces.delete(this)
     this.waiting?.bitmap.close()
     this.waiting = null
     clearInterval(this.watchdog)

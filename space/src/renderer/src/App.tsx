@@ -35,6 +35,7 @@ import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
 import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
+import { perfMeter } from './perf-meter'
 import type { BoardStories } from '@shared/scene-story'
 import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
 
@@ -798,6 +799,8 @@ export function App() {
         resources: () => liveResources(),
         validate: (code: string, params?: Record<string, number>) => validateWorld(code, params)
       },
+      /** The render meter (scripts/perf/render.mjs): start(), stop(), read(). */
+      perf: perfMeter,
       /** The sidebar's own board actions (dev checks, scripts/drive.mjs board-action): the same callbacks as its Rename and Move to Trash menu items; trash answers the confirm with OK. */
       sidebar: {
         rename: (path: string, name: string) => sidebarRef.current.renameBoard(path, name),
