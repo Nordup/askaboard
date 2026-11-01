@@ -523,7 +523,7 @@ export const LOOK = String.raw`
     if (!direct || look.environment > 0) makeFilm();
     rendering = w;
     // The output can be smaller than the crop (dynamic resolution). The scene covers only the inner crop: outside it there is only glow.
-    const W = output.width, H = output.height, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
+    const W = output.useW, H = output.useH, cw = crop.r - crop.l, ch = crop.b - crop.t, res = W / cw, scale = s * res;
     const iw = inner.r - inner.l, ih = inner.b - inner.t;
     const IW = Math.max(2, Math.min(W, Math.ceil(iw * res))), IH = Math.max(2, Math.min(H, Math.ceil(ih * res)));
     const box = new THREE.Vector4((inner.l - crop.l) / cw, (crop.b - inner.b) / ch, iw / cw, ih / ch);

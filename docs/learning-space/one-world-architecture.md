@@ -162,7 +162,11 @@ flowchart LR
   so no pass follows.
 - Compositing uses `ONE, ONE_MINUS_SRC_ALPHA`, with colour and alpha multiplied by
   world opacity.
-- Render targets come from a pool, in steps of 64 pixels.
+- Render targets come from a pool with a limit in bytes that follows the device's
+  memory. It drops what no picture used for the longest time, and it holds nothing
+  after 3 s with no picture. An output has room, in steps of 128 pixels, and it uses a
+  corner of its texture, so a zoom seldom allocates. Sizes stay on the grid of 64
+  pixels at a lower resolution too.
 - A moving world can lower its samples and then its resolution (`QUALITY`, `steer` in
   `world/worker/surface.ts`), and a world at rest renders once at full quality.
 

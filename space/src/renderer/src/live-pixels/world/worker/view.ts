@@ -483,37 +483,88 @@ export const VIEW = String.raw`
     c.updateMatrixWorld();
   };
 
-  // Render targets. Shared targets hold the passes of one world and are free again after that pass.
-  // Outputs belong to one world until it gives them back.
+  // Render targets. Shared targets hold the passes of one world and are free again after that pass. Outputs belong to one world until it gives
+  // them back. The pool has a limit in bytes and drops what no picture used for the longest time. When no picture came for a while, it holds nothing.
   const shared = new Map();
-  const spareOutputs = new Map();
-  let useCount = 0;
+  const spareOutputs = [];
+  const IDLE_MS = 3000, GIGABYTE_BYTES = 64e6, MOST_BYTES = 512e6;
+  /** The limit of the pool. Chromium gives memory in steps up to 8 GB, Safari gives none. */
+  const poolLimit = Math.min(MOST_BYTES, (scope.navigator.deviceMemory || 4) * GIGABYTE_BYTES);
+  let useCount = 0, poolBytes = 0, lastUse = 0, idleTimer = 0;
+  const targetBytes = (t) => {
+    const samples = t.samples || 0, pixel = t.texture.type === THREE.UnsignedByteType ? 4 : 8;
+    return t.width * t.height * (pixel * (1 + samples) + (t.depthBuffer ? 4 * Math.max(1, samples) : 0));
+  };
+  const itemBytes = (item) => (item.isRenderTarget ? targetBytes(item) : item.down.concat(item.up).reduce((sum, t) => sum + (t ? targetBytes(t) : 0), 0));
   const sharedOf = (kind, W, H, make) => {
     const id = kind + ':' + W + 'x' + H;
     let entry = shared.get(id);
-    if (!entry) { entry = { item: make(), used: 0 }; shared.set(id, entry); }
+    if (!entry) {
+      const item = make();
+      entry = { item, used: 0, bytes: itemBytes(item) };
+      shared.set(id, entry);
+      poolBytes += entry.bytes;
+    }
     entry.used = useCount;
     return entry.item;
   };
-  const TRIM_AFTER = 600;
-  const trimTargets = () => {
-    useCount++;
-    if (useCount % 120) return;
-    for (const [id, entry] of shared) if (useCount - entry.used > TRIM_AFTER) { entry.item.dispose(); shared.delete(id); }
-    for (const [id, list] of spareOutputs) { for (const t of list) t.dispose(); spareOutputs.delete(id); }
+  const dropShared = (id, entry) => { entry.item.dispose(); shared.delete(id); poolBytes -= entry.bytes; };
+  const dropSpare = (t) => { spareOutputs.splice(spareOutputs.indexOf(t), 1); poolBytes -= targetBytes(t); t.dispose(); };
+  const freeIdle = () => {
+    idleTimer = 0;
+    if (realNow() - lastUse < IDLE_MS) { idleTimer = nativeSetTimeout(freeIdle, IDLE_MS); return; }
+    for (const [id, entry] of shared) dropShared(id, entry);
+    while (spareOutputs.length) dropSpare(spareOutputs[0]);
   };
-  /** direct: the output is where the scene renders, so it has depth and samples. Its texture holds display colours, in plain RGBA8. */
-  const takeOutput = (W, H, direct, samples) => {
-    const list = spareOutputs.get(W + 'x' + H + (direct ? 'd' + samples : ''));
-    if (list && list.length) return list.pop();
-    const t = new THREE.WebGLRenderTarget(W, H, { type: THREE.UnsignedByteType, depthBuffer: !!direct, samples: direct ? samples : 0, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
-    if (direct) { t.isXRRenderTarget = true; t.texture.colorSpace = THREE.SRGBColorSpace; t.texture.internalFormat = 'RGBA8'; }
-    t.direct = !!direct;
+  /** After each picture. What this picture used stays, so a limit under one picture's needs slows nothing but the others. */
+  const trimTargets = () => {
+    const now = useCount++;
+    lastUse = realNow();
+    if (!idleTimer) idleTimer = nativeSetTimeout(freeIdle, IDLE_MS);
+    while (poolBytes > poolLimit) {
+      let oldest = Infinity, spare = null, id = null;
+      for (const t of spareOutputs) if (t.used < oldest) { oldest = t.used; spare = t; }
+      for (const [key, entry] of shared) if (entry.used < now && entry.used < oldest) { oldest = entry.used; id = key; spare = null; }
+      if (spare) dropSpare(spare);
+      else if (id !== null) dropShared(id, shared.get(id));
+      else return;
+    }
+  };
+
+  /**
+   * An output has room: it is larger than the size in use now, in steps of OUTPUT_STEP. A zoom moves the crop by GRID at each step, and the same
+   * output serves many of those steps, so a zoom allocates seldom. OUTPUT_WASTE: the most area that an output can hold beyond what is in use.
+   */
+  const OUTPUT_STEP = 128, OUTPUT_WASTE = 1.6;
+  const stepUp = (n) => Math.ceil(n / OUTPUT_STEP) * OUTPUT_STEP;
+  /** direct: the output is where the scene renders, so it has depth and samples. */
+  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.samples === samples) && t.width >= W && t.height >= H
+    && t.width * t.height <= Math.max(W * H * OUTPUT_WASTE, stepUp(W) * stepUp(H));
+  /** Use the corner of t that holds W x H. Three renders there, and the composite reads there. */
+  const useOutput = (t, W, H) => {
+    t.useW = W; t.useH = H;
+    t.viewport.set(0, 0, W, H);
+    t.scissor.set(0, 0, W, H);
+    t.scissorTest = true;
     return t;
   };
+  /** Its texture holds display colours, in plain RGBA8. */
+  const takeOutput = (W, H, direct, samples) => {
+    let best = null;
+    for (const t of spareOutputs) if (fitsOutput(t, W, H, direct, samples) && (!best || t.width * t.height < best.width * best.height)) best = t;
+    if (best) {
+      spareOutputs.splice(spareOutputs.indexOf(best), 1);
+      poolBytes -= targetBytes(best);
+      return useOutput(best, W, H);
+    }
+    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: !!direct, samples: direct ? samples : 0, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    if (direct) { t.isXRRenderTarget = true; t.texture.colorSpace = THREE.SRGBColorSpace; t.texture.internalFormat = 'RGBA8'; }
+    t.direct = !!direct;
+    return useOutput(t, W, H);
+  };
   const giveOutput = (t) => {
-    const id = t.width + 'x' + t.height + (t.direct ? 'd' + t.samples : '');
-    if (!spareOutputs.has(id)) spareOutputs.set(id, []);
-    spareOutputs.get(id).push(t);
+    t.used = useCount;
+    spareOutputs.push(t);
+    poolBytes += targetBytes(t);
   };
 `

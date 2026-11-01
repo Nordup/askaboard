@@ -74,7 +74,10 @@ export const SURFACE = String.raw`
     u.origin.value.set((p.cx - x + (p.a * ox + p.c * oy) * scale) * toClipX - 1, (p.cy - y + (p.b * ox + p.d * oy) * scale) * toClipY + 1);
     u.axisX.value.set(p.a * qw * scale * toClipX, p.b * qw * scale * toClipY);
     u.axisY.value.set(p.c * qh * scale * toClipX, p.d * qh * scale * toClipY);
-    u.t.value = w.output.texture;
+    const output = w.output;
+    u.t.value = output.texture;
+    u.used.value.set(output.useW / output.width, output.useH / output.height);
+    u.edge.value.set(0.5 / output.width, 0.5 / output.height);
     u.opacity.value = Math.max(0, Math.min(1, w.placement.opacity));
     u.reveal.value = Math.max(0, Math.min(1, w.placement.reveal));
     // The wipe runs over what the world reaches, so it does not move when the crop moves.
@@ -89,11 +92,12 @@ export const SURFACE = String.raw`
     compositeMat = new THREE.ShaderMaterial({
       toneMapped: false, depthTest: false, depthWrite: false, transparent: true,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-      uniforms: { t: { value: null }, opacity: { value: 1 }, reveal: { value: 1 }, span: { value: new THREE.Vector2(0, 1) }, origin: { value: new THREE.Vector2() }, axisX: { value: new THREE.Vector2() }, axisY: { value: new THREE.Vector2() } },
+      uniforms: { t: { value: null }, used: { value: new THREE.Vector2(1, 1) }, edge: { value: new THREE.Vector2() }, opacity: { value: 1 }, reveal: { value: 1 }, span: { value: new THREE.Vector2(0, 1) }, origin: { value: new THREE.Vector2() }, axisX: { value: new THREE.Vector2() }, axisY: { value: new THREE.Vector2() } },
       vertexShader: 'uniform vec2 origin, axisX, axisY; varying vec2 vUv; void main(){ vUv = uv; vec2 q = vec2(uv.x, 1.0 - uv.y); gl_Position = vec4(origin + axisX * q.x + axisY * q.y, 0.0, 1.0); }',
       fragmentShader: [
-        'uniform sampler2D t; uniform float opacity, reveal; uniform vec2 span; varying vec2 vUv;',
-        'void main(){ vec4 c = texture2D(t, vUv); float k = opacity;',
+        'uniform sampler2D t; uniform float opacity, reveal; uniform vec2 span, used, edge; varying vec2 vUv;',
+        // The output is larger than its picture: nothing past the picture's last pixel may join the filter.
+        'void main(){ vec4 c = texture2D(t, clamp(vUv * used, edge, used - edge)); float k = opacity;',
         'if (reveal < 1.0) { float e = (vUv.x - span.x) / (span.y - span.x); k *= 1.0 - smoothstep(reveal * 1.2 - 0.2, reveal * 1.2, e); }',
         'gl_FragColor = c * k; }'
       ].join('\n')
@@ -117,7 +121,8 @@ export const SURFACE = String.raw`
     if (!w.stale && !w.sharpen && same && contains(old.crop, crop)) return null;
     // Quality falls only while a world moves. It renders sharp again when it rests.
     const quality = w.moving || (old && !same) ? w.quality : 0, res = QUALITY[quality];
-    const W = Math.ceil(((crop.r - crop.l) * res) / 2) * 2, H = Math.ceil(((crop.b - crop.t) * res) / 2) * 2;
+    // A size stays on the grid at any resolution, so a change of crop or of quality meets the sizes that the pool already has.
+    const W = Math.max(GRID, Math.ceil(((crop.r - crop.l) * res) / GRID) * GRID), H = Math.max(GRID, Math.ceil(((crop.b - crop.t) * res) / GRID) * GRID);
     const m = surface.margin * surface.dpr;
     const seen = place.cx + crop.r * Math.abs(place.a) + crop.b * Math.abs(place.c) > m && place.cx + crop.l * Math.abs(place.a) - crop.b * Math.abs(place.c) < surface.width - m
       && place.cy + crop.b > m && place.cy + crop.t < surface.height - m;
@@ -136,7 +141,8 @@ export const SURFACE = String.raw`
     const direct = isDirect(lookOf(w)), samples = samplesAt(quality);
     // A world that is stale can show something new. A new zoom or a sharp picture at rest cannot.
     if (w.stale) w.content++;
-    if (!w.output || w.output.width !== W || w.output.height !== H || w.output.direct !== direct || (direct && w.output.samples !== samples)) {
+    if (w.output && fitsOutput(w.output, W, H, direct, samples)) useOutput(w.output, W, H);
+    else {
       if (w.output) giveOutput(w.output);
       w.output = takeOutput(W, H, direct, samples);
     }
@@ -505,7 +511,7 @@ export const SURFACE = String.raw`
   const infoNow = () => {
     const renders = {};
     for (const w of worlds.values()) renders[w.key.node] = w.renders || 0;
-    return { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs ? renderer.info.programs.length : 0, targets: shared.size, renders };
+    return { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, programs: renderer.info.programs ? renderer.info.programs.length : 0, targets: shared.size + spareOutputs.length, renders };
   };
 
   /** Start the next frame now, in place of any wait: the page showed the last picture, so the next one reaches its next paint. */
