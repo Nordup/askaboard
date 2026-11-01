@@ -74,7 +74,7 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 | `budget` | Fence ms per picture over which a moving world lowers its quality. The default is 14. A small value acts as a weak machine. |
 | `uncapped` | 1: pictures wait only for the GPU, and Chromium's frame limit is off. `render.mjs` sets it unless `--capped`. |
 
-A world costs much more CPU in its first 20 s: the renderer with the worker used about 80% of one core 0 to 11 s after the scene ended, and 12% after 25 s. Compare CPU only at the same time after start. GPU numbers do not show this.
+The first seconds of a world cost more CPU, so compare CPU only at the same time after start. `--burst` gives it. With a canvas of 11 MP per picture the renderers used 90% of one core for 10 s. Since the canvas covers only the worlds, they use 35% in the first 5 s and about 20% later.
 
 In the app, `window.__spaceDev.perf` has `start()`, `stop()` and `read()`. `src/renderer/src/perf-meter.ts` owns the page state and merges the worker's snapshot, which comes once per second. While it is off, neither the page nor the worker measures anything.
 
