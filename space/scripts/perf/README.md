@@ -71,6 +71,7 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 | `adaptive` | 0: the resolution stays at the full share, so dynamic resolution hides no cost. Worlds still take turns inside the budget of a picture. |
 | `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
 | `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
+| `budget` | Fence ms per picture over which a moving world lowers its quality. The default is 14. A small value acts as a weak machine. |
 | `uncapped` | 1: pictures wait only for the GPU, and Chromium's frame limit is off. `render.mjs` sets it unless `--capped`. |
 
 A world costs much more CPU in its first 20 s: the renderer with the worker used about 80% of one core 0 to 11 s after the scene ended, and 12% after 25 s. Compare CPU only at the same time after start. GPU numbers do not show this.

@@ -359,8 +359,8 @@ export const LOOK = String.raw`
   const targetOptions = (samples, depth) => ({ type: tune.hdr === 0 ? THREE.UnsignedByteType : THREE.HalfFloatType, samples, depthBuffer: !!depth, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
   // The plain look renders as three.js does to a canvas: materials write display colours, blending happens there, and a
   // ShaderMaterial's vec3(0.5) is 128 on screen. three.js does this for a target that says it is an XR target with an sRGB texture.
-  const sceneTarget = (W, H, display) => sharedOf(display ? 'scene-display' : 'scene', W, H, () => {
-    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(tune.msaa ?? 4, true));
+  const sceneTarget = (W, H, display, samples) => sharedOf((display ? 'scene-display' : 'scene') + samples, W, H, () => {
+    const rt = new THREE.WebGLRenderTarget(W, H, targetOptions(samples, true));
     rt.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
     if (display) { rt.isXRRenderTarget = true; rt.texture.colorSpace = THREE.SRGBColorSpace; }
     return rt;
@@ -449,7 +449,7 @@ export const LOOK = String.raw`
   };
 
   /** Render world w at scale s for a crop into output. Sets all renderer state that it needs and restores it. */
-  const renderWorld = (w, s, crop, inner, output) => {
+  const renderWorld = (w, s, crop, inner, output, samples) => {
     const look = lookOf(w), camera = w.camera, direct = isDirect(look);
     if (!direct || look.environment > 0) makeFilm();
     rendering = w;
@@ -520,7 +520,7 @@ export const LOOK = String.raw`
         r.spread.value.set(((12 * s) / FILM_SCALE) / iw, ((12 * s) / FILM_SCALE) / ih);
       }
 
-      const scene = sceneTarget(IW, IH, look.name !== 'film');
+      const scene = sceneTarget(IW, IH, look.name !== 'film', samples);
       renderer.setRenderTarget(scene);
       renderer.clear();
       renderer.render(w.scene, camera);

@@ -21,4 +21,6 @@ export interface WorldTune {
   surfaceMargin?: number
   /** 1: no picture waits for a page paint or a display frame, and Chromium starts with its frame limit off. */
   uncapped?: number
+  /** The fence time per picture (ms) over which a moving world lowers its quality: a small value acts as a weak machine. */
+  budget?: number
 }

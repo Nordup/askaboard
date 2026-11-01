@@ -112,13 +112,13 @@ export const SURFACE = String.raw`
     }
     const old = w.drawn, same = old && Math.abs(old.s - place.s) < 1e-6;
     if (!w.stale && same && contains(old.crop, crop)) return null;
-    // Resolution falls only while a world moves. It renders sharp again when it rests.
-    const res = w.moving || (old && !same) ? QUALITY[w.quality] : 1;
+    // Quality falls only while a world moves. It renders sharp again when it rests.
+    const quality = w.moving || (old && !same) ? w.quality : 0, res = QUALITY[quality];
     const W = Math.ceil(((crop.r - crop.l) * res) / 2) * 2, H = Math.ceil(((crop.b - crop.t) * res) / 2) * 2;
     const m = surface.margin * surface.dpr;
     const seen = place.cx + crop.r * Math.abs(place.a) + crop.b * Math.abs(place.c) > m && place.cx + crop.l * Math.abs(place.a) - crop.b * Math.abs(place.c) < surface.width - m
       && place.cy + crop.b > m && place.cy + crop.t < surface.height - m;
-    return { w, place, crop, res, W, H, pixels: W * H, seen };
+    return { w, place, crop, quality, W, H, pixels: W * H, seen };
   };
 
   /** A world with no frame callback counts no ticks. Its first picture after setup counts as a frame, so the page knows that its setup ended. */
@@ -129,14 +129,14 @@ export const SURFACE = String.raw`
   };
 
   const renderPlan = (plan) => {
-    const { w, place, crop, res, W, H } = plan;
-    const direct = isDirect(lookOf(w));
-    if (!w.output || w.output.width !== W || w.output.height !== H || w.output.direct !== direct) {
+    const { w, place, crop, quality, W, H } = plan;
+    const direct = isDirect(lookOf(w)), samples = samplesAt(quality);
+    if (!w.output || w.output.width !== W || w.output.height !== H || w.output.direct !== direct || (direct && w.output.samples !== samples)) {
       if (w.output) giveOutput(w.output);
-      w.output = takeOutput(W, H, direct);
+      w.output = takeOutput(W, H, direct, samples);
     }
-    renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output);
-    w.drawn = { s: place.s, crop, res };
+    renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output, samples);
+    w.drawn = { s: place.s, crop, quality };
     w.stale = false;
     w.moving = false;
     w.waited = 0;
@@ -230,10 +230,11 @@ export const SURFACE = String.raw`
           const changed = pictureChanged(w);
           if (changed) w.stale = true;
           w.moving = changed && w.timeMoved;
+          if (w.moving) w.movedAt = sent;
           w.timeMoved = false;
         }
         // At rest a world goes sharp once, and then nothing renders.
-        if (!w.moving && w.drawn && w.drawn.res < 1) w.stale = true;
+        if (!w.moving && w.drawn && w.drawn.quality > 0) w.stale = true;
         if (!w.stale && w.drawn && w.reach && !cropMoved(w)) continue;
         try { const plan = planWorld(w); if (plan) plans.push(plan); } catch (e) { fail(w, e); }
       }
@@ -305,8 +306,8 @@ export const SURFACE = String.raw`
       const crop = snapped((reach.l - glow) * s, (reach.t - glow) * s, (reach.r + glow) * s, (reach.b + glow) * s);
       if (!crop) return null;
       const W = crop.r - crop.l, H = crop.b - crop.t;
-      target = takeOutput(W, H, isDirect(lookOf(w)));
-      renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target);
+      target = takeOutput(W, H, isDirect(lookOf(w)), samplesAt(0));
+      renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target, samplesAt(0));
       const data = new Uint8Array(W * H * 4);
       renderer.readRenderTargetPixels(target, 0, 0, W, H, data);
       firstPicture(w);
@@ -352,28 +353,46 @@ export const SURFACE = String.raw`
   // the page's own paints do not wait behind a backlog of worlds.
   let gpuBusy = false;
   const gpu = { ms: 0 };
-  /** Shares of full resolution while worlds move, and the GPU time per picture (ms) that moves a world between them. */
-  const QUALITY = [1, 0.85, 0.72, 0.6, 0.5];
-  const GPU_HIGH = 14, GPU_LOW = 8.5, DROP_AFTER = 5, RISE_AFTER = 45;
-  let slowPictures = 0, fastPictures = 0, skipped = 0, picturePixels = 0, msPerMegapixel = 3;
-  /** Each world keeps its own resolution. A picture that runs slow, or leaves a world waiting, lowers the largest moving world. */
+  /**
+   * The steps of a moving world: its share of full resolution, and its anti-aliasing samples. Samples fall first, 0.5 is a pixel ratio of 1 on
+   * a Retina screen, and a world at rest always has step 0. GPU_HIGH: the fence time per picture (ms) that a moving world must stay under.
+   */
+  const QUALITY = [1, 1, 0.85, 0.72, 0.6, 0.5], SAMPLES = [4, 2, 2, 2, 0, 0];
+  const samplesAt = (quality) => Math.min(tune.msaa ?? 4, SAMPLES[quality]);
+  const GPU_HIGH = 14, DROP_AFTER = 5, RISE_AFTER = 30;
+  /** What a fence takes with no work: it reads back late. So only the time over this grows with the pixels. */
+  const FENCE_FLOOR = 5;
+  let smooth = 0, slowPictures = 0, fastPictures = 0, skipped = 0, picturePixels = 0, msPerMegapixel = 3;
+  /** Fence ms of a world's picture at another share of resolution. */
+  const atShare = (ms, from, to) => FENCE_FLOOR + Math.max(0, ms - FENCE_FLOOR) * (to / from) ** 2;
+  /**
+   * Each world keeps its own step. A slow stretch, or a world left waiting, lowers the largest moving world at once to what the budget allows.
+   * The time is smoothed and clamped, so a spike from another app or a shader compile moves nothing, and a rise comes only when the next step fits.
+   */
   const steer = (ms) => {
     if (picturePixels > 0) msPerMegapixel += (ms / (picturePixels / 1e6) - msPerMegapixel) * 0.2;
-    const slow = ms > GPU_HIGH || skipped > 0;
+    const high = tune.budget ?? GPU_HIGH;
+    smooth += (Math.min(ms, high * 2) - smooth) * 0.15;
+    const slow = smooth > high || skipped > 0;
     slowPictures = slow ? slowPictures + 1 : 0;
-    fastPictures = !slow && ms < GPU_LOW ? fastPictures + 1 : 0;
+    fastPictures = slow ? 0 : fastPictures + 1;
     const area = (w) => (w.drawn ? (w.drawn.crop.r - w.drawn.crop.l) * (w.drawn.crop.b - w.drawn.crop.t) * QUALITY[w.quality] : 0);
     if (slowPictures >= DROP_AFTER && tune.adaptive !== 0) {
       slowPictures = 0;
       let pick = null;
-      for (const w of worlds.values()) if (w.moving && !w.culled && w.quality < QUALITY.length - 1 && (!pick || area(w) > area(pick))) pick = w;
-      if (pick) pick.quality++;
+      // A render clears w.moving, so what moved in the last pictures counts.
+      for (const w of worlds.values()) if (sent - w.movedAt < 3 && !w.culled && w.quality < QUALITY.length - 1 && (!pick || area(w) > area(pick))) pick = w;
+      if (pick) {
+        const from = QUALITY[pick.quality];
+        pick.quality++;
+        while (pick.quality < QUALITY.length - 1 && atShare(smooth, from, QUALITY[pick.quality]) > high) pick.quality++;
+      }
     }
     if (fastPictures >= RISE_AFTER) {
       fastPictures = 0;
       let pick = null;
       for (const w of worlds.values()) if (w.quality > 0 && (!pick || area(w) < area(pick))) pick = w;
-      if (pick) pick.quality--;
+      if (pick && atShare(smooth, QUALITY[pick.quality], QUALITY[pick.quality - 1]) < high * 0.95) pick.quality--;
     }
   };
   const watchGpu = () => {

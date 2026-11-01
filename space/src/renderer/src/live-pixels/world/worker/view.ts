@@ -204,16 +204,16 @@ export const VIEW = String.raw`
     for (const [id, list] of spareOutputs) { for (const t of list) t.dispose(); spareOutputs.delete(id); }
   };
   /** direct: the output is where the scene renders, so it has depth and samples. Its texture holds display colours, in plain RGBA8. */
-  const takeOutput = (W, H, direct) => {
-    const list = spareOutputs.get(W + 'x' + H + (direct ? 'd' : ''));
+  const takeOutput = (W, H, direct, samples) => {
+    const list = spareOutputs.get(W + 'x' + H + (direct ? 'd' + samples : ''));
     if (list && list.length) return list.pop();
-    const t = new THREE.WebGLRenderTarget(W, H, { type: THREE.UnsignedByteType, depthBuffer: !!direct, samples: direct ? tune.msaa ?? 4 : 0, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    const t = new THREE.WebGLRenderTarget(W, H, { type: THREE.UnsignedByteType, depthBuffer: !!direct, samples: direct ? samples : 0, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
     if (direct) { t.isXRRenderTarget = true; t.texture.colorSpace = THREE.SRGBColorSpace; t.texture.internalFormat = 'RGBA8'; }
     t.direct = !!direct;
     return t;
   };
   const giveOutput = (t) => {
-    const id = t.width + 'x' + t.height + (t.direct ? 'd' : '');
+    const id = t.width + 'x' + t.height + (t.direct ? 'd' + t.samples : '');
     if (!spareOutputs.has(id)) spareOutputs.set(id, []);
     spareOutputs.get(id).push(t);
   };
