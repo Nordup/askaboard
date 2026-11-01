@@ -156,8 +156,29 @@ function listen(): void {
   })
 }
 
+/** Puts a picture on the canvas, or clears it with null. The caller closes the bitmap. */
+type Present = (bitmap: ImageBitmap | null) => void
+
+/** bitmaprenderer takes a picture with no copy. Where it is missing, a 2D canvas draws the picture. */
+function presenter(canvas: HTMLCanvasElement): Present | null {
+  const direct = tune.flat ? null : canvas.getContext('bitmaprenderer')
+  if (direct) return (bitmap) => direct.transferFromImageBitmap(bitmap)
+  const flat = canvas.getContext('2d')
+  if (!flat) return null
+  return (bitmap) => {
+    if (!bitmap) {
+      flat.clearRect(0, 0, canvas.width, canvas.height)
+      return
+    }
+    if (canvas.width !== bitmap.width) canvas.width = bitmap.width
+    if (canvas.height !== bitmap.height) canvas.height = bitmap.height
+    flat.clearRect(0, 0, canvas.width, canvas.height)
+    flat.drawImage(bitmap, 0, 0)
+  }
+}
+
 export class WorldSurface {
-  private readonly context: ImageBitmapRenderingContext | null
+  private readonly show: Present | null
   private members = new Map<string, WorldMember>()
   private frame: HTMLIFrameElement | null = null
   private box: HTMLElement | null = null
@@ -194,7 +215,7 @@ export class WorldSurface {
     private board: WorldBoard | null,
     fixed?: { width: number; height: number; dpr: number }
   ) {
-    this.context = canvas?.getContext('bitmaprenderer') ?? null
+    this.show = canvas ? presenter(canvas) : null
     if (canvas) boardSurfaces.add(this)
     if (fixed) this.begin({ type: 'init', ...fixed, margin: 0 })
   }
@@ -328,7 +349,7 @@ export class WorldSurface {
   }
 
   private picture(m: Picture): void {
-    if (!this.context || (this.recovering && m.seq < this.recovering.seq)) {
+    if (!this.show || (this.recovering && m.seq < this.recovering.seq)) {
       m.bitmap.close()
       this.post({ type: 'presented', n: m.n })
       return
@@ -390,10 +411,10 @@ export class WorldSurface {
   /** In the board's paint: show the waiting picture, move the canvas to the camera of this paint, and tell the worker what changed. */
   sync(camera: Camera, viewport: Point): void {
     const [vw, vh] = viewport
-    if (!this.canvas || !this.context || vw < 2 || vh < 2) return
+    if (!this.canvas || !this.show || vw < 2 || vh < 2) return
     const view: WorldCamera = { x: camera.center[0] - vw / 2 / camera.zoom, y: camera.center[1] - vh / 2 / camera.zoom, zoom: camera.zoom }
     this.resize(vw, vh)
-    this.adopt(this.context)
+    this.adopt(this.show)
     this.follow(this.canvas, view)
     this.sendView(view)
   }
@@ -408,17 +429,17 @@ export class WorldSurface {
     else this.post({ type: 'resize', width: vw, height: vh, dpr })
   }
 
-  private adopt(context: ImageBitmapRenderingContext): void {
+  private adopt(show: Present): void {
     if (this.members.size === 0) {
       // No world is left: no picture is due.
       if (this.waiting) this.settle(this.waiting)
-      if (this.shownCamera) context.transferFromImageBitmap(null)
+      if (this.shownCamera) show(null)
       this.shownCamera = null
       return
     }
     const picture = this.waiting
     if (!picture) return
-    context.transferFromImageBitmap(picture.bitmap)
+    show(picture.bitmap)
     this.shownCamera = picture.camera
     this.shownBox = picture.box
     for (const member of this.members.values()) member.showPoints(picture.points[member.key.node])
@@ -473,7 +494,7 @@ export class WorldSurface {
     this.waiting = null
     clearInterval(this.watchdog)
     this.endWorker()
-    this.context?.transferFromImageBitmap(null)
+    this.show?.(null)
   }
 }
 
