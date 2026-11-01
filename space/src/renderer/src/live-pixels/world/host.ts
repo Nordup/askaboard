@@ -114,7 +114,7 @@ export class WorldHost implements WorldMember {
   readonly key: WorldKey
   shown = false
   /** What the world's code listens to now. */
-  wants = { pointer: false, ink: false }
+  wants = { pointer: false, wheel: false, ink: false }
   /** Its code has run no frame yet: a long setup is no hang. */
   settingUp = true
   /** The names of its published points, from the last picture. */
@@ -180,7 +180,7 @@ export class WorldHost implements WorldMember {
         this.picks.delete(m.request)
         break
       case 'subscribe':
-        this.wants = { pointer: m.pointer, ink: m.ink }
+        this.wants = { pointer: m.pointer, wheel: m.wheel, ink: m.ink }
         if (!m.ink) this.strokes.clear()
         this.surface.wantsChanged()
         break

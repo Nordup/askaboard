@@ -241,7 +241,7 @@ export type WorldToPage =
   /** The cursor the world asks for over itself, a CSS cursor. Empty: the board's own. Sent on a change. */
   | { type: 'cursor'; key: WorldKey; value: string }
   /** Which input the world's code listens to now. Sent on a change. */
-  | { type: 'subscribe'; key: WorldKey; pointer: boolean; ink: boolean }
+  | { type: 'subscribe'; key: WorldKey; pointer: boolean; wheel: boolean; ink: boolean }
   /**
    * The world moved itself: board points from its placed rect, not saved. The worker already shows it in the next picture.
    * Keep sending the placed rect in `view`: a placement holds no anchor. dx and dy move selection and follows only.

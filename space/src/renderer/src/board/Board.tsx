@@ -22,7 +22,7 @@ import {
 import type { BoardHistory } from './history'
 import { penOnBoard } from '../live/frames'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
-import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves } from '../live-pixels/registry'
+import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves, wheelWorlds } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
 import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
@@ -202,6 +202,8 @@ const GRID_PITCH = 24
 const PICK_HOLD_MS = 30
 /** A mark waits this long for a world's answer: nothing waits on it. */
 const PICK_MARK_MS = 300
+/** A wheel event this soon after the last one belongs to the same gesture. */
+const WHEEL_GAP_MS = 200
 /** A linked item fades out over this long when its point is hidden. */
 const LINK_FADE_MS = 200
 /** How long the "an agent looked here" outline shows. */
@@ -415,6 +417,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const streamRef = useRef<{ id: string; pointerId: number } | null>(null)
   /** The pointer's last move, for the worlds that listen: it goes once per paint. */
   const moveRef = useRef<WorldPointer | null>(null)
+  /** The wheel gesture: its target (undefined while the pick is pending, null for the board), its last event, and what waits for the pick. */
+  const wheelGestureRef = useRef<{ target: string | null | undefined; at: number; held: WheelEvent[] } | null>(null)
   /** Pen tips and changing ink in the last frame (the ink canvas paints again when they go). */
   const inkMomentRef = useRef({ tips: 0, inks: 0 })
   const [ghostIndex, setGhostIndex] = useState<SceneIndex | null>(null)
@@ -1720,19 +1724,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const wheel = (event: WheelEvent): void => {
-      // The world the learner entered takes the wheel.
-      const entered = enteredWorld()
-      if (entered) {
-        event.preventDefault()
-        const rect = host.getBoundingClientRect()
-        const [x, y] = screenToBoard([event.clientX - rect.left, event.clientY - rect.top], viewportRef.current, cameraRef.current)
-        sendWorldPointer(entered, { kind: 'wheel', x, y, buttons: event.buttons, pressure: 0, pointerType: 'mouse', deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey })
-        return
-      }
-      // An open text editor that can scroll this way scrolls; everything else on the board pans or zooms.
-      if (!event.ctrlKey && !event.metaKey && canScroll(event.target, event.deltaX, event.deltaY)) return
-      event.preventDefault()
+    const wheelPointer = (event: WheelEvent): WorldPointer => {
+      const rect = host.getBoundingClientRect()
+      const [x, y] = screenToBoard([event.clientX - rect.left, event.clientY - rect.top], viewportRef.current, cameraRef.current)
+      return { kind: 'wheel', x, y, buttons: event.buttons, pressure: 0, pointerType: 'mouse', deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey }
+    }
+    const boardWheel = (event: WheelEvent): void => {
       glideRef.current++
       learnerViewAtRef.current = Date.now()
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
@@ -1751,6 +1748,56 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         dy = 0
       }
       applyCamera({ ...current, center: [current.center[0] + dx / current.zoom, current.center[1] + dy / current.zoom] })
+    }
+    const wheelTo = (target: string | null, event: WheelEvent): void => {
+      if (target) sendWorldPointer(target, wheelPointer(event))
+      else boardWheel(event)
+    }
+    /**
+     * A wheel. As with a press, only a world can say what is under the pointer,
+     * so the first event of a gesture waits for its answer, at most PICK_HOLD_MS.
+     * The whole gesture then goes to one place: a pan that glides over a world
+     * stays a pan.
+     */
+    const wheel = (event: WheelEvent): void => {
+      // The world the learner entered takes the wheel.
+      const entered = enteredWorld()
+      if (entered) {
+        event.preventDefault()
+        sendWorldPointer(entered, wheelPointer(event))
+        return
+      }
+      // An open text editor that can scroll this way scrolls; everything else on the board pans or zooms.
+      if (!event.ctrlKey && !event.metaKey && canScroll(event.target, event.deltaX, event.deltaY)) return
+      event.preventDefault()
+      // Pinch and ⌘ always stay with the board, also inside a gesture.
+      if (event.ctrlKey || event.metaKey) {
+        boardWheel(event)
+        return
+      }
+      const now = performance.now()
+      const last = wheelGestureRef.current
+      if (last && (last.target === undefined || now - last.at < WHEEL_GAP_MS)) {
+        last.at = now
+        if (last.target === undefined) last.held.push(event)
+        else wheelTo(last.target, event)
+        return
+      }
+      const worlds = spaceRef.current ? [] : wheelWorlds()
+      if (!worlds.length) {
+        wheelGestureRef.current = { target: null, at: now, held: [] }
+        boardWheel(event)
+        return
+      }
+      const gesture: NonNullable<typeof wheelGestureRef.current> = { target: undefined, at: now, held: [event] }
+      wheelGestureRef.current = gesture
+      const { x, y } = wheelPointer(event)
+      void pickWorlds(worlds, x, y, PICK_HOLD_MS).then((found) => {
+        const target = found ? found.id : null
+        gesture.target = target
+        for (const held of gesture.held) wheelTo(target, held)
+        gesture.held = []
+      })
     }
     // Capture phase on the board root: every layer under the pointer (ink, content, selection) pans alike.
     host.addEventListener('wheel', wheel, { passive: false, capture: true })

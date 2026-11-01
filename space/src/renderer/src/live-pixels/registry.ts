@@ -478,6 +478,13 @@ export function pressWorlds(): string[] {
     .map((item) => item.id)
 }
 
+/** The worlds that a wheel can reach: input "direct", with a wheel listener. */
+export function wheelWorlds(): string[] {
+  return worldItems()
+    .filter((item) => item.status.input === 'direct' && item.world?.wants.wheel)
+    .map((item) => item.id)
+}
+
 /** The worlds that take a double-click (input "enter"). */
 export function enterWorlds(): string[] {
   return worldItems()

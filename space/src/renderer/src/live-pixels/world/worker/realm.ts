@@ -565,7 +565,7 @@ export const REALM = String.raw`
       view: Object.assign({ t: 0, playing: false, active: false, ended: true, step: null }, m.scene),
       timeline: m.timeline || null,
       timers: new Map(), timerHeap: [], callbacks: new Map(), callbacksNext: new Map(), framesNow: [], frames: [], events: new Map(), parts: new Map(), captures: [], data: m.data,
-      pins: new Map(), strokes: [], wants: { pointer: false, ink: false }, moved: { x: 0, y: 0 },
+      pins: new Map(), strokes: [], wants: { pointer: false, wheel: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0, logLines: 0, files: new Set(), loads: 0, loadedAt: -Infinity, modules: false, manager: null,
       cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: weakGpu ? 1 : 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,

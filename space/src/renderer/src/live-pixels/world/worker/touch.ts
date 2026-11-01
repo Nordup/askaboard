@@ -369,10 +369,11 @@ export const TOUCH = String.raw`
   const subscribe = (w) => {
     let pointer = false;
     for (const type of POINTER_LISTENERS) { const list = w.events.get(type); if (list && list.size) pointer = true; }
+    const wheelList = w.events.get('wheel'), wheel = !!(wheelList && wheelList.size);
     const inkList = w.events.get('ink'), ink = !!(inkList && inkList.size);
-    if (pointer === w.wants.pointer && ink === w.wants.ink) return;
-    w.wants = { pointer, ink };
-    post({ type: 'subscribe', key: w.key, pointer, ink });
+    if (pointer === w.wants.pointer && wheel === w.wants.wheel && ink === w.wants.ink) return;
+    w.wants = { pointer, wheel, ink };
+    post({ type: 'subscribe', key: w.key, pointer, wheel, ink });
   };
   /** Move the whole world: its anchor to a board point. It shows in the next picture, and the page hears of it. */
   const moveAnchor = (w, x, y) => {
