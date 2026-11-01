@@ -106,7 +106,7 @@ export const SURFACE = String.raw`
   /** What world w needs for this view: its crop, or null when none of its reach is on the surface. A world there gives back its output. */
   const planWorld = (w) => {
     const place = placed(w);
-    if (!w.reach || (floorOn(w) && !w.floorBuilt) || (w.stale && w.samples++ % SAMPLE_EVERY === 0)) sampleReach(w);
+    if (!w.reach || w.stale) measureReach(w, false);
     const crop = cropFor(w, place);
     w.culled = !crop;
     if (!crop) {
@@ -296,7 +296,7 @@ export const SURFACE = String.raw`
     core = true;
     let target = null;
     try {
-      sampleReach(w);
+      measureReach(w, true);
       const nominal = { l: -w.w / 2, t: -w.h / 2, r: w.w / 2, b: w.h / 2 };
       const reach = !w.reach ? null : w.reach.full ? nominal : w.reach;
       if (!reach) return null;

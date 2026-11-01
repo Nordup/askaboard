@@ -131,11 +131,16 @@ flowchart LR
 - `camera.aspect` is the nominal aspect. `setViewOffset(nominalW, nominalH, cropX,
   cropY, cropW, cropH)` takes a crop that can pass the nominal rect, so the size of
   a render target never changes the scale or the perspective.
-- Reach comes from the world's bounds, sampled often and padded. It grows at once
-  and shrinks slowly. `world.reach()` can set it, and `world.reach("full")` uses
-  the whole visible surface for shaders that move vertices. It is never a visible
-  edge. Culling uses reach, not the placeholder, so a world with an anchor outside
-  the view still shows what reaches into the view.
+- Reach comes from conservative bounds, on every picture that a change plans. Each
+  drawn object gives a box that holds all it can draw under the matrices of this
+  moment: a geometry's cached box and sphere, one box per bone, the slack of its
+  morph influences, or one box of all its instances. So a crop never cuts what the
+  world draws, and a still world costs nothing. Only a vertex that a shader moves
+  passes these bounds: `world.reach()` can set reach, and `world.reach("full")` uses
+  the whole visible surface. Reach grows at once and shrinks slowly. It is never a
+  visible edge. Culling uses reach, not the placeholder, so a world with an anchor
+  outside the view still shows what reaches into the view. Samples of the points
+  serve only the fit of the floor and the focus.
 - Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
   real alpha. The last pass writes premultiplied colour.
 - Toon and plain: the direct path. The scene renders once into the world's 8-bit
