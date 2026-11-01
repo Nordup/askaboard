@@ -436,17 +436,20 @@ export const LOOK = String.raw`
   /** The floor's shadow: only casters, from under the floor. A world with no casters clears it. */
   const renderFloorShadow = (w, look) => {
     const target = shadowTarget();
-    const view = w.lightView, u = w.catcher.uniforms;
-    w.root.traverse((o) => { if (o.castShadow) o.layers.enable(SHADOW_LAYER); else o.layers.disable(SHADOW_LAYER); });
-    w.scene.overrideMaterial = heightMat;
+    const view = w.lightView, u = w.catcher.uniforms, marks = [], scene = w.scene, own = scene.overrideMaterial, bit = 1 << SHADOW_LAYER;
+    // Layers and the override are the world's. This pass borrows them: only what casts a shadow stands on its layer, and all goes back after it.
+    scene.traverse((o) => { marks.push(o, o.layers.mask); o.layers.mask = 0; });
+    w.root.traverse((o) => { if (o.castShadow) o.layers.mask = bit; });
+    scene.overrideMaterial = heightMat;
     heightMat.uniforms.floorY.value = w.floorY;
     renderer.shadowMap.autoUpdate = false;
     try {
       renderer.setRenderTarget(target);
       renderer.clear();
-      renderer.render(w.scene, view);
+      renderer.render(scene, view);
     } finally {
-      w.scene.overrideMaterial = null;
+      scene.overrideMaterial = own;
+      for (let i = 0; i < marks.length; i += 2) marks[i].layers.mask = marks[i + 1];
     }
     u.tS.value = target.texture;
     u.toLight.value.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse);
