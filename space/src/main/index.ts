@@ -221,6 +221,9 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** The window opens while the first folder opens. Its first state waits for this. */
+let firstFolder: Promise<void> = Promise.resolve()
+
 /** Open SPACE_FOLDER, or else the last folder, if it still exists. */
 async function openInitialFolder(): Promise<void> {
   const candidates = [launchFolder ? resolve(launchFolder) : null, store.lastFolder()]
@@ -285,7 +288,10 @@ function registerIpc(): void {
     event.returnValue = uncappedAtLaunch ? screen.getPrimaryDisplay().displayFrequency || 60 : null
   })
 
-  handle(IPC.getInitialState, () => snapshot(true))
+  handle(IPC.getInitialState, async () => {
+    await firstFolder
+    return snapshot(true)
+  })
   handle(IPC.getAgentStatus, () => agentServer.status())
   handle(IPC.getAgentClients, () => agentClients())
   handle(IPC.connectAgentClient, (id: unknown, action: unknown) => {
@@ -465,6 +471,10 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
   if (!win.isDestroyed()) win.destroy()
 }
 
+/** After the window's first load: the snapshot window, then the stage. */
+const SNAPSHOT_WARM_MS = 2000
+const STAGE_WARM_MS = 3000
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
@@ -576,13 +586,18 @@ void app.whenReady().then(async () => {
   })
   registerAssetProtocol()
   registerLiveItemProtocol()
-  await openInitialFolder()
-  setFolderOpen(session !== null)
-  await installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
-  agentServer.start()
+  // Disk work runs beside the first paint, not before it.
+  firstFolder = openInitialFolder().then(() => {
+    setFolderOpen(session !== null)
+    agentServer.start()
+  })
+  void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   mainWindow = createWindow()
-  // The snapshot window loads once the board is up, so an agent's first screenshot is as fast as the later ones.
-  mainWindow.webContents.once('did-finish-load', () => setTimeout(() => snapshots.warm(), 2000))
+  // The hidden helpers load once the board is up and has settled, so an agent's first screenshot and first scene are as fast as the later ones.
+  mainWindow.webContents.once('did-finish-load', () => {
+    setTimeout(() => snapshots.warm(), SNAPSHOT_WARM_MS)
+    setTimeout(() => agentServer.warmStage(), STAGE_WARM_MS)
+  })
   app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow()
   })

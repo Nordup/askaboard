@@ -173,10 +173,11 @@ export class SceneStage {
       (message, reply) => this.onStageMessage(message, reply),
       (why, outOfMemory) => this.onStageGone(why, outOfMemory)
     )
-    // Start the stage process and load the scene library now, not in the first scene (a log restored by then is rebuilt by its own operation).
-    setTimeout(() => {
-      void this.exclusive(async () => (this.log.length ? undefined : this.ensure())).catch(() => undefined)
-    }, 3000)
+  }
+
+  /** Start the stage process and load the scene library now, not in the first scene (a log restored by then is rebuilt by its own operation). */
+  warm(): void {
+    void this.exclusive(async () => (this.log.length ? undefined : this.ensure())).catch(() => undefined)
   }
 
   private async textSizes(items: TextItem[]): Promise<Array<[number, number] | null>> {

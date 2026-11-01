@@ -466,6 +466,11 @@ export class AgentServer {
     this.publishTimer = setTimeout(() => this.publish(), wait)
   }
 
+  /** Load the stage before the first scene needs it. */
+  warmStage(): void {
+    this.stage.warm()
+  }
+
   start(): void {
     const server = createServer((req, res) => {
       this.route(req, res).catch((error: unknown) => {
