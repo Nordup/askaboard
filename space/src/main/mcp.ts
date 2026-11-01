@@ -1660,10 +1660,6 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         const onBoard = this.boardScene(name)
         const use = version ?? (draft ? 'draft' : onBoard ? 'board' : null)
         if (use === null || (use === 'draft' && !draft) || (use === 'board' && !onBoard)) return failure(this.unknownScene(name, use))
-        if (use === 'board') {
-          const failed = await this.playable([onBoard!.scene as string])
-          if (failed.size) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be previewed (${[...failed.values()][0]}). get_screenshot shows the board as it is now.`))
-        }
         const moments: FrameMoment[] = (at === undefined ? ['end' as const] : Array.isArray(at) ? at : [at]).map((moment) =>
           moment === 'end' ? { kind: 'end' } : moment === 'steps' ? { kind: 'steps' } : 'step' in moment ? { kind: 'step', step: moment.step } : { kind: 't', t: moment.time_s }
         )
@@ -1688,7 +1684,14 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             if (isMissing(out)) throw new Error('The board did not keep the draft. Write it again with write_scene.')
           }
           plan = out as FramesResult | PastCutoff | MomentFailed
-        } else plan = (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult | PastCutoff | MomentFailed
+        } else {
+          const out = await this.withPlayable([onBoard!.scene as string], async (failed) => {
+            if (failed.size) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be previewed (${[...failed.values()][0]}). get_screenshot shows the board as it is now.`))
+            return (await this.board('sceneFrames', { sceneId: onBoard!.scene, label: `the scene "${name}" on the board`, moments, part: framePart }, SCENE_TIMEOUT_MS)) as FramesResult | PastCutoff | MomentFailed
+          })
+          if ('content' in out) return out
+          plan = out
+        }
         if ('momentFailed' in plan) {
           const { error, line, file, at } = plan.momentFailed
           return failure(new Error(`The scene "${name}" has no such moment: ${new SceneProgramError(error, line, file).message}, at ${Math.round(at * 100) / 100} s of the scene.${use === 'draft' ? ' Nothing played. Change it with write_scene.' : ''}`))
@@ -1763,11 +1766,12 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
             sceneId = entry.scene as string
           }
           // A scene restored from the records after a restart runs again first (without name: every scene, to find the step).
-          const failed = await this.playable(sceneId ? [sceneId] : this.stageScenes().map((scene) => scene.id))
-          if (sceneId && failed.has(sceneId)) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be replayed (${failed.get(sceneId)}). Its items stay on the board.`))
-          const out = await control({ action: 'replay', scene: sceneId, step: from_step, when: when ?? 'queue' })
-          const replay = out.replay as { scene: string; of: string; from: number; starts_in_s: number }
-          return text(json({ ...publicStatus(out), replay: { scene: name ?? this.sceneName(replay.of), from_s: replay.from, starts_in_s: replay.starts_in_s } }))
+          return this.withPlayable(sceneId ? [sceneId] : this.stageScenes().map((scene) => scene.id), async (failed) => {
+            if (sceneId && failed.has(sceneId)) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be replayed (${failed.get(sceneId)}). Its items stay on the board.`))
+            const out = await control({ action: 'replay', scene: sceneId, step: from_step, when: when ?? 'queue' })
+            const replay = out.replay as { scene: string; of: string; from: number; starts_in_s: number }
+            return text(json({ ...publicStatus(out), replay: { scene: name ?? this.sceneName(replay.of), from_s: replay.from, starts_in_s: replay.starts_in_s } }))
+          })
         }
         if (action === 'cut') return this.cutScene(session, extra, name, after_step)
         return this.onStage(async () => {
@@ -2046,6 +2050,16 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   /** The board window replays scenes that were restored from the records: their programs run again first. */
   async rebuildScenes(sceneIds: string[]): Promise<void> {
     await this.background((signal) => this.onRealm(signal, () => this.ensureMemories(sceneIds, signal)))
+  }
+
+  /** Make the play data of these scenes for `use`, and keep it in the renderer until `use` ends, also when it is over the budget of frames (run.ts trimScenes). `use` hears why a scene could not be rebuilt. */
+  private async withPlayable<T>(sceneIds: string[], use: (failed: Map<string, string>) => Promise<T>): Promise<T> {
+    if (sceneIds.length) await this.board('sceneControl', { action: 'holdPlay', scenes: sceneIds })
+    try {
+      return await use(await this.playable(sceneIds))
+    } finally {
+      if (sceneIds.length) await this.board('sceneControl', { action: 'freePlay', scenes: sceneIds }).catch((error: unknown) => console.warn(`stage: play data was not freed (${error instanceof Error ? error.message : String(error)})`))
+    }
   }
 
   /** Make the play data of these scenes, when the player does not hold it (scenes restored from the records), and say why one could not be rebuilt. */

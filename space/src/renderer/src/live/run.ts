@@ -343,7 +343,8 @@ const MAX_SCENE_BYTES = 128 * 1024 * 1024
  * Keep the scenes' frames inside the budget, at each insert and each chunk.
  * Finished scenes go first, the oldest first: a replay runs their program
  * again from the record (decision B22). Then the oldest drafts. Main runs a
- * dropped draft again. What plays now and the newest draft stay, whatever their size.
+ * dropped draft again. What plays now, what a replay or a preview holds
+ * (scenePlayer.keepPlay) and the newest draft stay, whatever their size.
  */
 function trimScenes(): void {
   let bytes = scenePlayer.heldBytes()
@@ -868,6 +869,7 @@ export function sceneMemory(ctx: RunSceneContext, args: Record<string, unknown>)
     const compiled = compileScene(desc, before, sceneId, info.name, stageLookup, dynLookup(frames), frames)
     renameNodes(compiled, recordIds(compiled, info.story, info.revert.created))
     applySettle(compiled, info.settle)
+    // Main holds what it asks for (holdPlay), so the scene is still here when its replay starts.
     scenePlayer.remember({ play: compiled.play, snapshot: restoredSnapshot(compiled, info.story, ctx.board), record: info })
     trimScenes()
     return { ok: true }
@@ -1455,6 +1457,7 @@ function liveItemsOf(play: CompiledScene['play'], evaluated: ReadonlyArray<{ mom
  */
 export async function sceneControl(ctx: RunSceneContext, args: Record<string, unknown>): Promise<unknown> {
   const action = args.action
+  const ids = (scenes: unknown): string[] => (Array.isArray(scenes) ? scenes.map(String) : [])
   // board_id: for main's record events (main/scene-store.ts), never for the agent.
   const status = (): Record<string, unknown> => ({ ...scenePlayer.status(), waiting: scenePlayer.waiting(), playing_scene: scenePlayer.playing(), board_id: ctx.board.boardId() ?? null })
   switch (action) {
@@ -1466,8 +1469,8 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       return { known: scenePlayer.isKnown(String(args.scene)) || sceneReverts.has(String(args.scene)) }
     case 'remembered': {
       // Of these scenes: the ones the player holds play data of, and the ones restored from the records (a re-run can rebuild them; main owns whether it can).
-      const ids = Array.isArray(args.scenes) ? (args.scenes as unknown[]).map(String) : []
-      return { held: ids.filter((id) => scenePlayer.memory(id) !== undefined), restored: ids.filter((id) => restoredScene(id) !== undefined) }
+      const scenes = ids(args.scenes)
+      return { held: scenes.filter((id) => scenePlayer.memory(id) !== undefined), restored: scenes.filter((id) => restoredScene(id) !== undefined) }
     }
     case 'status':
     case 'pause':
@@ -1520,6 +1523,14 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
     }
     case 'streamCut':
       cutJob(args.job, args.failed === true)
+      return {}
+    case 'holdPlay':
+      // Main needs the play data of these scenes for its next calls (main/mcp.ts withPlayable).
+      scenePlayer.keepPlay(ids(args.scenes))
+      return {}
+    case 'freePlay':
+      scenePlayer.freePlay(ids(args.scenes))
+      trimScenes()
       return {}
     case 'failures':
       // The stage's failure state after it changed (main/mcp.ts publishFailures): it replaces the renderer's copy.

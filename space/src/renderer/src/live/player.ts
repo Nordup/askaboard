@@ -1015,6 +1015,8 @@ export class ScenePlayer {
   /** performance.now() when the last queued scene reached its end. */
   private queueEnd: number | null = null
   private history = new Map<string, SceneMemory>()
+  /** The scenes that a replay or a preview holds, with the count of those that hold each (keepPlay, freePlay). */
+  private holds = new Map<string, number>()
   private replays = 0
   /** Bumped when a scene's play changes in place (swap, a later commit that changes an earlier play): the runs are made again. */
   private epoch = 0
@@ -1107,16 +1109,29 @@ export class ScenePlayer {
     return bytes
   }
 
+  /** A replay or a preview needs these scenes soon: release leaves them until freePlay, whatever their size. */
+  keepPlay(ids: readonly string[]): void {
+    for (const id of ids) this.holds.set(id, (this.holds.get(id) ?? 0) + 1)
+  }
+
+  freePlay(ids: readonly string[]): void {
+    for (const id of ids) {
+      const count = this.holds.get(id) ?? 0
+      if (count > 1) this.holds.set(id, count - 1)
+      else this.holds.delete(id)
+    }
+  }
+
   /**
    * Give up the play data of finished scenes, the oldest first, for at least
    * `bytes`. From now on a replay rebuilds them, as restored scenes (decision
-   * B22). What plays or waits now stays, and so does a scene with no record. Returns the bytes freed.
+   * B22). What plays, waits or is held now stays, and so does a scene with no record. Returns the bytes freed.
    */
   release(bytes: number): number {
     let freed = 0
     for (const [id, memory] of this.history) {
       if (freed >= bytes) break
-      if (!memory.record || this.scenes.some((scene) => scene.play.id === id || scene.play.id.startsWith(`${id}~r`))) continue
+      if (!memory.record || this.holds.has(id) || this.scenes.some((scene) => scene.play.id === id || scene.play.id.startsWith(`${id}~r`))) continue
       this.history.delete(id)
       addRestored(memory.record)
       freed += memory.play.size()
@@ -1696,8 +1711,11 @@ export class ScenePlayer {
     if (!list.every((entry) => this.history.has(entry.scene))) {
       // Scenes restored from the records (after a restart): main runs their programs again first (rebuild.ts), then they play.
       if (!list.every((entry) => this.history.has(entry.scene) || canRebuild(entry.scene))) return false
-      void requestRebuild(list.map((entry) => entry.scene).filter((id) => !this.history.has(id))).then(() => {
+      const scenes = list.map((entry) => entry.scene)
+      this.keepPlay(scenes)
+      void requestRebuild(scenes.filter((id) => !this.history.has(id))).then(() => {
         if (this.board === board && list.every((entry) => this.history.has(entry.scene))) this.replayList(list)
+        this.freePlay(scenes)
       })
       return true
     }
