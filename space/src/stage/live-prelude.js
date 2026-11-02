@@ -2701,7 +2701,7 @@
     }
   }
 
-  /** A spoken line lasts as long as its audio, with its pause. A mark's word is not in the audio's data: its offset goes by its share of the characters. */
+  /** A spoken line's cue lasts as long as its audio, with its pause. A mark's word is not in the audio's data: its offset goes by its share of the characters. */
   function measureVoice(clean, marks, spoken) {
     const speech = spoken.speech_end - spoken.from
     return { dur: spoken.to - spoken.from, offsets: marks.map((mark) => (speech * mark.char) / clean.length) }
@@ -2726,6 +2726,8 @@
     // T stays: a drawing that does not await the line goes on while the voice before it ends.
     const start = spoken ? Math.max(T, voiceEnd) : T
     const dur = f3(measured.dur)
+    // An awaited spoken line ends with its words: what comes next runs inside the natural pause, and the audio plays on through it.
+    const words = spoken ? f3(spoken.speech_end - spoken.from) : dur
     const cue = { text: clean, at: f3(start), dur }
     if (marks.length) cue.marks = marks.map((mark, i) => ({ name: mark.name, at: f3(start + measured.offsets[i]), char: mark.char }))
     if (spoken) {
@@ -2737,7 +2739,7 @@
     endTime = Math.max(endTime, start + dur)
     for (const [key, value] of Object.entries(opts)) {
       if (key === 'during') {
-        retime(value, start, start + dur)
+        retime(value, start, start + words)
         continue
       }
       const mark = (cue.marks || []).find((entry) => entry.name === key)
@@ -2753,7 +2755,7 @@
         }
       })
     }
-    return new Action(start, start + dur)
+    return new Action(start, start + words)
   }
 
   /** An action that ends when the word after [[name]] is read, at the reading pace (the latest line with that mark). */

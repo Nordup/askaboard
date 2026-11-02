@@ -9,11 +9,12 @@ import { agentHomeDir } from './agent-home'
  * caller of the speech API. The app holds no AI; it reads lines aloud with the
  * learner's own key, which stays in this process.
  *
- * write_scene sends all lines of a scene as one request, joined with a long
- * pause: the API allows few requests a minute, and a short line alone comes
- * back padded. The answer is one WAV. Each line's place in it comes from the
- * silences (findLines). The WAV and the places stay in the learning folder, so
- * the same text in the same voice never costs a second request.
+ * write_scene sends all lines of a scene as one request, as one continuous
+ * narration: the API allows few requests a minute, a short line alone comes
+ * back padded, and a pause tag gives long gaps with a broken intonation. The
+ * answer is one WAV. Each line's place in it comes from the natural silences
+ * (findLines). The WAV and the places stay in the learning folder, so the same
+ * text in the same voice never costs a second request.
  *
  * The voice never holds a scene up or fails it: every failure is a reason in
  * the result, and the scene runs at the reading pace.
@@ -21,8 +22,8 @@ import { agentHomeDir } from './agent-home'
 
 const MODEL = 'gemini-3.8-flash-lite-tts'
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
-/** Between lines in the joined text: the speech model reads this as a pause. */
-const LINE_JOIN = ' <long pause> '
+/** Between lines in the joined text: plain prose, so the model pauses as it does between any two sentences. */
+const LINE_JOIN = ' '
 /** Clips, from the learning folder's root. renderer/live/voice.ts plays them, and folder.ts readAsset serves only this folder. */
 const CLIP_DIR = '.learning-space/voice'
 /** The records of the scenes (main/scene-store.ts). Their host answers name the clips they use. */
@@ -35,7 +36,7 @@ const RETRY_WAIT_MS = 1000
 /** What a retry needs of the limit: a request takes 4 to 8 s, and a wait that leaves less gives no audio after it. */
 const RETRY_ROOM_MS = 10_000
 
-export const VOICES = ['Kore', 'Aoede', 'Leda', 'Puck', 'Charon', 'Orus'] as const
+export const VOICES = ['Charon', 'Kore', 'Aoede', 'Leda', 'Puck', 'Orus'] as const
 export const PACES = {
   calm: { label: 'Calm', style: 'calm and unhurried teacher' },
   natural: { label: 'Natural', style: 'a natural, friendly teacher at a normal conversational pace' },
@@ -43,7 +44,7 @@ export const PACES = {
 } as const
 export type PaceName = keyof typeof PACES
 
-/** Where one line is in its clip, in seconds. speech_end: where its words end; to: where the next line starts, so to - from holds the pause. */
+/** Where one line is in its clip, in seconds. from: in the silence just before its words; speech_end: where its words end; to: where the next line starts, so to - from holds the pause. */
 interface LinePlace {
   from: number
   speech_end: number
@@ -114,11 +115,15 @@ const SILENCE_SHARE = 0.02
 const MIN_SILENCE_S = 0.18
 /** A shorter sound between two silences is a breath: one pause. */
 const MAX_BREATH_S = 0.12
-/** In the fit, one second of silence is worth this many seconds of distance from the expected place: a short line next to long pauses is far from its place. */
-const GAP_WEIGHT = 3
+/** Where a sentence ends inside a line. */
+const SENTENCE_END = /(?<=[.?!])\s+/
+/** In the fit, one second of silence is worth this many seconds of difference from the length that the characters say: a sentence end pauses longer than a comma. */
+const GAP_WEIGHT = 2
 /** One line's speech may be this many times longer or shorter than its characters say, plus a little for a short line. */
 const LINE_STRETCH = 2.2
 const LINE_SLACK_S = 0.5
+/** A line starts this long before the silence ends: the first consonant of a word can be softer than the silence limit, and a seek in silence is not heard. */
+const LINE_LEAD_S = 0.05
 
 interface Silence {
   start: number
@@ -162,62 +167,80 @@ function speechOf(wav: Wav): { start: number; end: number; length: number; silen
 }
 
 /**
- * The silences that end the lines: one per boundary, in order, each near the place the characters of
- * the lines before it say, and long where the fit can choose. A sentence inside a line can leave a gap
- * as long as a line's, so the place decides. Null when the fit has no sense: a wrong line under a
- * drawing is worse than no voice.
+ * The silences that end the lines, in order. A line can hold several sentences, with gaps as long as
+ * the gap after a line, so size and place alone choose wrong. The fit places every sentence: each
+ * sentence's speech must have the length that its characters say, which is a local test, so an error
+ * does not carry on along the clip. A sentence end inside a line can have no silence; a line end must
+ * have one. Null when the fit has no sense: a wrong line under a drawing is worse than no voice.
  */
-function fitGaps(lengths: readonly number[], speech: { start: number; end: number; silences: Silence[] }): Silence[] | null {
-  const need = lengths.length - 1
-  const { silences } = speech
-  if (silences.length < need) return null
-  const chars = lengths.reduce((sum, length) => sum + length, 0)
-  const span = speech.end - speech.start
-  const expected: number[] = []
-  for (let k = 0, before = 0; k < need; k++) expected.push(speech.start + span * ((before += lengths[k]) / chars))
-  const cost = (k: number, j: number): number => Math.abs((silences[j].start + silences[j].end) / 2 - expected[k]) - GAP_WEIGHT * (silences[j].end - silences[j].start)
-  // best[k][j]: the lowest cost of the first k + 1 boundaries with boundary k at silence j.
-  const best = expected.map(() => new Float64Array(silences.length).fill(Infinity))
-  const from = expected.map(() => new Int32Array(silences.length).fill(-1))
-  for (let k = 0; k < need; k++) {
-    let low = k === 0 ? 0 : Infinity
-    let lowAt = -1
-    for (let j = k; j < silences.length - (need - 1 - k); j++) {
-      if (k > 0 && best[k - 1][j - 1] < low) {
-        low = best[k - 1][j - 1]
-        lowAt = j - 1
+function fitGaps(lines: readonly string[], speech: { start: number; end: number; silences: Silence[] }): Silence[] | null {
+  // chars[s]: the characters before sentence s. lineEnds: the values of s that start a new line.
+  const chars = [0]
+  const lineEnds = new Set<number>()
+  for (const line of lines) {
+    for (const sentence of line.split(SENTENCE_END)) chars.push(chars[chars.length - 1] + sentence.length)
+    lineEnds.add(chars.length - 1)
+  }
+  const sentences = chars.length - 1
+  // The start and the end of the speech act as two silences of no length.
+  const stops = [{ start: speech.start, end: speech.start }, ...speech.silences, { start: speech.end, end: speech.end }]
+  const last = stops.length - 1
+  const silent = [0]
+  for (const stop of stops) silent.push(silent[silent.length - 1] + stop.end - stop.start)
+  /** The speech between two stops, without the silences between them. */
+  const spoken = (i: number, j: number): number => stops[j].start - stops[i].end - (silent[j] - silent[i + 1])
+  const rate = spoken(0, last) / chars[sentences]
+  // best[s][j]: the lowest cost with sentence s - 1 ending at stop j. It comes from fromSentence[s][j], fromStop[s][j].
+  const best = chars.map(() => new Float64Array(stops.length).fill(Infinity))
+  const fromSentence = chars.map(() => new Int32Array(stops.length))
+  const fromStop = chars.map(() => new Int32Array(stops.length))
+  best[0][0] = 0
+  for (let s = 1; s <= sentences; s++) {
+    for (let j = s === sentences ? last : 1; j <= (s === sentences ? last : last - 1); j++) {
+      const reward = GAP_WEIGHT * (stops[j].end - stops[j].start)
+      // p < s - 1: the sentence ends between have no silence of their own.
+      for (let p = s - 1; ; p--) {
+        for (let i = 0; i < j; i++) {
+          const cost = best[p][i] + Math.abs(spoken(i, j) - rate * (chars[s] - chars[p])) - reward
+          if (cost < best[s][j]) {
+            best[s][j] = cost
+            fromSentence[s][j] = p
+            fromStop[s][j] = i
+          }
+        }
+        if (p === 0 || lineEnds.has(p)) break
       }
-      best[k][j] = low + cost(k, j)
-      from[k][j] = lowAt
     }
   }
-  const chosen = new Array<Silence>(need)
-  let at = best[need - 1].reduce((lowest, value, j, row) => (value < row[lowest] ? j : lowest), 0)
-  for (let k = need - 1; k >= 0; k--) {
-    chosen[k] = silences[at]
-    at = from[k][at]
+  if (best[sentences][last] === Infinity) return null
+  const chosen: number[] = []
+  for (let s = sentences, j = last; s > 0; ) {
+    const before = fromSentence[s][j]
+    j = fromStop[s][j]
+    s = before
+    if (lineEnds.has(s)) chosen.unshift(j)
   }
-  const rate = (span - chosen.reduce((sum, gap) => sum + gap.end - gap.start, 0)) / chars
-  for (let k = 0; k <= need; k++) {
-    const seconds = (k < need ? chosen[k].start : speech.end) - (k > 0 ? chosen[k - 1].end : speech.start)
-    const want = lengths[k] * rate
+  for (let k = 0; k < lines.length; k++) {
+    const seconds = spoken(k > 0 ? chosen[k - 1] : 0, k < chosen.length ? chosen[k] : last)
+    const want = lines[k].length * rate
     if (seconds > want * LINE_STRETCH + LINE_SLACK_S || seconds < want / LINE_STRETCH - LINE_SLACK_S) return null
   }
-  return chosen
+  return chosen.map((j) => stops[j])
 }
 
 const ms = (seconds: number): number => Math.round(seconds * 1000) / 1000
 
-/** Each line's place in the WAV. Between two lines, the next line starts where the silence ends. */
+/** Each line's place in the WAV. Between two lines, the next line starts just before the silence ends. */
 function findLines(wav: Wav, lines: readonly string[]): LinePlace[] | null {
   const speech = speechOf(wav)
   if (!speech) return null
-  const gaps = lines.length > 1 ? fitGaps(lines.map((line) => line.length), speech) : []
+  const gaps = lines.length > 1 ? fitGaps(lines, speech) : []
   if (!gaps) return null
+  const start = (k: number): number => ms(k > 0 ? gaps[k - 1].end - LINE_LEAD_S : Math.max(0, speech.start - LINE_LEAD_S))
   return lines.map((_, k) => ({
-    from: ms(k > 0 ? gaps[k - 1].end : speech.start),
+    from: start(k),
     speech_end: ms(k < gaps.length ? gaps[k].start : speech.end),
-    to: ms(k < gaps.length ? gaps[k].end : speech.length)
+    to: k < gaps.length ? start(k + 1) : ms(speech.length)
   }))
 }
 

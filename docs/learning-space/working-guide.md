@@ -203,7 +203,7 @@ combine; `meta.json` records `no_html` and `brief`.
   --virtual-time-budget=9000 --screenshot=<file>` and a new
   `--user-data-dir`. Tested on the founder's Mac on 2026-10-31.
 
-- **A check launch needs a scratch `HOME`.** Every launch rewrites `~/.learning-space/relay.json`, `tools.json` and the shim. Without a scratch `HOME`, the founder's agents point at the test app (2026-11-02). Copy only the key line to the scratch `.learning-space/.env`.
+- **A check launch needs a scratch `HOME` and its own `--user-data-dir`.** Every launch rewrites `~/.learning-space/relay.json`, `tools.json` and the shim. Without a scratch `HOME`, the founder's agents point at the test app. Electron ignores `HOME` for its settings on macOS: without `--user-data-dir`, a test folder lands in the founder's `state.json` (both happened on 2026-11-02). `npx electron . --user-data-dir=…` takes the switch; `electron-vite dev` needs it passed through. Copy only the key line to the scratch `.learning-space/.env`.
 - **An `<audio>` element needs `content-length` and byte ranges from a custom protocol.** Without them `duration` is Infinity, `seekable` becomes [0,0], and every seek goes to 0.
 - **A real 429 costs a minute.** Flash-Lite TTS allows 10 requests per minute on Tier 1, and the same scene text is a cache hit. Keep the checks of parallel agents to a few new texts.
 - **`codex exec` in a background shell hangs on stdin.** It reads stdin as well as its prompt. Add `</dev/null`, or it waits forever on "Reading additional input from stdin..." and never calls the model (2026-10-30: 70 minutes lost).
