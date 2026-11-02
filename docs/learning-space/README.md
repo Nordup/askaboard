@@ -5,14 +5,15 @@ canvas. The core loop: the agent explains on the board with animations while
 the learner talks with it (decision P15). An external agent (Claude Code,
 Claude Desktop, ChatGPT and Codex) connects over MCP, sees the board, and
 creates and edits material on it; the learner can also write and draw by
-hand. The app has no AI inside. All learning
+hand. The app has no AI inside, except an optional speech call with the
+learner's own key (T34). All learning
 lives in one local folder that the learner owns.
 
 It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
-## Status (2026-11-01)
+## Status (2026-11-02)
 
 | Area | State |
 | --- | --- |
@@ -23,6 +24,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
 | One shared design system for menus | Done |
+| The app reads `say()` lines aloud (Gemini TTS, the learner's key; T34, [`voice-lines-plan.md`](voice-lines-plan.md)) | Built. The agent texts wait for the founder's review |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
@@ -74,7 +76,7 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
      message (2026-10-24): the choice of the first fixes, and the idea that
      agents draw with JavaScript strokes, played in sequences by a voice
      model (the idea that became live drawing; the app's own voice was later
-     removed, decision T13).
+     removed, decision T13, and came back as an API voice, T34).
    - [`live-drawing-plan.md`](live-drawing-plan.md) — the expedition plan
      (2026-10-25): one drawing medium in code, four stages, the lab and the
      model councils. [`live-drawing-log.md`](live-drawing-log.md) has what
@@ -180,7 +182,7 @@ the live-frame idea was rejected).
 | Scene | A JavaScript program an agent writes with `write_scene` (a draft that the learner does not see) and plays with `play_scene`: it makes board items and a timeline of how they appear and change; the board plays it, and the items stay. |
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
 | Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |
-| Text line (`say`) | A sentence in a scene, shown to the learner at a reading pace in the reading panel; nothing is spoken. Each line belongs to the step whose time contains it. |
+| Text line (`say`) | A sentence in a scene, shown to the learner in the reading panel, at a reading pace or, with the voice on, at the pace of its audio (T34). Each line belongs to the step whose time contains it. |
 | Reading panel | The floating panel over the board for one scene (code: `ScriptPanel.tsx`): a step bar, the scene's lines as a slow teleprompter with a light on the words being read, replay step, pause and next. It fades after the scene and hides into the scene pill (decisions B19, B21). |
 | Scene pill | The pill in the top bar: the playing scene, else the board's last scene, else a selected item's scene and step. Its menu lists the board's scenes. |
 | Scene file | A scene program as a JavaScript file in `boards/scenes/`, with `import` and `export` (decision B16). |

@@ -20,8 +20,8 @@ it points to. All paths are under `space/` unless stated otherwise.
   and the change log. Everything an agent does goes through
   it, so the learner sees agent work at once and can undo it.
 - The **main process owns the outside world**: the window, the MCP server,
-  disk access through one path guard, the snapshot window, and the files in
-  `~/.learning-space/`.
+  disk access through one path guard, the snapshot window, the files in
+  `~/.learning-space/`, and the speech API (`src/main/voice.ts`, T34).
 - The **learning folder is the only persistent store** of learning content.
   App preferences (recent folders, cameras) live in Electron's `userData`.
 
@@ -37,7 +37,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 
 Security baseline: the renderer is sandboxed, with context isolation and no
 Node integration. A Content-Security-Policy in `src/renderer/index.html`
-limits scripts and images.
+limits scripts, images and media.
 
 ## How an agent request flows
 
@@ -211,7 +211,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
 ## Live scenes (live drawing)
 
 How an agent's scene program becomes drawing on the board (decisions P11,
-P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
+P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - **Scene files.** A program is inline code or a file in `boards/scenes/`
   of the learning folder, with `import` and `export` between files
@@ -359,6 +359,14 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `storyboard.ts` builds preview images. `live-item-protocol.ts` serves the
   `live-item://` origin for worlds, with bundled libraries listed in
   `src/shared/live-libs.ts` (three.js, `ls/interact`).
+- **Voice.** When the voice is on, `write_scene` first runs a lines pass that
+  only collects the `say()` texts. Then, outside the stage lock,
+  `src/main/voice.ts` makes one speech request for the scene, or finds the clip
+  in `.learning-space/voice/`. In the draft run each `say()` asks main for its
+  line (host request `voiceLine`, answered by main, not by `host.ts`), and the
+  audio length becomes the line length. The answers stay in the record, so a
+  replay makes no call. `src/renderer/src/live/voice.ts` sets one audio element
+  from the player clock on each frame (T34, `voice-lines-plan.md`).
 - **Renderer.** `src/renderer/src/live/` turns the description into board
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
   to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
@@ -412,7 +420,8 @@ P19, T12, T13; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - `npm run dev` (relay build + `electron-vite dev`), `npm run build`
   (type-check, bundle, relay), `npm run build:mcpb`, `npm start`.
-- Environment switches (dev): `SPACE_FOLDER` (open a folder),
+- `GEMINI_API_KEY` (any build, also read from `~/.learning-space/.env`) turns
+  the voice on. Environment switches (dev): `SPACE_FOLDER` (open a folder),
   `SPACE_MCP_PORT`, `SPACE_REMOTE_DEBUG` (Chromium debug port + dev hooks),
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
   `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay
