@@ -1,12 +1,11 @@
 /**
- * The toon look, the default of a world: flat bands of light and a thin ink line, in
- * one pass to an 8-bit target. No environment, shadow, floor, bloom or tone mapping.
+ * The look of every world: flat bands of light and a thin ink line, in one pass to
+ * an 8-bit target. An unlit material and a ShaderMaterial pass through it unchanged.
  *
  * Bands. A compile hook on Material swaps the fragment shader of the lit materials
- * (TOONED) while a toon world renders, so an agent's material objects stay as they
- * are and stay live. The program key holds the look, so film worlds in the same
- * renderer keep three's programs. The light loop is three's: every light of the
- * world adds to one sum, and the sum falls into one of three bands.
+ * (TOONED) while a world renders, so an agent's material objects stay as they are
+ * and stay live. The light loop is three's: every light of the world adds to one
+ * sum, and the sum falls into one of three bands.
  *
  * Ink. A back-face hull, pushed out in screen pixels by one shared material. A hook
  * on Mesh collects what three really draws, and the last object of the render list
@@ -20,11 +19,10 @@
  * - world.look.fragment: another fragment shader for all its toon materials;
  * - material.onBeforeCompile: it runs after this hook and sees the toon shader;
  * - material.userData.toon = false: three's own shader for that material, no ink;
- * - a ShaderMaterial, or world.look = "plain" or "film". This file touches neither.
+ * - a ShaderMaterial: this file does not touch it.
  */
 export const TOON = String.raw`
   const TOON_LOOK = {
-    name: 'toon', exposure: 1, bloom: 0, threshold: 1.1, glowRadius: 0.32, dof: 0, shadows: false, shadow: 0.55, softness: 0.22, environment: 0, tone: false,
     /** Brightness of the shade, middle and lit band; the light levels between them; half the width of a step. */
     shades: [0.56, 0.78, 1], steps: [0.4, 0.62], soft: 0.012,
     /** Ink: width in CSS pixels, 0 for none, and colour. see: the opacity of a material with transmission. */
@@ -32,8 +30,6 @@ export const TOON = String.raw`
   };
   /** The two lights of the look. The hemisphere and the key sum to about 1 where a surface faces the light. */
   const TOON_KEY = 1.5, TOON_SKY = '#ffffff', TOON_GROUND = '#8d8d96', TOON_FILL = 1.15;
-  /** What this look never has, whatever a world sets. */
-  const TOON_NEVER = { bloom: 0, dof: 0, shadows: false, environment: 0, tone: false };
   const TOONED = { MeshStandardMaterial: 1, MeshPhysicalMaterial: 1, MeshLambertMaterial: 1, MeshPhongMaterial: 1, MeshToonMaterial: 1 };
 
   const TOON_FRAGMENT = [
@@ -86,7 +82,7 @@ export const TOON = String.raw`
   ].join('\n');
   const INK_FRAGMENT = ['uniform vec3 inkColor; uniform float inkAlpha;', 'void main() { gl_FragColor = vec4(inkColor, inkAlpha);', '#include <colorspace_fragment>', '}'].join('\n');
 
-  // The world that renders in the toon look now, or null. Hooks read it, so everything else pays one check.
+  // The world that renders now, or null. Hooks read it, so everything else pays one check.
   let toonWorld = null, inkMaterial = null, inkGeometry = null;
   const inkQueue = [];
 
@@ -270,7 +266,6 @@ export const TOON = String.raw`
     const hemi = new THREE.HemisphereLight(TOON_SKY, TOON_GROUND, TOON_FILL);
     const pass = inkPass(), batches = new THREE.Group();
     w.stage.add(hemi, pass, batches);
-    w.toonFill = hemi;
     w.inkPass = pass;
     w.inkGroup = batches;
     w.inkBatches = new Map();
@@ -280,14 +275,14 @@ export const TOON = String.raw`
   };
 
   /**
-   * A program belongs to a look and a material keeps the uniforms of its last compile, and three skips the compile hook for a program it has.
-   * So a change of look or of look.fragment frees these programs, and each material compiles again through the hook.
+   * A program belongs to a look.fragment and a material keeps the uniforms of its last compile, and three skips the compile hook for a program it has.
+   * So a change of look.fragment frees these programs, and each material compiles again through the hook.
    */
   const recompileToon = (w) => {
     w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) if (TOONED[m.type]) m.dispose(); });
   };
 
-  /** Before a render in this look. W, H: the target. px: device pixels per CSS pixel of the target. */
+  /** Before a render. W, H: the target. px: device pixels per CSS pixel of the target. */
   const beginToon = (w, look, W, H, px) => {
     const u = w.toonUniforms, ink = inkMaterial.uniforms, width = look.outline * px;
     u.toonShades.value.fromArray(look.shades);

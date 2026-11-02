@@ -12,29 +12,26 @@ Run `npm run build` first. From `space/`:
 
 ```sh
 node scripts/perf/render.mjs --label before                     # all default scenes, about 8 minutes
-node scripts/perf/render.mjs --scenes film,plain --label after  # the table shows the change against the last equal run
-node scripts/perf/render.mjs --scenes film --tune '{"msaa":0}'
-node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"dpr":1},{"adaptive":0}]'
+node scripts/perf/render.mjs --scenes toon,many --label after   # the table shows the change against the last equal run
+node scripts/perf/render.mjs --scenes toon --tune '{"msaa":0}'
+node scripts/perf/render.mjs --scenes toon --matrix '[{"msaa":0},{"dpr":1},{"adaptive":0}]'
 node scripts/perf/render.mjs --report                           # writes .lab/perf/render-report.md, a table over commits
 ```
 
 A run is uncapped by default (tune key `uncapped: 1`): no picture waits for a page paint or a display frame, and Chromium starts with `--disable-frame-rate-limit` and `--disable-gpu-vsync`. So `pict/s` and `fps` show headroom, and they can pass 60 on a 60 Hz screen. `--capped` runs as a normal user does. Each history line has `uncapped`, and a run compares only with a run of the same state. History lines before 2026-11-01 have no `uncapped` field: they are capped.
 
-`pen` and `bigboard` numbers change with the pace of the input. The sender keeps a clock (240 and 120 events a second) and does not wait for each answer: an event that waits holds for one frame, so 3,000 samples took 60 s. The `pan` of `ink` and `film` still waits, so its input rate is lower.
+`pen` and `bigboard` numbers change with the pace of the input. The sender keeps a clock (240 and 120 events a second) and does not wait for each answer: an event that waits holds for one frame, so 3,000 samples took 60 s. The `pan` of `ink` and `toon` still waits, so its input rate is lower.
 
-Other options: `--seconds 10`, `--no-pan`, `--shots <folder>` (a screenshot of each scene after it plays), `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes film --profile` writes `.lab/perf/profile-film.json` and `sample-film.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-film.png`.
+Other options: `--seconds 10`, `--no-pan`, `--shots <folder>` (a screenshot of each scene after it plays), `--burst` (CPU per process group in the first 30 s of a world, in `render-burst.jsonl`), `--dev` (the dev renderer, slower than `out/`). `--scenes toon --profile` writes `.lab/perf/profile-toon.json` and `sample-toon.txt`: CPU per process, a macOS `sample` of the busiest renderer, a Chromium trace, and CPU profiles of the page and the worker. It also saves `shot-toon.png`.
 
-One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `film` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
+One run starts a fresh app on ports 47882 / 9482, plays the scene, waits for its end, holds 10 s, and stops the app (exact PIDs). `toon` also has a `pan` phase: 5 s of wheel pan and pinch zoom. `ink` has no world: it is the busy board of `scripts/bench/busy.mjs`, with pan and zoom for the whole run. The scenes are in `render-scenes/`:
 
 | Scene | What it is |
 | --- | --- |
-| `film` | One molecule of 24 meshes in the film look. |
-| `plain` | The same molecule in the plain look. |
-| `toon` | The same molecule in the default look, with its ink. |
-| `many` | One world with 400 separate meshes, turning, in the default look. |
-| `three` | Three worlds side by side, turning, in the default look. |
+| `toon` | One molecule of 24 meshes, with its ink. |
+| `many` | One world with 400 separate meshes, turning. |
+| `three` | Three worlds side by side, turning. |
 | `ink` | The busy board, no world. |
-| `three-film`, `many-film` | `three` and `many` in the film look. Not in the default run. Runs before 2026-11-01 of `three`, `many` and `toon` are film or hand-made: compare them with these, or with care. |
 | `shapes` | Not in the default run. One world with a torus knot, a box, a texture, a glow, glass, instances and a line: for looking at a style. |
 | `pen` | One pressure stroke of 3,000 samples at 240 Hz (`drive.mjs draw --hz 240`, real pointer events, 12.5 s). Phase `empty`: an empty board. Phase `busy`: the busy board of `ink`, all in view. |
 | `bigboard` | A board file with 5,000 learner strokes and about 240 other items (`boardFile` in `scripts/bench/busy.mjs`). 8 s of wheel pan and pinch at 120 events a second. Phase `pan`: all of the board in view. Phase `near`: zoom about 1. |
@@ -99,12 +96,10 @@ A run opens the window at its normal place on the screen, with no focus (`SPACE_
 | Key | Effect |
 | --- | --- |
 | `msaa` | Samples of the scene target. The default is 4. |
-| `hdr` | 0: 8-bit targets in place of HalfFloat. The floor shadow stays HalfFloat. The film look changes, because no value goes over 1. |
 | `dpr` | A cap on the pixel ratio of the live path. |
 | `adaptive` | 0: the resolution stays at the full share, so dynamic resolution hides no cost. Worlds still take turns inside the budget of a picture. |
-| `bloom`, `dof`, `floor`, `env`, `shadows` | 0: that part is off for every world, in the film look too. |
 | `surfaceMargin` | Overscan in CSS pixels per side. The default is 256. |
-| `budget` | Fence ms per picture over which a moving world lowers its quality. The default is 14. A small value acts as a weak machine. |
+| `budget` | Work ms per picture (fence ms less `FENCE_FLOOR`) over which a moving world lowers its quality. The default is 14. A small value acts as a weak machine. |
 | `integrated` | 1: act as on an Intel GPU: a moving world has no samples from its first step. |
 | `flat` | 1: pictures reach the page through a 2D canvas, as where `bitmaprenderer` is missing. |
 | `moduleRuns` | Generations with modules that a worker takes before it restarts (default 128). A small value shows that restart soon. |

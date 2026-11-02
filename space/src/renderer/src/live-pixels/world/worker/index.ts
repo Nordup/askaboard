@@ -25,8 +25,8 @@ import { VIEW } from './view'
  * - view.ts: what a world really draws (reach), the crop, the render targets.
  * - touch.ts: pick, pins, ink, the hand's events, the anchor.
  * - picture.ts: whether a tick changed what a render would show.
- * - toon.ts: the toon look, the default.
- * - look.ts: the looks of one world into its private output, and the film look.
+ * - toon.ts: the look of every world.
+ * - look.ts: a world's stage, and its render into its private output.
  * - stats.ts: what one second of rendering cost, while the page asks for it.
  * - surface.ts: compositing, pictures, the frame loop, the messages.
  */

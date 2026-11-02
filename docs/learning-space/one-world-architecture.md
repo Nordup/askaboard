@@ -42,7 +42,7 @@ flowchart LR
   end
   subgraph Frame ["Sandboxed iframe + one worker"]
     RT["world/worker: one WebGLRenderer on an OffscreenCanvas"]
-    W1["World A: scene, camera, look, floor, code"]
+    W1["World A: scene, camera, look, code"]
     W2["World B"]
   end
   P --> CO --> R --> H --> SF
@@ -63,8 +63,8 @@ The `world/` paths are under `space/src/renderer/src/live-pixels/`.
 | `world/worker/realm.ts` | Time and `Math.random` per world, the clock, the API for a world's code |
 | `world/worker/files.ts` | Files of the learning folder for a world's code, loads, a world's console |
 | `world/worker/view.ts` | Reach and its bounds, the crop, the pool of render targets |
-| `world/worker/toon.ts` | The toon look, the default: bands of light and an ink line |
-| `world/worker/look.ts` | The direct path of toon and plain, and the film look: environment light, floor with soft shadow and reflection, bloom, tone mapping (a port of `film.js`). The film parts are made when the first world needs them |
+| `world/worker/toon.ts` | The look of every world: bands of light and an ink line (P22) |
+| `world/worker/look.ts` | A world's stage, and its render into its private output |
 | `world/worker/touch.ts` | Pick, pins, ink, the hand's events, the anchor |
 | `world/worker/surface.ts` | Compositing, pictures, the frame loop, steering, the messages |
 
@@ -135,9 +135,9 @@ sequenceDiagram
 ```mermaid
 flowchart LR
   A["Placeholder rect on screen"] --> V["camera.setViewOffset: world centre lands on the anchor, at board scale"]
-  V --> R["Reach: projected bounds, plus room for glow and floor"]
+  V --> R["Reach: projected bounds, plus a small room"]
   R --> T["Render target only as large as the reach"]
-  T --> L["Look: tone mapping, bloom, floor"]
+  T --> L["One render: bands of light and ink"]
   L --> M["Composite on the surface, premultiplied alpha, scissored"]
 ```
 
@@ -159,17 +159,10 @@ flowchart LR
   passes these bounds: `world.reach()` can set reach, and `world.reach("full")` uses
   the whole visible surface. Reach grows at once and shrinks slowly. It is never a
   visible edge. Culling uses reach, not the placeholder, so a world with an anchor
-  outside the view still shows what reaches into the view. Samples of the points
-  serve only the fit of the floor and the focus.
-- The floor's shadow pass borrows the world's layers and `scene.overrideMaterial`, and
-  gives them back after the pass, also after an error.
-- Film: depth of field gathers at half size and joins by depth. The floor's reflection
-  blurs in a pass of a third of the size. The floor's shadow map holds its last world,
-  so a render with no new content (a zoom, the sharp picture at rest) keeps it.
-- Film: tone mapping and colour output happen in the look's last pass. Bloom keeps
-  real alpha. The last pass writes premultiplied colour.
+  outside the view still shows what reaches into the view. A sample of the points
+  serves only the plane of `world.toWorld` and `stroke.world`.
 - Where `bitmaprenderer` is missing, the page draws each picture on a 2D canvas.
-- Toon and plain: the direct path. The scene renders once, and materials write display
+- The scene renders once, and materials write display
   colours. Blending makes them premultiplied, so no pass follows. With samples, it renders
   into a multisample target of the pool, and the resolved picture goes into the world's
   plain 8-bit output by a copy on the GPU. Samples and depth take 9 times the bytes of the
@@ -187,7 +180,10 @@ flowchart LR
   pixels at a lower resolution too.
 - A moving or zooming world can lower its samples and then its resolution (`QUALITY`,
   `steer` in `world/worker/surface.ts`), and a world at rest renders once at full
-  quality. Each world has its own cost: a fixed part and a part that grows with its
+  quality. The last step is a share of 0.75 with 2 samples, because a world that always
+  moves shows these steps all the time (decision B55). The budget is 14 ms of work per
+  picture: the fence time less its floor, with a cap and without one. Each world has
+  its own cost: a fixed part and a part that grows with its
   pixels, learned from the fence time. A fence times a whole picture, so when worlds
   render together, one renders alone now and then: soon, three times per world, then
   once in 240 pictures. A render that renders alone gets all of the time. In a share, each
@@ -381,8 +377,8 @@ in the board file and shows a note at its place.
 
 ## 9. Decisions in this build
 
-- The toon look is the default (P21). `world.look = "film"` gives the film look with
-  its floor and soft shadow, and every part can change (`world.look = "plain"`,
-  `world.floor = false`).
-- WebGL 2, because `film.js` is proven there.
+- Toon is the only look (P22). A world's code changes all of it, and any three.js
+  material and any shader of its own still work. A string assigned to `world.look` does
+  nothing, so saved code that names an older look runs as toon.
+- WebGL 2, because the first proofs ran there.
 - A world's code is a string, the first argument of `world()`.

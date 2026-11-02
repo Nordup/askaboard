@@ -14,14 +14,10 @@
  * render target never changes the scale or the perspective.
  */
 export const VIEW = String.raw`
-  /** Steps of a crop and of a render target, in pixels. Bloom levels to 1/64 stay fixed on the world too. */
+  /** Steps of a crop and of a render target, in pixels. */
   const GRID = 64;
-  /** Room for glow in board points. */
-  const GLOW_ROOM = 224;
   /** Room for anything else, in pixels: a soft edge, a thin line on the bounds. */
   const SOFT_ROOM = 32;
-  /** Measures of a world between two samples of its stage. */
-  const SAMPLE_EVERY = 6;
   /** The share of the distance that reach shrinks per measure. It grows at once. */
   const SHRINK = 0.01;
 
@@ -30,11 +26,11 @@ export const VIEW = String.raw`
   const reachVector = () => reachVector.v || (reachVector.v = new THREE.Vector3());
 
   /**
-   * A sample of what the world draws now, in world space, for the floor and the focus. It can miss a point, so reach does not use it: a
-   * floor that stands a little high costs nothing, and a crop that cuts a part is a fault.
+   * The plane of world.toWorld and stroke.world, under a sample of what the world draws now, in world space. The sample can miss a point,
+   * so reach does not use it: a plane that stands a little high costs nothing, and a crop that cuts a part is a fault.
    */
-  const sampleStage = (w) => {
-    const box = w.bounds.makeEmpty(), m = new THREE.Matrix4(), v = reachVector();
+  const placeFloor = (w) => {
+    const box = new THREE.Box3(), m = new THREE.Matrix4(), v = reachVector();
     const visit = (o) => {
       if (!o.visible || o === w.stage) return;
       const g = o.geometry, position = g && g.attributes && g.attributes.position;
@@ -54,7 +50,8 @@ export const VIEW = String.raw`
     };
     for (const child of w.scene.children) if (child !== w.camera) visit(child);
     if (box.isEmpty()) return;
-    if (floorOn(w)) fitFloor(w, box); else if (!w.floorBuilt) placeFloorPlane(w, box);
+    w.floorY = box.min.y - (box.max.y - box.min.y) * 0.1;
+    w.floorPlaced = true;
   };
 
   // Bounds. Each drawn object gives a box that holds all it can draw, under the matrices of this moment, so reach never cuts it. A geometry
@@ -225,7 +222,7 @@ export const VIEW = String.raw`
   };
 
   // One measure runs at a time: its state stays here, so a measure allocates nothing.
-  let tools = null, P = null, near = 0, perspective = false, simple = false, halfW = 0, halfH = 0, onFloor = false;
+  let tools = null, P = null, near = 0, perspective = false, simple = false, halfW = 0, halfH = 0;
   // The bounds of the world, of the object now, its points in front of the camera and behind it.
   let wl = 0, wt = 0, wr = 0, wb = 0, ol = 0, ot = 0, or = 0, ob = 0, front = 0, behind = 0, open = false, room2 = 0;
 
@@ -276,30 +273,15 @@ export const VIEW = String.raw`
     if (-top * halfH > ot) ot = -top * halfH;
     if (-bottom * halfH < ob) ob = -bottom * halfH;
   };
-  /** The floor shows the mirror image of what stands on it and its shadow, with the blur of its height. e: to world space. */
-  const onTheFloor = (w, e, b) => {
-    const dx = b[3] - b[0], dy = b[4] - b[1], dz = b[5] - b[2], sx = w.lightSlope.x, sz = w.lightSlope.y, y0 = w.floorY, soft = w.look.softness * 1.5;
-    for (let c = 0; c < 8; c++) {
-      const lx = b[0] + (c & 1 ? dx : 0), ly = b[1] + (c & 2 ? dy : 0), lz = b[2] + (c & 4 ? dz : 0);
-      const x = e[0] * lx + e[4] * ly + e[8] * lz + e[12], y = e[1] * lx + e[5] * ly + e[9] * lz + e[13], z = e[2] * lx + e[6] * ly + e[10] * lz + e[14];
-      const h = Math.max(0, y - y0), px = x - h * sx, pz = z - h * sz, blur = h * soft;
-      worldPoint(x, 2 * y0 - y, z);
-      worldPoint(px - blur, y0, pz - blur);
-      worldPoint(px + blur, y0, pz + blur);
-      worldPoint(px - blur, y0, pz + blur);
-      worldPoint(px + blur, y0, pz - blur);
-    }
-  };
   /** A box under matrix m, to world space. r: the radius of the same thing around centre c, when it has one. */
-  const placeBox = (w, m, b, r, c) => {
+  const placeBox = (m, b, r, c) => {
     const t = tools, e = t.toCamera.multiplyMatrices(t.view, m).elements;
     startObject();
     corners(e, b);
     if (r > 0) tighten(e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12], e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13], e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14], r * Math.sqrt(stretchOf(m.elements, 0)));
-    if (onFloor) onTheFloor(w, m.elements, b);
     endObject();
   };
-  const boundObject = (w, o) => {
+  const boundObject = (o) => {
     if (o.isSprite) {
       const e = o.matrixWorld.elements, sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]), c = o.center;
       const r = Math.hypot(sx * Math.max(c.x, 1 - c.x), sy * Math.max(c.y, 1 - c.y));
@@ -323,7 +305,7 @@ export const VIEW = String.raw`
         for (let i = 0; i < 3; i++) { b[i] -= e; b[i + 3] += e; }
         if (!material.worldUnits) room2 = Math.max(room2, material.linewidth);
       }
-      placeBox(w, o.matrixWorld, b, 0, null);
+      placeBox(o.matrixWorld, b, 0, null);
       return;
     }
     const s = shapeOf(g);
@@ -332,12 +314,12 @@ export const VIEW = String.raw`
       o.computeBoundingBox();
       const k = o.boundingBox;
       b[0] = k.min.x; b[1] = k.min.y; b[2] = k.min.z; b[3] = k.max.x; b[4] = k.max.y; b[5] = k.max.z;
-      placeBox(w, o.matrixWorld, b, 0, null);
+      placeBox(o.matrixWorld, b, 0, null);
       return;
     }
     if (o.isInstancedMesh) {
       const box = instanceBox(o, s);
-      if (box[3] >= box[0]) placeBox(w, o.matrixWorld, box, 0, null);
+      if (box[3] >= box[0]) placeBox(o.matrixWorld, box, 0, null);
       return;
     }
     // Morph targets add to each coordinate, up to what their influences allow.
@@ -362,7 +344,7 @@ export const VIEW = String.raw`
         t.bone.multiplyMatrices(bone ? bone.matrixWorld : t.none, skeleton.boneInverses[i]);
         t.whole.multiplyMatrices(t.before, t.bone).multiply(o.bindMatrix);
         b[0] = k.boxes[at] + lx; b[1] = k.boxes[at + 1] + ly; b[2] = k.boxes[at + 2] + lz; b[3] = k.boxes[at + 3] + hx; b[4] = k.boxes[at + 4] + hy; b[5] = k.boxes[at + 5] + hz;
-        placeBox(w, t.whole, b, 0, null);
+        placeBox(t.whole, b, 0, null);
       }
       return;
     }
@@ -374,12 +356,12 @@ export const VIEW = String.raw`
     }
     const box = s.box;
     b[0] = box[0] + lx - grow; b[1] = box[1] + ly - grow; b[2] = box[2] + lz - grow; b[3] = box[3] + hx + grow; b[4] = box[4] + hy + grow; b[5] = box[5] + hz + grow;
-    placeBox(w, o.matrixWorld, b, d || grow ? 0 : s.radius, s);
+    placeBox(o.matrixWorld, b, d || grow ? 0 : s.radius, s);
   };
 
   const walkReach = (w, o) => {
     if (!o.visible || o === w.stage) return;
-    boundObject(w, o);
+    boundObject(o);
     const list = o.children;
     for (let i = 0; i < list.length; i++) walkReach(w, list[i]);
   };
@@ -402,9 +384,9 @@ export const VIEW = String.raw`
 
   /**
    * Measure the world and update reach: it grows at once and shrinks slowly. It holds all that the world draws at this moment, skinned and
-   * morphed parts too. Only vertices moved in a shader pass it: world.reach() is for those. stage: sample the stage now.
+   * morphed parts too. Only vertices moved in a shader pass it: world.reach() is for those.
    */
-  const measureReach = (w, stage) => {
+  const measureReach = (w) => {
     if (typeof w.reachSet === 'number') {
       const n = w.reachSet;
       w.reach = { l: -n, t: -n, r: n, b: n, full: false };
@@ -412,13 +394,7 @@ export const VIEW = String.raw`
     }
     if (w.reachSet === 'full') { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
     worldMatrices(w);
-    const floor = floorOn(w);
-    if (stage || (floor && !w.floorBuilt) || ((w.look.name === 'toon' ? w.floor && !w.floorBuilt : true) && w.samples++ % SAMPLE_EVERY === 0)) {
-      sampleStage(w);
-      // A fit moves the floor and the light.
-      w.matrixAt = -1;
-      worldMatrices(w);
-    }
+    if (!w.floorPlaced) placeFloor(w);
     nominalCamera(w);
     if (!tools) tools = { view: new THREE.Matrix4(), toCamera: new THREE.Matrix4(), before: new THREE.Matrix4(), bone: new THREE.Matrix4(), whole: new THREE.Matrix4(), none: new THREE.Matrix4(), box: new Float64Array(6) };
     const c = w.camera;
@@ -427,10 +403,7 @@ export const VIEW = String.raw`
     simple = P[4] === 0 && P[1] === 0 && P[0] > 0 && P[5] > 0 && (perspective ? P[11] === -1 && P[3] === 0 && P[7] === 0 : P[11] === 0 && P[3] === 0 && P[7] === 0 && P[15] === 1);
     wl = wt = Infinity; wr = wb = -Infinity; open = false; room2 = 0;
     const list = w.scene.children;
-    onFloor = floor && w.floorBuilt;
     for (let i = 0; i < list.length; i++) if (list[i] !== c) walkReach(w, list[i]);
-    // What hangs on the camera counts for reach, and not for the floor.
-    onFloor = false;
     if (c.parent === w.scene) walkReach(w, c);
     w.pointRoom = room2;
     if (open) { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
@@ -470,8 +443,7 @@ export const VIEW = String.raw`
   };
 
   /** Room for what passes the bounds by its own size, in pixels. */
-  const softRoom = (w) => Math.max(SOFT_ROOM, (w.pointRoom || 0) + SOFT_ROOM / 2);
-  const room = (w, s) => (lookOf(w).bloom > 0 ? Math.max(GLOW_ROOM * s, softRoom(w)) : softRoom(w));
+  const room = (w) => Math.max(SOFT_ROOM, (w.pointRoom || 0) + SOFT_ROOM / 2);
 
   /** What must be rendered now: reach cut by the surface, in nominal pixels from the anchor. Null when none of it is on the surface. */
   const cropFor = (w, place) => {
@@ -489,16 +461,8 @@ export const VIEW = String.raw`
       if (qy > sb) sb = qy;
     }
     if (reach.full) return snapped(sl, st, sr, sb);
-    const s = place.s, pad = room(w, s);
+    const s = place.s, pad = room(w);
     return snapped(Math.max(sl, reach.l * s - pad), Math.max(st, reach.t * s - pad), Math.min(sr, reach.r * s + pad), Math.min(sb, reach.b * s + pad));
-  };
-
-  /** The part of a crop that holds the scene: reach and a soft edge. Outside it, only glow. */
-  const innerOf = (w, s, crop) => {
-    const reach = w.reach;
-    if (reach.full || !(lookOf(w).bloom > 0)) return crop;
-    const pad = softRoom(w), inner = snapped(reach.l * s - pad, reach.t * s - pad, reach.r * s + pad, reach.b * s + pad);
-    return { l: Math.max(crop.l, inner.l), t: Math.max(crop.t, inner.t), r: Math.min(crop.r, inner.r), b: Math.min(crop.b, inner.b) };
   };
 
   const contains = (a, b) => a.l <= b.l && a.t <= b.t && a.r >= b.r && a.b >= b.b;
@@ -511,7 +475,7 @@ export const VIEW = String.raw`
     c.updateMatrixWorld();
   };
 
-  // Render targets. Shared targets hold the passes of one world and are free again after that pass. Outputs belong to one world until it gives
+  // Render targets. A shared target holds the samples of one render and is free again after it. Outputs belong to one world until it gives
   // them back. The pool has a limit in bytes and drops what no picture used for the longest time. When no picture came for a while, it holds nothing.
   const shared = new Map();
   const spareOutputs = [];
@@ -520,16 +484,15 @@ export const VIEW = String.raw`
   const poolLimit = Math.min(MOST_BYTES, (scope.navigator.deviceMemory || 4) * GIGABYTE_BYTES);
   let useCount = 0, poolBytes = 0, lastUse = 0, idleTimer = 0;
   const targetBytes = (t) => {
-    const samples = t.samples || 0, pixel = t.texture.type === THREE.UnsignedByteType ? 4 : 8;
-    return t.width * t.height * (pixel * (1 + samples) + (t.depthBuffer ? 4 * Math.max(1, samples) : 0));
+    const samples = t.samples || 0;
+    return t.width * t.height * (4 * (1 + samples) + (t.depthBuffer ? 4 * Math.max(1, samples) : 0));
   };
-  const itemBytes = (item) => (item.isRenderTarget ? targetBytes(item) : item.down.concat(item.up).reduce((sum, t) => sum + (t ? targetBytes(t) : 0), 0));
   const sharedOf = (kind, W, H, make) => {
     const id = kind + ':' + W + 'x' + H;
     let entry = shared.get(id);
     if (!entry) {
       const item = make();
-      entry = { item, used: 0, bytes: itemBytes(item) };
+      entry = { item, used: 0, bytes: targetBytes(item) };
       shared.set(id, entry);
       poolBytes += entry.bytes;
     }
@@ -567,8 +530,8 @@ export const VIEW = String.raw`
   const stepUp = (n) => Math.ceil(n / OUTPUT_STEP) * OUTPUT_STEP;
   /** Target t holds W x H in a corner, and has no more room than OUTPUT_WASTE allows. */
   const hasRoom = (t, W, H) => t.width >= W && t.height >= H && t.width * t.height <= Math.max(W * H * OUTPUT_WASTE, stepUp(W) * stepUp(H));
-  /** direct: the scene renders for this output. With samples it renders in a shared target and comes here as a copy, and with no samples it renders here, so the output has depth. */
-  const fitsOutput = (t, W, H, direct, samples) => t.direct === !!direct && (!direct || t.depthBuffer === !samples) && hasRoom(t, W, H);
+  /** With samples the scene renders in a shared target and comes here as a copy, and with no samples it renders here, so the output has depth. */
+  const fitsOutput = (t, W, H, samples) => t.depthBuffer === !samples && hasRoom(t, W, H);
   /** Use the corner of t that holds W x H. Three renders there, and the composite reads there. */
   const useOutput = (t, W, H) => {
     t.useW = W; t.useH = H;
@@ -578,17 +541,18 @@ export const VIEW = String.raw`
     return t;
   };
   /** Its texture holds display colours, in plain RGBA8. */
-  const takeOutput = (W, H, direct, samples) => {
+  const takeOutput = (W, H, samples) => {
     let best = null;
-    for (const t of spareOutputs) if (fitsOutput(t, W, H, direct, samples) && (!best || t.width * t.height < best.width * best.height)) best = t;
+    for (const t of spareOutputs) if (fitsOutput(t, W, H, samples) && (!best || t.width * t.height < best.width * best.height)) best = t;
     if (best) {
       spareOutputs.splice(spareOutputs.indexOf(best), 1);
       poolBytes -= targetBytes(best);
       return useOutput(best, W, H);
     }
-    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: !!direct && !samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
-    if (direct) { t.isXRRenderTarget = true; t.texture.colorSpace = THREE.SRGBColorSpace; t.texture.internalFormat = 'RGBA8'; }
-    t.direct = !!direct;
+    const t = new THREE.WebGLRenderTarget(stepUp(W), stepUp(H), { type: THREE.UnsignedByteType, depthBuffer: !samples, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
+    t.isXRRenderTarget = true;
+    t.texture.colorSpace = THREE.SRGBColorSpace;
+    t.texture.internalFormat = 'RGBA8';
     return useOutput(t, W, H);
   };
   const giveOutput = (t) => {
@@ -597,7 +561,7 @@ export const VIEW = String.raw`
     poolBytes += targetBytes(t);
   };
   /**
-   * Where a direct render with samples draws: a target of the pool with room, as an output has. Samples and depth last for one render and are 9 times the
+   * Where a render with samples draws: a target of the pool with room, as an output has. Samples and depth last for one render and are 9 times the
    * bytes of the picture, so worlds of like size share them, and a world at rest keeps only its output. Each render draws and resolves only in its scissor, in
    * the corner, so any target with room gives the same pixels. A new target replaces each smaller one that it has room for.
    */

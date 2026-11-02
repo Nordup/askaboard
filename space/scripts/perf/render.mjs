@@ -5,16 +5,16 @@
  * a table with the change against the last run of the same scene, tune and mode.
  * What each number means: scripts/perf/README.md.
  *
- *   node scripts/perf/render.mjs [--scenes film,plain] [--tune <json>] [--label x] [--seconds 10] [--dev]
- *   node scripts/perf/render.mjs --scenes film --matrix '[{"msaa":0},{"adaptive":0}]'
+ *   node scripts/perf/render.mjs [--scenes toon,many] [--tune <json>] [--label x] [--seconds 10] [--dev]
+ *   node scripts/perf/render.mjs --scenes toon --matrix '[{"msaa":0},{"adaptive":0}]'
  *   node scripts/perf/render.mjs --report
- *   node scripts/perf/render.mjs --scenes film --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
- *   node scripts/perf/render.mjs --scenes film --burst       # CPU of the first 30 s of a world, one line in .lab/perf/render-burst.jsonl
+ *   node scripts/perf/render.mjs --scenes toon --profile     # where the CPU goes: writes .lab/perf/profile-<scene>.json
+ *   node scripts/perf/render.mjs --scenes toon --burst       # CPU of the first 30 s of a world, one line in .lab/perf/render-burst.jsonl
  *
  * pen, bigboard, memory, start: the board's own numbers, not the worlds'. meter (not in the default run): what the page meter costs.
  *
  * A run is uncapped by default, so pict/s shows the real headroom. --capped: the cap of a normal user. Each history line has `uncapped`.
- * --no-pan: film without its pan phase. --dev: the dev renderer, not out/. The window opens at its normal place, with no focus.
+ * --no-pan: toon without its pan phase. --dev: the dev renderer, not out/. The window opens at its normal place, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -37,9 +37,9 @@ const BIGBOARD_SECONDS = 8
 const METER_SECONDS = 15
 const START_RUNS = 3
 /** Scenes with a file in render-scenes/. The others drive the board: see BOARD_SCENES. */
-const ALL_SCENES = ['film', 'plain', 'toon', 'many', 'three', 'ink', 'three-film', 'many-film', 'shapes', 'pen', 'bigboard', 'memory', 'start', 'meter']
-/** The default run. The others are for one question: the film look with many worlds, how a style looks, what the meter costs. */
-const DEFAULT_SCENES = ['film', 'plain', 'toon', 'many', 'three', 'ink', 'pen', 'bigboard', 'memory', 'start']
+const ALL_SCENES = ['toon', 'many', 'three', 'ink', 'shapes', 'pen', 'bigboard', 'memory', 'start', 'meter']
+/** The default run. The others are for one question: how a style looks, what the meter costs. */
+const DEFAULT_SCENES = ['toon', 'many', 'three', 'ink', 'pen', 'bigboard', 'memory', 'start']
 
 const run = promisify(execFile)
 const { option, flag } = args()
@@ -894,7 +894,7 @@ async function runScene(scene, { tune: given, label, seconds, dev, profile, burs
     const motion = (ms) => panAndZoom(cdp, ms)
     const line = await base()
     lines.push({ ...line, phase: scene === 'ink' ? 'pan' : 'hold', ...(await measure(cdp, seconds, scene === 'ink' ? motion : null)) })
-    if (scene === 'film' && !noPan) lines.push({ ...line, window: { ...line.window }, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
+    if (scene === 'toon' && !noPan) lines.push({ ...line, window: { ...line.window }, phase: 'pan', ...(await measure(cdp, PAN_SECONDS, motion)) })
     await cdp.evaluate('window.__spaceDev.perf.stop()')
     const after = await windowShare(state.pids)
     for (const line of lines) line.window.visibleShareEnd = after?.share ?? null

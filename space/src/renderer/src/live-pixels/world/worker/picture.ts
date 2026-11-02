@@ -45,7 +45,7 @@ export const PICTURE = String.raw`
     if (sheetSeen.has(t)) return;
     sheetSeen.add(t);
     // A target's picture and a video change with no version.
-    if (t.isRenderTargetTexture || t.isVideoTexture) { if (t !== environment) sheetUnknown = true; return; }
+    if (t.isRenderTargetTexture || t.isVideoTexture) { sheetUnknown = true; return; }
     put(t.version); put(t.source); put(t.source ? t.source.version : 0);
     readValue(t.offset, 0); readValue(t.repeat, 0); readValue(t.center, 0); put(t.rotation);
   };
@@ -88,13 +88,11 @@ export const PICTURE = String.raw`
   const LIGHT = ['intensity', 'distance', 'decay', 'angle', 'penumbra', 'width', 'height', 'power'];
   const CAMERA = ['fov', 'near', 'far', 'zoom', 'left', 'right', 'top', 'bottom', 'filmGauge', 'filmOffset', 'focus'];
   const readObject = (w, o) => {
-    if (o === w.floorGroup || o === w.inkPass || o === w.inkGroup) return;
+    if (o === w.inkPass || o === w.inkGroup) return;
     put(o); put(o.visible);
     if (o.isCamera && o !== w.camera) putMatrix(o.matrixWorld);
     else if (!o.isCamera) putMatrix(o.matrixWorld);
     put(o.layers.mask); put(o.renderOrder); put(o.castShadow); put(o.receiveShadow);
-    // A part's fade reaches the floor's shadow through this value.
-    put(o.userData.lsFade === undefined ? 1 : o.userData.lsFade);
     if (own.call(o, 'onBeforeRender') || own.call(o, 'onAfterRender') || o.isBatchedMesh || o.isLightProbe) sheetUnknown = true;
     if (o.customDepthMaterial) readMaterial(o.customDepthMaterial);
     if (o.customDistanceMaterial) readMaterial(o.customDistanceMaterial);
@@ -127,8 +125,8 @@ export const PICTURE = String.raw`
     for (let i = 0; i < CAMERA.length; i++) readValue(c[CAMERA[i]], 0);
     readValue(s.background, 0); readValue(s.fog, 0); put(s.environmentIntensity); put(s.backgroundIntensity); put(s.backgroundBlurriness);
     if (s.overrideMaterial) readMaterial(s.overrideMaterial);
-    for (const key in w.look) { const v = w.look[key]; if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') { put(key); put(v); } else if (Array.isArray(v)) readValue(v, 0); }
-    readValue(typeof w.floor === 'object' ? w.floor.y : w.floor, 0);
+    // Only what the look reads: an unknown key changes no picture.
+    for (const key in TOON_LOOK) { const v = w.look[key]; if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') { put(key); put(v); } else if (Array.isArray(v)) readValue(v, 0); }
     readValue(typeof w.reachSet === 'number' || typeof w.reachSet === 'string' ? w.reachSet : null, 0);
     const list = s.children;
     for (let i = 0; i < list.length; i++) if (list[i] !== c) readObject(w, list[i]);

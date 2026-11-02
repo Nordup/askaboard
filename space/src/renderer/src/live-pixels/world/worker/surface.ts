@@ -108,8 +108,8 @@ export const SURFACE = String.raw`
   };
 
   /**
-   * A sharp picture at rest is the point of a still world. On a weak machine its size has a ceiling: one world's targets, with their samples and
-   * with film's passes, fill the memory that the device has. deviceMemory gives 2, 4 or 8 and more; Safari gives nothing, and then the middle counts.
+   * A sharp picture at rest is the point of a still world. On a weak machine its size has a ceiling: one world's targets, with their samples,
+   * fill the memory that the device has. deviceMemory gives 2, 4 or 8 and more; Safari gives nothing, and then the middle counts.
    */
   const CEILING_MP_PER_GB = 2, CEILING_FROM_GB = 8;
   const memoryGb = scope.navigator.deviceMemory || 4;
@@ -122,7 +122,7 @@ export const SURFACE = String.raw`
   /** What world w needs for this view: its crop, or null when none of its reach is on the surface. A world there gives back its output. */
   const planWorld = (w) => {
     const place = placed(w);
-    if (!w.reach || w.stale) measureReach(w, false);
+    if (!w.reach || w.stale) measureReach(w);
     const crop = cropFor(w, place);
     w.culled = !crop;
     if (!crop) {
@@ -150,10 +150,10 @@ export const SURFACE = String.raw`
    */
   const COMPILE_MS = 4000;
   const prepareWorld = (plan) => {
-    const { w, place, crop, W, H } = plan, direct = isDirect(lookOf(w)), samples = samplesAt(0);
-    const target = takeOutput(W, H, direct, samples);
+    const { w, place, crop, W, H } = plan, samples = samplesAt(0);
+    const target = takeOutput(W, H, samples);
     let list;
-    try { list = renderWorld(w, place.s, crop, innerOf(w, place.s, crop), target, samples, surface.dpr, true); } finally { giveOutput(target); }
+    try { list = renderWorld(w, place.s, crop, target, samples, surface.dpr, true); } finally { giveOutput(target); }
     w.compiling = true;
     const started = realNow();
     const poll = () => {
@@ -178,15 +178,13 @@ export const SURFACE = String.raw`
 
   const renderPlan = (plan) => {
     const { w, place, crop, quality, W, H } = plan;
-    const direct = isDirect(lookOf(w)), samples = samplesAt(quality);
-    // A world that is stale can show something new. A new zoom or a sharp picture at rest cannot.
-    if (w.stale) w.content++;
-    if (w.output && fitsOutput(w.output, W, H, direct, samples)) useOutput(w.output, W, H);
+    const samples = samplesAt(quality);
+    if (w.output && fitsOutput(w.output, W, H, samples)) useOutput(w.output, W, H);
     else {
       if (w.output) giveOutput(w.output);
-      w.output = takeOutput(W, H, direct, samples);
+      w.output = takeOutput(W, H, samples);
     }
-    renderWorld(w, place.s, crop, innerOf(w, place.s, crop), w.output, samples, surface.dpr);
+    renderWorld(w, place.s, crop, w.output, samples, surface.dpr);
     w.drawn = { s: place.s, crop, quality };
     w.stale = false;
     w.sharpen = false;
@@ -360,7 +358,7 @@ export const SURFACE = String.raw`
     return !!crop && !contains(w.drawn.crop, crop);
   };
 
-  /** A still: its full reach with glow and floor, within these limits. */
+  /** A still: its full reach, within these limits. */
   const STILL_MAX = 4096, STILL_PIXELS = 2000000;
   /** Render one still of world w, at its full reach, and read it before anything else uses the target. It needs no view. */
   const readStill = (w) => {
@@ -369,21 +367,20 @@ export const SURFACE = String.raw`
     core = true;
     let target = null;
     try {
-      measureReach(w, true);
-      w.content++;
+      measureReach(w);
       const nominal = { l: -w.w / 2, t: -w.h / 2, r: w.w / 2, b: w.h / 2 };
       const reach = !w.reach ? null : w.reach.full ? nominal : w.reach;
       if (!reach) return null;
-      // The glow's room is in board points, so the size in points does not depend on the scale.
-      const glow = lookOf(w).bloom > 0 ? GLOW_ROOM : SOFT_ROOM / 2;
-      const pw = reach.r - reach.l + 2 * glow, ph = reach.b - reach.t + 2 * glow;
+      // The room is in board points, so the size in points does not depend on the scale.
+      const pad = SOFT_ROOM / 2;
+      const pw = reach.r - reach.l + 2 * pad, ph = reach.b - reach.t + 2 * pad;
       const s = Math.max(0.1, Math.min(Math.max(1, Math.min(2, surface.dpr)), Math.sqrt(STILL_PIXELS / (pw * ph)), (STILL_MAX - 2 * GRID) / Math.max(pw, ph)));
-      const crop = snapped((reach.l - glow) * s, (reach.t - glow) * s, (reach.r + glow) * s, (reach.b + glow) * s);
+      const crop = snapped((reach.l - pad) * s, (reach.t - pad) * s, (reach.r + pad) * s, (reach.b + pad) * s);
       if (!crop) return null;
       const W = crop.r - crop.l, H = crop.b - crop.t;
-      target = takeOutput(W, H, isDirect(lookOf(w)), samplesAt(0));
+      target = takeOutput(W, H, samplesAt(0));
       // A still has no view, and s can be under the device pixel ratio: its line keeps the same width on the board.
-      renderWorld(w, s, crop, w.reach.full ? crop : innerOf(w, s, crop), target, samplesAt(0), s);
+      renderWorld(w, s, crop, target, samplesAt(0), s);
       const read = readPixels(target, W, H);
       firstPicture(w);
       const points = {};
@@ -464,14 +461,15 @@ export const SURFACE = String.raw`
   let gpuBusy = false;
   const gpu = { ms: 0 };
   /**
-   * The steps of a moving world: its share of full resolution, and its anti-aliasing samples. Samples fall first, 0.5 is a pixel ratio of 1 on
-   * a Retina screen, and a world at rest always has step 0. GPU_HIGH: the fence time per picture (ms) that a moving world must stay under.
+   * The steps of a moving world: its share of full resolution, and its anti-aliasing samples. A world that always moves shows these steps all the
+   * time, so the last step must stay clean: 0.75 is a pixel ratio of 1.5 on a Retina screen, and samples stay on. Samples fall first, and a world at
+   * rest always has step 0. GPU_HIGH: the work per picture (ms) that a moving world must stay under, which is a 60 Hz frame less room for the page.
    */
-  const QUALITY = [1, 1, 0.85, 0.72, 0.6, 0.5], SAMPLES = [4, 2, 2, 2, 0, 0];
+  const QUALITY = [1, 1, 0.85, 0.75], SAMPLES = [4, 2, 2, 2];
   const samplesAt = (quality) => Math.min(tune.msaa ?? 4, weakGpu && quality > 0 ? 0 : memoryGb < 4 ? 2 : SAMPLES[quality]);
   const GPU_HIGH = 14, DROP_AFTER = 5, RISE_AFTER = 30;
   /**
-   * An Intel GPU shares a narrow bus with memory, and HDR targets with samples fill it. So a moving world there has no samples from its first
+   * An Intel GPU shares a narrow bus with memory, and targets with samples fill it. So a moving world there has no samples from its first
    * step, and it starts on that step. The picture at rest keeps its samples.
    */
   let weakGpu = false;
@@ -525,8 +523,7 @@ export const SURFACE = String.raw`
     return pick;
   };
   /** The time of a picture, shared over its worlds by what each should cost. A world that renders alone gets all of it, whatever it cost before. */
-  const learnPicture = (ms) => {
-    const work = Math.max(0, ms - FENCE_FLOOR);
+  const learnPicture = (work) => {
     let whole = 0;
     for (let i = 0; i < fenced.length; i += 2) whole += Math.max(COST_LEAST, costOf(fenced[i], fenced[i + 1]));
     for (let i = 0; i < fenced.length; i += 2) learnCost(fenced[i], fenced[i + 1], (work * Math.max(COST_LEAST, costOf(fenced[i], fenced[i + 1]))) / whole, fencedSolo ? SOLO_WEIGHT : 1);
@@ -537,15 +534,15 @@ export const SURFACE = String.raw`
   /** Ms that a world gives back between two steps of resolution. */
   const gainOf = (w, from, to) => w.cost.slope * fullMp(w) * (QUALITY[from] ** 2 - QUALITY[to] ** 2);
   /**
-   * Each world keeps its own step. A slow stretch, or a world left waiting, lowers the moving world whose pixels cost most, at once, to what the
+   * Each world keeps its own step. Only work counts, not the late read-back of a fence, so the rule is the same with a cap and without one. A slow stretch, or a world left waiting, lowers the moving world whose pixels cost most, at once, to what the
    * budget allows. A world whose time does not grow with its pixels stays sharp: a lower resolution would buy nothing. The time is smoothed and
    * clamped, so a spike from another app or a shader compile moves nothing. A rise comes only when the next step fits with room, and a world
    * that falls again soon after a rise waits longer each time, so no world swings between two steps.
    */
   const steer = (ms) => {
-    learnPicture(ms);
-    const high = tune.budget ?? GPU_HIGH;
-    smooth += (Math.min(ms, high * 2) - smooth) * 0.15;
+    const high = tune.budget ?? GPU_HIGH, work = Math.max(0, ms - FENCE_FLOOR);
+    learnPicture(work);
+    smooth += (Math.min(work, high * 2) - smooth) * 0.15;
     const slow = smooth > high || skipped > 0;
     slowPictures = slow ? slowPictures + 1 : 0;
     fastPictures = slow ? 0 : fastPictures + 1;
@@ -589,7 +586,7 @@ export const SURFACE = String.raw`
     };
     // One wait for most of the time that the last fences took. A chain of short timers would pay for it twice: a poll per
     // millisecond, and after five nested timers the browser's clamp of 4 ms, which can make a picture miss the display's beat.
-    nativeSetTimeout(poll, Math.max(1, smooth * 0.5));
+    nativeSetTimeout(poll, Math.max(1, (smooth + FENCE_FLOOR) * 0.5));
   };
 
   // The frame loop.
@@ -733,7 +730,7 @@ export const SURFACE = String.raw`
       };
       renderer.setClearColor(0x000000, 0);
       renderer.setPixelRatio(1);
-      setTune(m.tune);
+      tune = m.tune || {};
       weakGpu = !!tune.integrated || isIntegrated(renderer.getContext());
       uncapped = !!tune.uncapped;
       sizeSurface(m);

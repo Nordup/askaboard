@@ -238,8 +238,6 @@ await tween(atom.value("height"), 2, 3)
 
 **How a world looks.** A world starts as a drawing that fits the ink: flat bands of light and a thin line around each shape. It keeps your colours and textures, works with any three.js material, and stays clear and light on any machine, so keep it unless the idea asks for something else.
 - Change the drawing with `world.look.shades` and `.steps` (the bands), `.outline` (the line width in pixels, 0 for none) and `.ink` (its colour). `world.look.fragment` replaces the shader, and `material.userData.toon = false` leaves one material out.
-- For real light and material, use `world.look = "film"`: soft light, soft shadows, a gentle glow and a floor with a fading reflection. It costs far more to draw, so use it when realism is what explains the idea. `world.look.gloss(c)`, `.metal(c)`, `.glass(c)`, `.glow(c)` and `.skin(c)` make materials that suit it, and `world.look.bloom = 0` changes one part.
-- In the film look, `world.floor = false` removes the floor, and `world.floor = { y }` sets its height. For flat work, where colours must stay exact, use `world.look = "plain"`.
 
 **Link a world to the board.** A world and the board are one space, so use the links: they are what make a world part of the explanation and not a picture beside it. In the world, `publish(name, target)` names something: an Object3D, a Vector3, or a function that gives [x, y, z]. In the scene:
 - `atom.point(name)` is a point that goes wherever a scene takes a point: `label`, the ends of `arrow` and `line`, `point`, `camera({to})` and `around`. The item follows the point as it moves, also after the scene ends, and it fades while the point is hidden.
@@ -253,7 +251,7 @@ await tween(atom.value("height"), 2, 3)
 - `world.anchor(x, y)` moves the whole world to a board point. Use it for an object that travels far across the board, because it does not stretch the view.
 - `on("ink", fn)` gets each stroke that the learner draws, as stroke.points on the board and stroke.world on the floor, so a drawn line can become a track, a wall or a path. `world.strokes` lists them. A scene can pass in ink that is already there with `board.node("g3").points` and `data`.
 
-**Anything else code can draw.** A world is not only for three dimensions. For a picture drawn by code, draw on an `OffscreenCanvas` and show it as a `THREE.CanvasTexture` on a plane. For a shader, use a `THREE.ShaderMaterial`. For both, `world.look = "plain"` keeps the colours exact.
+**Anything else code can draw.** A world is not only for three dimensions. For a picture drawn by code, draw on an `OffscreenCanvas` and show it as a `THREE.CanvasTexture` on a plane. For a shader, use a `THREE.ShaderMaterial`.
 
 **Errors.** A syntax error or an error in the first frames is a program error at the line of the world() call. A later error stops that world only: it shows a quiet note, and get_item gives the message and the line.
 

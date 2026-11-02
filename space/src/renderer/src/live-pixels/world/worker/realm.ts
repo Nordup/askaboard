@@ -265,7 +265,6 @@ export const REALM = String.raw`
     ownMaterials(w, t);
     t.traverse((o) => {
       const shown = revealOf(o);
-      o.userData.lsFade = shown;
       if (o.material) for (const m of [].concat(o.material)) fadeMaterial(m, shown);
     });
     t.visible = v > 0;
@@ -456,13 +455,8 @@ export const REALM = String.raw`
     anchor(x, y) { moveAnchor(w, x, y); },
     get look() { return w.look; },
     set look(v) { setLook(w, v); },
-    get floor() { return w.floor; },
-    set floor(v) { setFloor(w, v); },
     add(...objects) {
-      for (const m of objects) {
-        if (m.traverse) m.traverse((n) => { if (n.isMesh && n.castShadow === false && !n.userData.noShadow) { n.castShadow = true; n.receiveShadow = true; } });
-        w.root.add(m);
-      }
+      for (const m of objects) w.root.add(m);
       w.stale = true;
       schedule();
       return objects[0];
@@ -532,7 +526,7 @@ export const REALM = String.raw`
       const code = new AsyncFunction(...WORLD_ARGS, "'use strict';" + body + '\n//# sourceURL=world.js');
       const main = inside(w, () => code(...args));
       main.then(
-        () => { w.setUp = true; w.floorBuilt = false; w.stale = true; syncParts(w); if (held(w)) redraw(w); schedule(); },
+        () => { w.setUp = true; w.floorPlaced = false; w.stale = true; syncParts(w); if (held(w)) redraw(w); schedule(); },
         (e) => { w.setUp = true; fail(w, e); }
       );
       await Promise.race([main.catch(() => {}), new Promise((resolve) => { turn = nativeSetTimeout(resolve, SETUP_TURN_MS); })]);
@@ -568,8 +562,8 @@ export const REALM = String.raw`
       pins: new Map(), strokes: [], wants: { pointer: false, wheel: false, ink: false }, moved: { x: 0, y: 0 },
       failed: false, setUp: false, running: true, busy: false, count: 0,
       reportTimer: 0, reportValue: undefined, lastReport: 0, logLines: 0, files: new Set(), loads: 0, loadedAt: -Infinity, modules: false, manager: null,
-      cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: weakGpu ? 1 : 0, waited: 0, shownPoints: [], reachSet: null, reach: null, samples: 0,
-      output: null, drawn: null, floorBuilt: false, place: {}, placeAt: -1, matrixAt: -1, content: 0, sharpen: false, prepared: false, compiling: false, cost: newCost(), roseAt: -Infinity, heldUntil: 0, hold: 0
+      cursorNow: '', ticked: false, timeMoved: false, pictureState: null, placement: null, stale: false, moving: false, movedAt: -9, culled: false, quality: weakGpu ? 1 : 0, waited: 0, shownPoints: [], reachSet: null, reach: null,
+      output: null, drawn: null, floorPlaced: false, place: {}, placeAt: -1, matrixAt: -1, sharpen: false, prepared: false, compiling: false, cost: newCost(), roseAt: -Infinity, heldUntil: 0, hold: 0
     };
     if (w.view.step === undefined) w.view.step = null;
     for (const pin of m.pins || []) addPin(w, pin);
