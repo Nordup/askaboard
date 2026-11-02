@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Camera, RecentFolder } from '@shared/space-api'
+import { hasVoiceKey, PACES, VOICES, type PaceName } from './voice'
 
 /**
  * App state in `userData/state.json`: the last folder, the recent list, the
@@ -23,6 +24,12 @@ interface PersistedState {
   showPerformance: boolean
   /** The row "Uncapped frame rate" of the performance pill. It counts only while the pill is on. */
   uncappedFrames: boolean
+  /** View > Read Lines Aloud; null: never set, so on when a key exists. */
+  readLines: boolean | null
+  /** View > Voice. */
+  voice: string
+  /** View > Pace. */
+  pace: PaceName
 }
 
 /**
@@ -43,7 +50,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, uncappedFrames: true }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, uncappedFrames: true, readLines: null, voice: VOICES[0], pace: 'natural' }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -57,7 +64,10 @@ export function loadState(): void {
       setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : [],
       agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {},
       showPerformance: raw.showPerformance === true,
-      uncappedFrames: raw.uncappedFrames !== false
+      uncappedFrames: raw.uncappedFrames !== false,
+      readLines: typeof raw.readLines === 'boolean' ? raw.readLines : null,
+      voice: (VOICES as readonly string[]).includes(raw.voice as string) ? (raw.voice as string) : VOICES[0],
+      pace: raw.pace !== undefined && Object.hasOwn(PACES, raw.pace) ? raw.pace : 'natural'
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -178,6 +188,34 @@ export function getUncappedFrames(): boolean {
 
 export function setUncappedFrames(value: boolean): void {
   state.uncappedFrames = value
+  saveStateNow()
+}
+
+/** View > Read Lines Aloud as it stands: the saved choice, else on when a key exists. */
+export function readLinesOn(): boolean {
+  return state.readLines ?? hasVoiceKey()
+}
+
+export function setReadLines(value: boolean): void {
+  state.readLines = value
+  saveStateNow()
+}
+
+export function getVoice(): string {
+  return state.voice
+}
+
+export function setVoice(value: string): void {
+  state.voice = value
+  saveStateNow()
+}
+
+export function getPace(): PaceName {
+  return state.pace
+}
+
+export function setPace(value: PaceName): void {
+  state.pace = value
   saveStateNow()
 }
 

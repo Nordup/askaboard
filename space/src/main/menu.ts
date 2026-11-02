@@ -1,4 +1,5 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { PACES, VOICES, type PaceName } from './voice'
 
 export interface MenuActions {
   openFolder(): void
@@ -11,6 +12,13 @@ export interface MenuActions {
   /** View > Show performance: its state at launch, and the change. */
   showPerformance: boolean
   setShowPerformance(on: boolean): void
+  /** View > Read Lines Aloud, Voice and Pace: their state at launch, and the changes. They count for new scenes. setReadLinesChecked sets the first one later. */
+  readLines: boolean
+  setReadLines(on: boolean): void
+  voice: string
+  setVoice(voice: string): void
+  pace: PaceName
+  setPace(pace: PaceName): void
 }
 
 /**
@@ -19,11 +27,18 @@ export interface MenuActions {
  * the canvas handles ⌘Z / ⌘C / ⌘V itself when no input has focus.
  */
 const SETUP_ITEM = 'setup-folder'
+const READ_LINES_ITEM = 'read-lines'
 
 /** Folder-only menu items are enabled while a learning folder is open. */
 export function setFolderOpen(open: boolean): void {
   const item = Menu.getApplicationMenu()?.getMenuItemById(SETUP_ITEM)
   if (item) item.enabled = open
+}
+
+/** View > Read Lines Aloud shows this. */
+export function setReadLinesChecked(on: boolean): void {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(READ_LINES_ITEM)
+  if (item) item.checked = on
 }
 
 export function installMenu(actions: MenuActions): void {
@@ -61,6 +76,10 @@ export function installMenu(actions: MenuActions): void {
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => actions.zoom('reset') },
         { type: 'separator' },
         { label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
+        { type: 'separator' },
+        { id: READ_LINES_ITEM, label: 'Read Lines Aloud', type: 'checkbox', checked: actions.readLines, click: (item) => actions.setReadLines(item.checked) },
+        { label: 'Voice', submenu: VOICES.map((voice) => ({ label: voice, type: 'radio' as const, checked: voice === actions.voice, click: () => actions.setVoice(voice) })) },
+        { label: 'Pace', submenu: (Object.keys(PACES) as PaceName[]).map((pace) => ({ label: PACES[pace].label, type: 'radio' as const, checked: pace === actions.pace, click: () => actions.setPace(pace) })) },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },

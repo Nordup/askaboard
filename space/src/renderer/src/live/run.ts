@@ -707,7 +707,7 @@ function storyOf(compiled: CompiledScene, desc: SceneSummary, after: readonly Bo
   return {
     duration: desc.duration,
     steps: play.steps.map((step) => ({ name: step.name, at: step.at, ...(step.pause ? { pause: true } : {}), lines: step.lines ?? [] })),
-    lines: desc.cues.map((cue) => ({ text: cue.text, at: cue.at, dur: cue.dur })),
+    lines: desc.cues.map((cue) => ({ text: cue.text, at: cue.at, dur: cue.dur, ...(cue.voice ? { voice: cue.voice } : {}) })),
     items
   }
 }

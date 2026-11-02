@@ -7,6 +7,7 @@ import { programTooLarge, STAGE_LIMITS, type FromStage, type StageMode, type Sta
 import { NO_CODE_ITEMS, NO_HTML } from './lab-switch'
 import { stageProgram } from './scene-files'
 import { StageProcess } from './stage-process'
+import { voiceAnswers } from './voice'
 
 /**
  * The stage: one long-lived sandbox per board in which every scene program
@@ -148,6 +149,9 @@ export interface SweepEnd {
   failed: boolean
   notes: string[]
 }
+
+/** The seed of a program's first run (Math.random in the sandbox). */
+export const newSeed = (): number => Math.floor(Math.random() * 2 ** 31) + 1
 
 /** The error of a reply that never came, because the program was cancelled. */
 const CANCELLED = 'cancelled'
@@ -430,7 +434,7 @@ export class SceneStage {
     let ctxText: string
     try {
       const ctx = this.savedContext(entry)
-      ctxText = JSON.stringify({ ...ctx, stage: { ...ctx.stage, first: entry.range?.[0] ?? this.firstId(index) } })
+      ctxText = JSON.stringify({ ...ctx, stage: { ...ctx.stage, first: entry.range?.[0] ?? this.firstId(index) }, ...(voiceAnswers(entry.answers).size ? { voice: true } : {}) })
     } catch (error) {
       this.mark(entry, `its saved context cannot be read (${error instanceof Error ? error.message : String(error)})`)
       return null
@@ -607,7 +611,8 @@ export class SceneStage {
    * took it out of the log, so there the end is that place. The board
    * answers the program's requests at the place (place.board). checkOptions:
    * an unknown option of a scene global is an error (a program that write_scene
-   * drafts now, never a program that runs again).
+   * drafts now, never a program that runs again). answers with voice answers
+   * (main/voice.ts) make its say() lines ask for them.
    */
   async run(
     source: SceneSource,
@@ -631,7 +636,7 @@ export class SceneStage {
     this.adopt(context)
     this.lastPlace = before
     const fresh = this.log.length === 0 ? this.freshReason : null
-    const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31) + 1
+    const seed = options.seed ?? newSeed()
     const tStart = Date.now()
     const onAbort = (): void => this.cancel()
     signal?.addEventListener('abort', onAbort, { once: true })
@@ -642,14 +647,16 @@ export class SceneStage {
       // Its stage ids start after the programs before its place (the empty ids of a marked one included).
       const first = this.firstId(before ? this.log.indexOf(before) : this.log.length)
       const saved = { ...context, ...(context.stage ? { stage: { ...context.stage, first } } : {}), seed, cutAt: options.cutAt ?? null }
-      // The entry keeps ctxText without checkOptions: a run of this entry from its record gets no check.
+      // The entry keeps ctxText without checkOptions and voice: a run of this entry from its record gets no check, and its voice comes from its answers.
       const ctxText = JSON.stringify(saved)
+      const voice = !!options.answers && voiceAnswers(options.answers).size > 0
       const tReady = Date.now()
       if (signal?.aborted) throw new SceneCancelled()
       const record = new Map<string, string>()
       this.answers = { record, given: options.answers ?? null, place: options.place?.board }
       const job = this.nextId++
-      const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText: options.checkOptions ? JSON.stringify({ ...saved, checkOptions: true }) : ctxText, mode: options.mode })
+      const sent = options.checkOptions || voice ? JSON.stringify({ ...saved, ...(options.checkOptions ? { checkOptions: true } : {}), ...(voice ? { voice: true } : {}) }) : ctxText
+      const reply = await this.send({ t: 'run', id: job, program: stageProgram(source), ctxText: sent, mode: options.mode })
       // A sweep can still ask the board: its record closes the answers.
       if (!(reply.ok && reply.sweeping)) this.answers = { record: new Map(), given: null }
       const tDone = Date.now()
@@ -702,6 +709,38 @@ export class SceneStage {
       return { desc, entry, fresh, job, frames: reply.frames, timing, orderDependent: reply.orderDependent }
     } finally {
       signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /**
+   * The lines pass (decision in docs/learning-space/voice-lines-plan.md): the texts of the program's say() lines, from a run on the stage
+   * where its draft will run, with no sampling and no draft. Every line has the reading pace here. A program that fails throws
+   * as in run(). The stage is rebuilt after it.
+   */
+  async lines(source: SceneSource, context: SceneContext, options: { seed: number; signal: AbortSignal; place?: { entry: StageEntry; board: unknown } | null }): Promise<string[]> {
+    const { signal } = options
+    if (signal.aborted) throw new SceneCancelled()
+    const before = options.place && this.log.includes(options.place.entry) ? options.place.entry : null
+    this.adopt(context)
+    this.lastPlace = before
+    const onAbort = (): void => this.cancel()
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      await this.ensure(before, signal).catch((error: unknown) => {
+        throw signal.aborted ? new SceneCancelled() : error
+      })
+      const first = this.firstId(before ? this.log.indexOf(before) : this.log.length)
+      const ctxText = JSON.stringify({ ...context, ...(context.stage ? { stage: { ...context.stage, first } } : {}), seed: options.seed, cutAt: null, checkOptions: true })
+      if (signal.aborted) throw new SceneCancelled()
+      this.answers = { record: new Map(), given: null, place: options.place?.board }
+      const reply = await this.send({ t: 'run', id: this.nextId++, program: stageProgram(source), ctxText, mode: 'lines' })
+      this.answers = { record: new Map(), given: null }
+      this.dirty = true
+      if (signal.aborted) throw new SceneCancelled()
+      if (!reply.ok) throw new SceneProgramError(reply.error, reply.line, reply.file)
+      return JSON.parse(reply.json as string) as string[]
+    } finally {
+      signal.removeEventListener('abort', onAbort)
     }
   }
 
@@ -807,6 +846,10 @@ export class SceneStage {
       if (request.kind === 'text') {
         // Text measures are answers too (recorded, and given back on a rebuild), so a re-run lays text out as the first run did.
         answer = answers.given?.get(text) ?? JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []) })
+        answers.record.set(text, answer)
+      } else if (request.kind === 'voiceLine') {
+        // No network here: the run has its voice answers, and a line without one takes the reading pace ({}).
+        answer = answers.given?.get(text) ?? '{}'
         answers.record.set(text, answer)
       } else if (request.kind === 'html' || request.kind === 'space' || request.kind === 'item' || request.kind === 'glyphs') {
         const given = answers.given?.get(text)

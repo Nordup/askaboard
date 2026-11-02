@@ -21,7 +21,7 @@ import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol
  * FinalizationRegistry. The scene library then replaces Date with the scene
  * clock, seeds Math.random and freezes everything a program can reach.
  *
- * The program scheduler is the one QuickJS had: run every pending job, then
+ * The program scheduler is the one from the QuickJS runtime before T18: run every pending job, then
  * end the earliest pending action (advance), until nothing waits. V8 runs
  * every pending job (microtask) at the end of each task, so each advance is
  * its own task, posted on a private MessageChannel. A program has no way to
@@ -78,6 +78,8 @@ interface Host {
   keys(): Array<[number, string]>
   /** The stage ids the program took, [first, end) (live-prelude.js range). */
   range(): [number, number]
+  /** The texts of the program's say() lines (JSON), for the lines pass. */
+  lines(): string
 }
 
 const G = globalThis as unknown as Record<PropertyKey, unknown>
@@ -372,6 +374,10 @@ function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promis
  * its sweep, with the seeds as its first chunk.
  */
 function finish(fns: Host, id: number, mode: StageMode, started: number): void {
+  if (mode === 'lines') {
+    post({ t: 'reply', id, ok: true, json: fns.lines(), frames: 0, ms: clock() - started, timing: null, keys: null, range: null, orderDependent: [], sweeping: false })
+    return
+  }
   const tBody = clock()
   const frames = mode === 'replay' ? null : new FrameStream(id)
   let early = false

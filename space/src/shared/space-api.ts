@@ -600,6 +600,9 @@ export interface SpaceApi {
   setSetupDontAsk(value: boolean): Promise<void>
   /** View > Show performance, as saved. */
   getShowPerformance(): Promise<boolean>
+  /** View > Read Lines Aloud as it stands: with it off, the board plays no voice. */
+  getReadLines(): Promise<boolean>
+  onReadLines(listener: (on: boolean) => void): Unsubscribe
   /** The pill's row "Uncapped frame rate": on, as saved, and launched, the state of Chromium's frame limit since this launch. */
   getUncappedFrames(): Promise<{ on: boolean; launched: boolean }>
   setUncappedFrames(on: boolean): Promise<void>
@@ -691,6 +694,8 @@ export const IPC = {
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
   getShowPerformance: 'space:get-show-performance',
+  getReadLines: 'space:get-read-lines',
+  readLines: 'space:read-lines',
   getUncappedFrames: 'space:get-uncapped-frames',
   setUncappedFrames: 'space:set-uncapped-frames',
   boardGuidePath: 'space:board-guide-path',

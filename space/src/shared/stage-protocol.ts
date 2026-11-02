@@ -13,8 +13,9 @@ import type { StageModule, StageProgram } from './scene-program'
 /**
  * How a program runs. "scene": run, describe, bake into the stage. "draft": run and describe; the stage is rebuilt after.
  * "replay": run and bake only (a rebuild: no sampling, no frames, no description).
+ * "lines": run only, and reply with the texts of the say() lines (json: an array of strings); the stage is rebuilt after.
  */
-export type StageMode = 'scene' | 'draft' | 'replay'
+export type StageMode = 'scene' | 'draft' | 'replay' | 'lines'
 
 /** Where the time of one program went, in ms (the worker's clock), and how many recipe evaluations the sampling made. */
 export interface StageTiming {
@@ -101,7 +102,7 @@ const isShape = (value: unknown): value is Shape => typeof value === 'object' &&
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 const isText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max
 const isMs = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
-const isMode = (value: unknown): value is StageMode => value === 'scene' || value === 'draft' || value === 'replay'
+const isMode = (value: unknown): value is StageMode => value === 'scene' || value === 'draft' || value === 'replay' || value === 'lines'
 /** Only these keys, and each of them. */
 const keysAre = (value: Shape, keys: string[]): boolean => {
   const own = Object.keys(value)

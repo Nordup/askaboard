@@ -2638,10 +2638,10 @@
   }
 
   /**
-   * The reading pace of say() lines: nothing is spoken; the learner reads the
-   * line, so it lasts as long as reading it takes. 3.5 words per second (210
-   * words a minute, an easy pace for a short line read next to a drawing),
-   * plus 0.3 s to find the line, at least 1 s.
+   * The reading pace of say() lines with no voice: the learner reads the line,
+   * so it lasts as long as reading it takes. 3.5 words per second (210 words a
+   * minute, an easy pace for a short line read next to a drawing), plus 0.3 s
+   * to find the line, at least 1 s.
    */
   const WORDS_PER_S = 3.5
   const countWords = (str) => str.split(/\s+/).filter(Boolean).length
@@ -2687,10 +2687,32 @@
     return { dur, offsets }
   }
 
+  /**
+   * A line's place in its audio (main/voice.ts), when main has one: { clip, from, speech_end, to }, in seconds. Null: the line
+   * runs at the reading pace, so no run can fail on the voice. Main sets CTX.voice for a run that has voice answers.
+   */
+  function voiceOf(text) {
+    if (!CTX.voice || !hostMeasure) return null
+    try {
+      const got = JSON.parse(hostMeasure(JSON.stringify({ kind: 'voiceLine', text })))
+      return got && typeof got.clip === 'string' && got.to > got.from && got.speech_end > got.from ? got : null
+    } catch {
+      return null
+    }
+  }
+
+  /** A spoken line lasts as long as its audio, with its pause. A mark's word is not in the audio's data: its offset goes by its share of the characters. */
+  function measureVoice(clean, marks, spoken) {
+    const speech = spoken.speech_end - spoken.from
+    return { dur: spoken.to - spoken.from, offsets: marks.map((mark) => (speech * mark.char) / clean.length) }
+  }
+
   /** Mark name → its time in this scene (the latest line with it). */
   const markTimes = new Map()
   /** Errors thrown by mark callbacks that ran as async functions. */
   let asyncErrors = []
+  /** Where the last spoken line ends. One voice speaks at a time. */
+  let voiceEnd = 0
 
   function say(str, opts) {
     if (typeof str !== 'string' && typeof str !== 'number') fail(`say(text) needs a string, got ${describe(str)}`)
@@ -2699,11 +2721,17 @@
     opts = options(opts, 'say options')
     const { clean, marks } = splitMarks(raw)
     if (!clean) fail('say(text) needs some words besides its marks')
-    const measured = measureLine(clean, marks)
-    const start = T
+    const spoken = voiceOf(clean)
+    const measured = spoken ? measureVoice(clean, marks, spoken) : measureLine(clean, marks)
+    // T stays: a drawing that does not await the line goes on while the voice before it ends.
+    const start = spoken ? Math.max(T, voiceEnd) : T
     const dur = f3(measured.dur)
     const cue = { text: clean, at: f3(start), dur }
     if (marks.length) cue.marks = marks.map((mark, i) => ({ name: mark.name, at: f3(start + measured.offsets[i]), char: mark.char }))
+    if (spoken) {
+      cue.voice = { clip: spoken.clip, from: spoken.from }
+      voiceEnd = start + dur
+    }
     cues.push(cue)
     for (const mark of cue.marks || []) markTimes.set(mark.name, mark.at)
     endTime = Math.max(endTime, start + dur)
@@ -3357,6 +3385,7 @@
     ownMade = 0
     namesMade.clear()
     asyncErrors = []
+    voiceEnd = 0
     collector = null
     finalSampling = false
     // The stage ids of earlier programs that do not run (main/live-scene.ts StageEntry.range) stay empty: this program's ids are the ones it had.
@@ -3470,8 +3499,10 @@
   const range = () => [firstId, objects.length]
   /** The program's parallel work failed (an async function in all() or a say() mark): its error, at once. */
   const failed = () => (asyncErrors.length ? { error: asyncErrors[0] } : null)
+  /** The texts of this program's lines, for the lines pass (main/live-scene.ts lines). */
+  const lines = () => JSON.stringify(cues.map((cue) => cue.text))
   if (!giveHost) throw new Error('The stage has no host')
-  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, seedsAt, stepping, bake, stats, keys, range }))
+  giveHost(Object.freeze({ begin, advance, end, failed, seeds, result, sample, seedsAt, stepping, bake, stats, keys, range, lines }))
 
   // ---------- Lock the stage ----------
   // Every program of a board runs in this one realm. So that no program can

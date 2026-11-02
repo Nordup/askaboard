@@ -3,9 +3,10 @@
 Learning Space is a desktop app (Electron) for macOS. It gives the learner a
 shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
-the board with the learner.
+the board with the learner. Its one AI call is optional: a speech API reads
+scene lines aloud with the learner's own key (T34).
 
-**Status (2026-10-31):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), and an unknown scene option is an error (B24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
+**Status (2026-11-02):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), and an unknown scene option is an error (B24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -49,11 +50,15 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   they unfold in time; the board plays it, and the result stays as ordinary
   items. Programs on a board share one sandbox (the stage), queue back to
   back, can pause at steps, and pause when the learner starts drawing. A
-  scene's text lines (`say`) appear at a reading pace in a floating reading
+  scene's text lines (`say`) appear in a floating reading
   panel for one scene (the previous line, the current line, a step bar); it
   fades after the scene and hides into the scene pill in the top bar, which
-  lists the board's scenes and shows the scene and step of a selected item. The app does not
-  speak.
+  lists the board's scenes and shows the scene and step of a selected item.
+- **Voice.** With a Gemini key, the app reads `say` lines aloud, and each line
+  lasts as long as its audio. Without a key, or with View > Read Lines Aloud
+  off, the lines run at a reading pace, silent. View > Voice and View > Pace
+  apply to new scenes. Key: `GEMINI_API_KEY`, or a line in
+  `~/.learning-space/.env`. Clips stay in the folder's `.learning-space/voice/`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
   frame, and any library from the internet. A world keeps running, follows the
   scene's clock and values, links to labels and arrows, and writes its own

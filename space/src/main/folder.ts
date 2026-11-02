@@ -37,6 +37,9 @@ const IMAGE_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml'
 }
 
+/** A voice clip, from the folder's root. */
+const VOICE_CLIP = /^\.learning-space\/voice\/[^/]+\.wav$/i
+
 /** Types of the other files that worlds read. */
 const WORLD_TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
@@ -430,15 +433,18 @@ export class FolderSession {
 
   /**
    * An image file for an image node (served to <img> by the space-asset:
-   * protocol). Same path guard as every other read; images only.
+   * protocol). Same path guard as every other read; images only, and the
+   * voice clips of said lines (main/voice.ts), which nothing else serves.
    */
   async readAsset(rel: string): Promise<{ data: Buffer; type: string }> {
     const full = await this.resolvePath(rel)
-    const type = IMAGE_TYPES[extname(full).toLowerCase()]
+    const voice = VOICE_CLIP.test(toPosix(relative(this.root, full)))
+    const type = voice ? 'audio/wav' : IMAGE_TYPES[extname(full).toLowerCase()]
     if (!type) throw new Error(`Not an image: ${rel}`)
     const info = await stat(full)
     if (!info.isFile()) throw new Error(`Not a file: ${rel}`)
-    if (info.size > MAX_IMAGE_PREVIEW) throw new Error(`Image too large: ${rel}`)
+    // A clip is as long as its scene.
+    if (!voice && info.size > MAX_IMAGE_PREVIEW) throw new Error(`Image too large: ${rel}`)
     return { data: await readFile(full), type }
   }
 

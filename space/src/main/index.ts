@@ -9,10 +9,11 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { installMenu, setFolderOpen } from './menu'
+import { installMenu, setFolderOpen, setReadLinesChecked } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
+import { cleanVoiceClips } from './voice'
 import { installShim, writeRelayState } from './agent-home'
 import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
@@ -79,12 +80,13 @@ const worldTune: WorldTune | null = (() => {
 })()
 
 /**
- * Image nodes load learning-folder files as space-asset://folder/<relative path>.
- * The handler resolves the path through the folder's path guard, so a URL can
- * never read outside the open folder.
+ * Image nodes load learning-folder files as space-asset://folder/<relative path>, and
+ * the voice of said lines loads its clips the same way (stream and the byte ranges let an
+ * <audio> element seek). The handler resolves the path through the folder's path guard,
+ * so a URL can never read outside the open folder.
  */
 const ASSET_SCHEME = 'space-asset'
-protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, LIVE_SCHEME_PRIVILEGES, STAGE_SCHEME_PRIVILEGES])
+protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }, LIVE_SCHEME_PRIVILEGES, STAGE_SCHEME_PRIVILEGES])
 
 function registerAssetProtocol(): void {
   protocol.handle(ASSET_SCHEME, async (request) => {
@@ -93,7 +95,12 @@ function registerAssetProtocol(): void {
       const url = new URL(request.url)
       const rel = url.pathname.split('/').filter(Boolean).map(decodeURIComponent).join('/')
       const { data, type } = await session.readAsset(rel)
-      return new Response(new Uint8Array(data), { headers: { 'content-type': type, 'cache-control': 'no-cache' } })
+      const headers = { 'content-type': type, 'cache-control': 'no-cache', 'accept-ranges': 'bytes' }
+      const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.get('range') ?? '')
+      const start = range ? Number(range[1]) : 0
+      const end = range?.[2] ? Math.min(Number(range[2]), data.length - 1) : data.length - 1
+      if (range && start <= end) return new Response(new Uint8Array(data.subarray(start, end + 1)), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${data.length}`, 'content-length': String(end - start + 1) } })
+      return new Response(new Uint8Array(data), { headers: { ...headers, 'content-length': String(data.length) } })
     } catch (error) {
       return new Response(error instanceof Error ? error.message : 'Not found', { status: 404 })
     }
@@ -121,6 +128,7 @@ const agentServer = new AgentServer({
   status: (status) => send(IPC.agentStatus, status),
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
+  readLines: readLinesNow,
   shownBoard: () => (session ? store.getLastBoard(session.root) : null),
   folder: () => session,
   // This instance owns the port: point the relay at it and refresh its offline tool list.
@@ -134,6 +142,20 @@ const agentServer = new AgentServer({
 
 function send(channel: string, payload?: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+}
+
+/** What the menu and the renderer show of Read Lines Aloud. */
+let readLinesShown: boolean | null = null
+
+/** Read Lines Aloud as it stands, the one way to read it: with no saved choice it follows the key, which can come or go while the app runs. A change reaches the menu and the renderer here. */
+function readLinesNow(): boolean {
+  const on = store.readLinesOn()
+  if (on !== readLinesShown) {
+    readLinesShown = on
+    setReadLinesChecked(on)
+    send(IPC.readLines, on)
+  }
+  return on
 }
 
 // The watcher skips hidden folders, so .learning-space changes reach the UI
@@ -186,6 +208,7 @@ async function openFolder(path: string): Promise<void> {
   session = next
   store.rememberFolder(next.root)
   setFolderOpen(true)
+  void cleanVoiceClips(next.root).catch((error) => console.error(`voice clips: ${String(error)}`))
   // A scan under way when the folder changes reports nothing: its folder is not the open one.
   next.startWatching({
     filesChanged: (tree) => {
@@ -372,6 +395,7 @@ function registerIpc(): void {
   })
   handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
   handle(IPC.getShowPerformance, () => store.getShowPerformance())
+  handle(IPC.getReadLines, readLinesNow)
   handle(IPC.getUncappedFrames, () => ({ on: store.getUncappedFrames(), launched: uncappedAtLaunch }))
   handle(IPC.setUncappedFrames, (on: unknown) => store.setUncappedFrames(on === true))
   handle(IPC.boardGuidePath, async () => {
@@ -507,6 +531,8 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The voice of a scene starts with the scene, not with a click.
+      autoplayPolicy: 'no-user-gesture-required',
       // Dev hook: see remoteDebugPort.
       backgroundThrottling: remoteDebugPort === null
     }
@@ -598,7 +624,16 @@ void app.whenReady().then(async () => {
     setShowPerformance: (on) => {
       store.setShowPerformance(on)
       sendMenuCommand(on ? 'show-performance' : 'hide-performance')
-    }
+    },
+    readLines: readLinesNow(),
+    setReadLines: (on) => {
+      store.setReadLines(on)
+      readLinesNow()
+    },
+    voice: store.getVoice(),
+    setVoice: store.setVoice,
+    pace: store.getPace(),
+    setPace: store.setPace
   })
   registerAssetProtocol()
   registerLiveItemProtocol(() => session)

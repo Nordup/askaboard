@@ -1,5 +1,5 @@
 import { serializeNode, type BoardNode } from './board-format'
-import type { SceneStep } from './live-scene'
+import type { SceneStep, SceneVoice } from './live-scene'
 
 /**
  * The story of a scene and the scene records (spec: docs/learning-space/drafts/
@@ -64,6 +64,8 @@ export interface StoryLine {
   text: string
   at: number
   dur: number
+  /** The line's audio (see SceneCue.voice). */
+  voice?: SceneVoice
 }
 
 /**

@@ -13,6 +13,7 @@ import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
 import { addRestored, canRebuild, clearRestored, rebuildFailure, requestRebuild, type RestoredScene } from './rebuild'
+import { followVoice, stopVoice, voicedLineAt } from './voice'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
 /**
@@ -801,11 +802,14 @@ class SceneRun {
     readonly play: ScenePlay,
     inkIndex: InkIndex,
     claimed: ClaimedBefore,
-    liveIds: ReadonlySet<string>
+    liveIds: ReadonlySet<string>,
+    /** Ghosts of this scene that an earlier scene holds too: they show that scene's look until it ends (ghostList). */
+    lent: ReadonlySet<string>
   ) {
     const scratch = this.scratch
     this.sink = {
       override: (id, override) => {
+        if (lent.has(id)) return
         const earlier = scratch.get(id)
         scratch.set(id, earlier ? { ...earlier, ...override } : override)
       },
@@ -1326,7 +1330,7 @@ export class ScenePlayer {
     this.dropRuns()
     this.board?.setPlayback(null)
     this.latest.frame = null
-    setSceneUiState(null)
+    this.idle()
   }
 
   /** The board went away (unmount, another board): forget it without touching it. */
@@ -1343,7 +1347,7 @@ export class ScenePlayer {
     this.history.clear()
     // The restored scenes were for that board.
     clearRestored()
-    setSceneUiState(null)
+    this.idle()
   }
 
   /** A frame on the next display frame, while a scene plays (not while every started scene is paused, or nothing plays). */
@@ -1379,6 +1383,11 @@ export class ScenePlayer {
       report('hold', scene.play, undefined, performance.timeOrigin + scene.heldSince, now - scene.heldSince)
       scene.heldSince = null
     }
+  }
+
+  /** Its clock moves: it has started, is not paused and does not hold. What follows the clock reads this (worlds, the voice), not the published pause, which misses a hold. */
+  private advancing(scene: Playing): boolean {
+    return scene.origin !== null && scene.pausedAt === null && scene.heldSince === null
   }
 
   /** True while this scene is on the board and its clock holds (a camera glide of the scene stands with it). */
@@ -1505,13 +1514,16 @@ export class ScenePlayer {
     const liveIds = new Set<string>()
     for (const node of state.nodes) if (isLive(node)) liveIds.add(node.id)
     for (const scene of this.scenes) for (const node of scene.play.ghosts) if (isLive(node)) liveIds.add(node.id)
+    const held = new Set<string>()
     this.runs = this.scenes.map((scene, i) => {
+      const lent = new Set(scene.play.ghosts.filter((node) => held.has(node.id)).map((node) => node.id))
+      for (const node of scene.play.ghosts) held.add(node.id)
       // The nodes that the scenes before this one still make or animate (a carried changing ink object leaves them to those scenes).
       const claimed: ClaimedBefore = (nodeId) => {
         for (let j = 0; j < i; j++) if (this.runs[j].claims(nodeId, this.timeOf(this.scenes[j], this.frameNow))) return true
         return false
       }
-      return new SceneRun(scene.play, this.inkPoints, claimed, liveIds)
+      return new SceneRun(scene.play, this.inkPoints, claimed, liveIds, lent)
     })
     this.runsFor = { scenes: [...this.scenes], epoch: this.epoch }
     return true
@@ -1533,7 +1545,7 @@ export class ScenePlayer {
       this.dropRuns()
       board.setPlayback(null)
       this.latest.frame = null
-      setSceneUiState(null)
+      this.idle()
       return
     }
     this.frameNow = now
@@ -1581,7 +1593,7 @@ export class ScenePlayer {
       if (!run.liveTargets.length) return
       any = true
       const t = this.timeOf(scene, now)
-      const playing = scene.origin !== null && scene.pausedAt === null && scene.heldSince === null
+      const playing = this.advancing(scene)
       const step = this.stepNameAt(scene.play, t)
       const end = scene.play.duration
       const was = run.clock
@@ -1602,10 +1614,17 @@ export class ScenePlayer {
 
   private ghostCache: { key: string; list: PlaybackFrame['ghosts'] } = { key: '', list: [] }
 
-  /** The same array while the set of scenes is the same (the board re-renders ghosts only when it changes). */
+  /**
+   * The same array while the set of scenes is the same (the board re-renders ghosts only when it changes). One ghost per node:
+   * replays of a scene share what it removed. The earliest scene that holds a ghost shows it, and a later one takes it when that scene ends (SceneRun lent).
+   */
   private ghostList(): PlaybackFrame['ghosts'] {
     const key = `${this.epoch}|${this.scenes.map((scene) => scene.play.id).join(',')}`
-    if (key !== this.ghostCache.key) this.ghostCache = { key, list: this.scenes.flatMap((scene) => scene.play.ghosts) }
+    if (key !== this.ghostCache.key) {
+      const byId = new Map<string, BoardNode>()
+      for (const scene of this.scenes) for (const node of scene.play.ghosts) if (!byId.has(node.id)) byId.set(node.id, node)
+      this.ghostCache = { key, list: [...byId.values()] }
+    }
     return this.ghostCache.list
   }
 
@@ -1617,7 +1636,7 @@ export class ScenePlayer {
   private publish(now: number): void {
     const scene = this.current()
     if (!scene) {
-      setSceneUiState(null)
+      this.idle()
       return
     }
     const t = this.timeOf(scene, now)
@@ -1647,6 +1666,15 @@ export class ScenePlayer {
       steps: lists.steps,
       scenes: this.sceneEntries()
     })
+    // One voice: the newest scene with a line now, at its own clock (a "now" scene over a queued one), else the scene that shows.
+    const speaker = [...this.scenes].reverse().find((entry) => entry.origin !== null && voicedLineAt(entry.play.cues, this.timeOf(entry, now))) ?? scene
+    followVoice(speaker.play.cues, this.timeOf(speaker, now), this.advancing(speaker))
+  }
+
+  /** No scene shows: the panel and the voice go quiet together. */
+  private idle(): void {
+    setSceneUiState(null)
+    stopVoice()
   }
 
   private entriesCache: SceneListEntry[] = []

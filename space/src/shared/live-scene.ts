@@ -264,13 +264,21 @@ export interface ScenePointerAction {
   follows?: { world: number | string; point: string }
 }
 
-/** A line (say) on the timeline: text the learner reads; nothing is spoken. dur is its reading time. */
+/** Where a spoken line lives. clip: the WAV path relative to the learning folder (.learning-space/voice/<sha>.wav); from: the second in the WAV where the line starts. */
+export interface SceneVoice {
+  clip: string
+  from: number
+}
+
+/** A line (say) on the timeline: text the learner reads, and hears when it has a voice. dur is its reading time, or the length of its voice. */
 export interface SceneCue {
   text: string
   at: number
   dur: number
-  /** Marks ([[name]] in the line): when the word after each is reached at the reading pace (scene time), and its character index in text. */
+  /** Marks ([[name]] in the line): when the word after each is reached (scene time), and its character index in text. */
   marks?: Array<{ name: string; at: number; char: number }>
+  /** The line's audio: the app read it aloud (main/voice.ts). */
+  voice?: SceneVoice
 }
 
 export interface SceneStep {
