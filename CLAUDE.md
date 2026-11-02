@@ -16,7 +16,7 @@
 - **Computer use from subagents (fallback):** use the background `app_*` tools (`app_screenshot`, `app_click`, `app_drag`, `app_key`, `app_menu`). The dev app's bundle id is `com.github.Electron`. Background keys cannot send ⌘-shortcuts: use `app_menu` for those. If a key has no effect, `app_click` a neutral spot (the top bar) to give the window focus, then retry. The tools are allow-listed in `.claude/settings.local.json`; without that, auto mode blocks them in subagents and the result reads "user interrupt".
 
 - **UI work:** read `docs/learning-space/design-system.md` first; mock up with the inline widget tool and get approval before an implementation brief; give the implementer the mockup's exact values; compare the build's screenshot with the mockup.
-- **Implementation briefs for `space/`** name: the files, the rules above, the design system (for UI), own ports / `--user-data-dir` / scratch folders, "stop only exact PIDs", and the acceptance checks. `docs/learning-space/working-guide.md` has the check recipes.
+- **Implementation briefs for `space/`** name: the files, the rules above, the design system (for UI), own ports / scratch `HOME` / `--user-data-dir` / scratch folders, a build in a scratch copy while the founder's app runs, "stop only exact PIDs", and the acceptance checks. `docs/learning-space/working-guide.md` has the check recipes.
 - **End of a working session:** run the `session-wrap-up` skill (`.claude/skills/session-wrap-up/SKILL.md`) to update the docs and remove stale lines.
 
 - Drive the iOS Simulator only with `mcp__Claude_Code_iOS_Simulator__control`. Never computer-use (it leaves a screen-recording indicator on the user's screen) — say so explicitly in any subagent brief that touches the simulator.

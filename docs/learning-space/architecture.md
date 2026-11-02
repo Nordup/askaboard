@@ -126,7 +126,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
     `get_changes`. One address word, `part`; summaries first, with
     "Deeper:" lines; no caps.
   - *Boards of the folder:* `list_boards` (read-only), `open_board`,
-    `move_board` (destructive). Their cache is `main/boards.ts`. Create,
+    `move_board` (also to and from the Trash; nothing is deleted). Their cache is `main/boards.ts`. Create,
     rename and trash, from the sidebar and from agents, go through one
     board-change operation (`App.tsx` `changeBoard`).
   - *Reference:* `get_brief`, `get_guide`.

@@ -6,7 +6,7 @@ agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner. Its one AI call is optional: a speech API reads
 scene lines aloud with the learner's own key (T34).
 
-**Status (2026-11-02):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), and an unknown scene option is an error (B24). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
+**Status (2026-11-02):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -59,7 +59,8 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   off, the lines run at a reading pace, silent. View > Voice and View > Pace
   apply to new scenes. Key: `GEMINI_API_KEY`, or a line in
   `~/.learning-space/.env`. Clips stay in the folder's `.learning-space/voice/`.
-  The default voice is Charon.
+  The default voice is Charon. A replay makes no API call. A scene written
+  before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
   frame, and any library from the internet. A world keeps running, follows the
   scene's clock and values, links to labels and arrows, and writes its own
@@ -67,7 +68,8 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 - **Cleanup** (`src/main/storage.ts`). Unused voice clips and code copies go
   after a day, traces after 14 days, and records of gone boards to the Trash
   after 7 days. A board moved to the Trash takes its data with it. The Chromium
-  caches are capped.
+  caches are capped at 100 MB. Board files and `assets/` are never touched
+  (T35).
 
 ## Connect agents
 

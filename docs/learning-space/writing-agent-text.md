@@ -69,7 +69,7 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    and they treat the cause wrongly: bad output came from a badly explained
    space.
 5. **No example tool calls in the brief.** A single concrete example (a half
-   sphere drawn with `draw_ink`) becomes the template the agent copies, and
+   sphere drawn with the old `draw_ink` tool) becomes the template the agent copies, and
    it limits imagination. Situations described in prose are fine when they
    show a way of thinking ("when someone draws two circles and asks 'is this
    how fusion works?'…").

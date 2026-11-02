@@ -24,7 +24,8 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
 | One shared design system for menus | Done |
-| The app reads `say()` lines aloud (Gemini TTS, the learner's key; T34, [`voice-lines-plan.md`](voice-lines-plan.md)) | Built. The agent texts wait for the founder's review |
+| The app reads `say()` lines aloud (Gemini TTS, the learner's key; T34, [`voice-lines-plan.md`](voice-lines-plan.md)) | Done. The founder approved the agent texts and the sound. All seven Attention scenes are voiced with Charon. A scene written before the voice stays silent until one new `write_scene` |
+| The app cleans up after itself (T35, `space/src/main/storage.ts`): clips, code copies, records of gone boards, traces, caches. A board moved to the Trash takes its data with it | Done. The running app gets it at its next start. Finder's Put Back is not confirmed |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
@@ -103,6 +104,9 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
    - [`work-map.md`](work-map.md) — all open work on scenes, speed and the
      voice in batches (2026-10-28): where each comes from, what we have,
      the solution and how it helps; what is done so far.
+   - [`voice-lines-plan.md`](voice-lines-plan.md) — how the app reads scene
+     lines aloud: one speech request per scene, one clock, the reasons and the
+     open items (T34). Read it before you change the voice.
    - [`one-world-plan.md`](one-world-plan.md) — the current direction: agents
      create anything on the board and link anything, in three steps (P18).
    - [`one-world-design.md`](one-world-design.md) — what a world is and how a
@@ -183,6 +187,7 @@ the live-frame idea was rejected).
 | Stage | The one sandbox per board in which every scene program runs; the global `stage` keeps values and objects between programs. |
 | Beat | A short scene (one sentence and its drawing) sent while another plays; scenes queue and follow each other without a gap. |
 | Text line (`say`) | A sentence in a scene, shown to the learner in the reading panel, at a reading pace or, with the voice on, at the pace of its audio (T34). Each line belongs to the step whose time contains it. |
+| Voice clip | One WAV file for one scene's lines in `.learning-space/voice/`, with a JSON file of the line places. The scene record keeps the answers, so a replay makes no API call. |
 | Reading panel | The floating panel over the board for one scene (code: `ScriptPanel.tsx`): a step bar, the scene's lines as a slow teleprompter with a light on the words being read, replay step, pause and next. It fades after the scene and hides into the scene pill (decisions B19, B21). |
 | Scene pill | The pill in the top bar: the playing scene, else the board's last scene, else a selected item's scene and step. Its menu lists the board's scenes. |
 | Scene file | A scene program as a JavaScript file in `boards/scenes/`, with `import` and `export` (decision B16). |
