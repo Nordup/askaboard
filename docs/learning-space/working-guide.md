@@ -211,6 +211,9 @@ combine; `meta.json` records `no_html` and `brief`.
 - **A failure list is not "expected" until someone looks at it.** Of 20 scenes that failed in the full set, only 6 were built to fail. 7 were the founder's multi-file scenes that the check ran wrongly (their code joined inline, not from files), so they had no coverage. Name why each one fails, and run multi-file scenes from files.
 - **Check the load before you read a timing.** `uptime` first. A lab that shares the machine with a scene set shows `commit_ms` of 2.4 s where a quiet run shows 0.3-0.4 s.
 - **A comparison needs a before state.** `git archive <commit> space` into scratch, link `node_modules`, build, and `git init` there: `replay.mjs` needs a git folder. Replays against the old build gave the only exact preview numbers.
+- **Give a check agent plain shell commands** (2026-11-02). Claude Code's safety check refused a block with no `rm` in it, because it could not parse zsh-only expansions (`${=spec}`, `${(s:,:)x}`) and a command name in a variable. Use literal paths and a few calls per block. A rewrite in another language to pass a refusal is a workaround: stop and report the text.
+- **A check click can land on the app's own parts** (2026-11-02). A click on a world's bar at y=709 hit the tool palette (y 703 to 749), and the check read as an input fault. Frame the item clear of the palette first.
+- **A check agent must stop its own apps before it reports** (2026-11-02). Apps started as background shells outlived a finished agent and kept running. Name this in the brief, by exact PID.
 
 ## Ports and paths used so far
 

@@ -1,6 +1,6 @@
 # One world: the architecture
 
-> **Status (2026-11-01):** all slices are built, and worlds read files (section 7). GPT-6.1 Sol
+> **Status (2026-11-02):** all slices are built, worlds read files (section 7), and toon is the only look (P22). GPT-6.1 Sol
 > reviewed slices 1 to 4 twice. A world is the only way to run code on the board
 > (decision P19). This file says how [`one-world-design.md`](one-world-design.md)
 > is built. Terms:
@@ -75,7 +75,7 @@ running at that moment, so imported libraries such as `THREE.Clock` get that
 world's time. After an `await` that link can be lost, so agents use `world.time`.
 
 Each world pass sets its own renderer state and restores it, also after an error:
-size, pixel ratio, exposure, tone mapping, shadows, render target and clearing.
+size, pixel ratio, render target and clearing.
 
 A world owns what first reached the GPU in its scene pass: three listens for
 `dispose` on each resource at its first use, and `look.ts` marks the resource there.
@@ -366,7 +366,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  S1["1 Surface: one world, film look, soft shadow, in step, uncut"] --> S2["2 Links: values, points, follows"]
+  S1["1 Surface: one world, in step, uncut"] --> S2["2 Links: values, points, follows"]
   S2 --> S3["3 Many worlds: on demand, replay, previews, recovery"]
   S3 --> S4["4 Touch: pointer, pick, pins, ink as input, cursor"]
   S4 --> S5["5 Agents: guide text, real runs; shader, canvas, program removed"]

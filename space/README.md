@@ -59,10 +59,15 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   off, the lines run at a reading pace, silent. View > Voice and View > Pace
   apply to new scenes. Key: `GEMINI_API_KEY`, or a line in
   `~/.learning-space/.env`. Clips stay in the folder's `.learning-space/voice/`.
+  The default voice is Charon.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
   frame, and any library from the internet. A world keeps running, follows the
   scene's clock and values, links to labels and arrows, and writes its own
-  interaction. It runs in a sandboxed origin.
+  interaction. It runs in a sandboxed origin. Toon is the only look.
+- **Cleanup** (`src/main/storage.ts`). Unused voice clips and code copies go
+  after a day, traces after 14 days, and records of gone boards to the Trash
+  after 7 days. A board moved to the Trash takes its data with it. The Chromium
+  caches are capped.
 
 ## Connect agents
 
