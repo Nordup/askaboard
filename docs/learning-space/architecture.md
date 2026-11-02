@@ -359,6 +359,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `storyboard.ts` builds preview images. `live-item-protocol.ts` serves the
   `live-item://` origin for worlds, with bundled libraries listed in
   `src/shared/live-libs.ts` (three.js, `ls/interact`).
+- **Storage.** `src/main/storage.ts` cleans clips, code copies, records of gone boards, traces and caches, at folder open and at launch (T35).
 - **Voice.** When the voice is on, `write_scene` first runs a lines pass that
   only collects the `say()` texts. Then, outside the stage lock,
   `src/main/voice.ts` makes one speech request for the scene, or finds the clip

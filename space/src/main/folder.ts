@@ -4,7 +4,7 @@ import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFi
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
-import { BOARD_SUFFIX, BOARDS_DIR, emptyBoard, isBoardPath, serializeBoard } from '@shared/board-format'
+import { BOARD_SUFFIX, BOARDS_DIR, emptyBoard, isBoardPath, parseBoard, serializeBoard } from '@shared/board-format'
 import type { BoardChange, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
 const MAX_DEPTH = 10
@@ -82,6 +82,11 @@ export function isInside(root: string, path: string): boolean {
 
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String((error as NodeJS.ErrnoException).code) : undefined
+}
+
+/** The paths of the board files of a file tree. */
+function boardPaths(nodes: FileNode[]): string[] {
+  return nodes.flatMap((node) => (node.children ? boardPaths(node.children) : isBoardPath(node.name) ? [node.path] : []))
 }
 
 /** File-name-safe board name: no separators, no control characters, no leading dots. */
@@ -165,13 +170,21 @@ export class FolderSession {
   // ---------- Listing and watching ----------
 
   async listFiles(): Promise<FileTree> {
+    const { nodes, truncated } = await this.walkTree()
+    return { nodes, truncated }
+  }
+
+  /** The file tree. unread: a folder of it could not be listed, so the tree can miss files. */
+  private async walkTree(): Promise<FileTree & { unread: boolean }> {
     let count = 0
     let truncated = false
+    let unread = false
     const walk = async (dir: string, depth: number): Promise<FileNode[]> => {
       let entries
       try {
         entries = await readdir(dir, { withFileTypes: true })
       } catch {
+        unread = true
         return []
       }
       entries = entries
@@ -200,7 +213,7 @@ export class FolderSession {
       return nodes
     }
     const nodes = await walk(this.root, 0)
-    return { nodes, truncated }
+    return { nodes, truncated, unread }
   }
 
   startWatching(events: FolderEvents): void {
@@ -334,14 +347,7 @@ export class FolderSession {
 
   /** Every board file of the file tree (the walk of listFiles: hidden folders skipped, the same caps), with its file identity and change time. */
   async boardFiles(): Promise<Array<{ path: string; identity: string; mtimeMs: number }>> {
-    const paths: string[] = []
-    const collect = (nodes: FileNode[]): void => {
-      for (const node of nodes) {
-        if (node.children) collect(node.children)
-        else if (isBoardPath(node.name)) paths.push(node.path)
-      }
-    }
-    collect((await this.listFiles()).nodes)
+    const paths = boardPaths((await this.listFiles()).nodes)
     const out = await Promise.all(
       paths.map(async (path) => {
         try {
@@ -353,6 +359,26 @@ export class FolderSession {
       })
     )
     return out.filter((entry): entry is { path: string; identity: string; mtimeMs: number } => entry !== null)
+  }
+
+  /**
+   * The id of every board of the folder, for finding the records of boards that are gone (main/storage.ts). Null when
+   * the tree is not complete or a board cannot be read or parsed: a board that cannot be read is not a board that is gone.
+   */
+  async boardIds(): Promise<Set<string> | null> {
+    const { nodes, truncated, unread } = await this.walkTree()
+    if (truncated || unread) return null
+    const ids = new Set<string>()
+    for (const path of boardPaths(nodes)) {
+      try {
+        const { id } = parseBoard(await readFile(join(this.root, path), 'utf8'))
+        if (id) ids.add(id)
+      } catch {
+        return null
+      }
+      await new Promise((done) => setImmediate(done))
+    }
+    return ids
   }
 
   /** A board file's text for list_boards. Unlike readBoard, it does not touch the watcher's record of known versions. */

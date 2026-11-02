@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { agentHomeDir } from './agent-home'
 
@@ -25,11 +25,7 @@ const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 /** Between lines in the joined text: plain prose, so the model pauses as it does between any two sentences. */
 const LINE_JOIN = ' '
 /** Clips, from the learning folder's root. renderer/live/voice.ts plays them, and folder.ts readAsset serves only this folder. */
-const CLIP_DIR = '.learning-space/voice'
-/** The records of the scenes (main/scene-store.ts). Their host answers name the clips they use. */
-const RECORD_DIR = '.learning-space/scenes'
-/** A clip that no record uses goes after this long: it can be the draft of a scene to come. */
-const CLIP_KEEP_MS = 7 * 24 * 60 * 60 * 1000
+export const CLIP_DIR = '.learning-space/voice'
 /** The whole request with its retry. */
 const REQUEST_LIMIT_MS = 45_000
 const RETRY_WAIT_MS = 1000
@@ -323,10 +319,17 @@ async function writeAtomic(path: string, data: Buffer | string): Promise<void> {
   await rename(temp, path)
 }
 
+/** A clip that is used again gets a new date: the clean-up goes by age (main/storage.ts), and a draft has no record yet. A file that is not there throws. */
+async function touch(path: string): Promise<void> {
+  const now = new Date()
+  await utimes(path, now, now)
+}
+
 async function readPlaces(path: string, wav: string, count: number): Promise<{ seconds: number; places: LinePlace[] } | null> {
   try {
     const saved = JSON.parse(await readFile(path, 'utf8')) as { seconds: number; places: LinePlace[] }
-    await stat(wav)
+    await touch(wav)
+    await touch(path)
     return Array.isArray(saved.places) && saved.places.length === count ? saved : null
   } catch {
     return null
@@ -352,7 +355,8 @@ export async function speakLines(root: string, lines: readonly string[], choice:
     // A clip without places: the same text costs no second request, also when its lines could not be found.
     let file: Buffer | null = await readFile(wavPath).catch(() => null)
     const cached = file !== null
-    if (!file) {
+    if (file) await touch(wavPath)
+    else {
       const key = readKey()
       if (!key) return { reason: 'no GEMINI_API_KEY in the environment or in ~/.learning-space/.env' }
       file = await requestAudio(key, text, choice.voice, style, signal)
@@ -372,32 +376,4 @@ export async function speakLines(root: string, lines: readonly string[], choice:
     if (signal.aborted) throw error
     return { reason: error instanceof Error ? error.message : String(error) }
   }
-}
-
-// ---------- Old clips ----------
-
-/**
- * Remove the clips that no scene record uses and that are old: every changed draft leaves one. Records are read only when an old
- * clip exists, and a record that cannot be read stops the clean-up, so a clip that a record uses never goes.
- */
-export async function cleanVoiceClips(root: string): Promise<void> {
-  const dir = join(root, CLIP_DIR)
-  const names = await readdir(dir).catch(() => [])
-  const now = Date.now()
-  const old: Array<{ name: string; sha: string }> = []
-  for (const name of names) {
-    const sha = /^([0-9a-f]{64})\.(?:wav|json)$/.exec(name)?.[1]
-    if (sha && now - (await stat(join(dir, name))).mtimeMs > CLIP_KEEP_MS) old.push({ name, sha })
-  }
-  if (!old.length) return
-  const records = join(root, RECORD_DIR)
-  const used = new Set<string>()
-  for (const name of await readdir(records)) {
-    if (!name.endsWith('.jsonl')) continue
-    const text = await readFile(join(records, name))
-    for (const clip of old) if (text.includes(clip.sha)) used.add(clip.sha)
-  }
-  const gone = old.filter((clip) => !used.has(clip.sha))
-  await Promise.all(gone.map((clip) => rm(join(dir, clip.name), { force: true })))
-  if (gone.length) console.log(`voice clips: removed ${gone.length} old files`)
 }

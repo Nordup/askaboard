@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { appendFile, copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { appendFile, copyFile, mkdir, open, readFile, rename, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SceneSource } from '@shared/scene-program'
 import { isStory, nodeSig, RECORD_VERSION, shownVersion, storyOnBoard, type BoardLook, type BoardStories, type BoardStory, type CommitRecord, type RecordLine, type SceneRecordLine, type SceneStory } from '@shared/scene-story'
@@ -36,9 +36,9 @@ import type { FolderSession } from './folder'
  * (a copied file).
  */
 
-const SCENES_DIR = `${FOLDER_SETTINGS_DIR}/scenes`
+export const RECORD_DIR = `${FOLDER_SETTINGS_DIR}/scenes`
 /** A board id as newItemId('b') makes it: it names a file, so nothing else is taken. */
-const BOARD_ID = /^b_[0-9a-z]{4,32}$/
+export const BOARD_ID = /^b_[0-9a-z]{4,32}$/
 const SHA = /^[0-9a-f]{64}$/
 /** How much of a board file is read to find its id (the id is near the top; the full file when it is not there). */
 const HEAD_BYTES = 16 * 1024
@@ -201,7 +201,8 @@ export class SceneStore {
     return this.roots.has(record.root) && BOARD_ID.test(record.board) && typeof record.path === 'string' ? { root: record.root, path: record.path, id: record.board } : null
   }
 
-  private serial<T>(fn: () => Promise<T>): Promise<T> {
+  /** Every read and write of the records, one after another. main/storage.ts removes files through this too, so nothing crosses a commit. */
+  serial<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.chain.then(fn, fn)
     this.chain = run.catch(() => undefined)
     return run
@@ -218,7 +219,7 @@ export class SceneStore {
     const root = folder?.root ?? null
     return this.serial(async () => {
       if (!folder || !root || !id) return { id: null, stories: [] }
-      const dir = join(root, SCENES_DIR)
+      const dir = join(root, RECORD_DIR)
       let boardId = id
       const shared = BOARD_ID.test(id) ? await this.otherBoardWith(folder, path, id) : null
       if (!BOARD_ID.test(id) || shared) {
@@ -250,7 +251,7 @@ export class SceneStore {
           return
         }
         const index = await this.indexFor(board.root, board.id)
-        await this.saveCode(join(board.root, SCENES_DIR), entry.source)
+        await this.saveCode(join(board.root, RECORD_DIR), entry.source)
         const source: SceneRecordLine['source'] = {
           entry: entry.source.entry,
           modules: entry.source.modules.map((module) => ({ path: module.path, sha: module.sha256 })),
@@ -322,7 +323,7 @@ export class SceneStore {
           const line = readLine(text)
           if (line) lines.set(line.scene, line)
         })
-        const codeDir = join(board.root, SCENES_DIR, 'code')
+        const codeDir = join(board.root, RECORD_DIR, 'code')
         const texts = new Map<string, string | null>()
         const textOf = async (sha: string): Promise<string | null> => {
           if (texts.has(sha)) return texts.get(sha) as string | null
@@ -387,22 +388,26 @@ export class SceneStore {
     })
   }
 
-  /** A board file was renamed or went to the Trash: its records stay (they go by id); only the id cache of the path goes. */
+  /** A board file was renamed or went to the Trash: only the id cache of the path goes here. Records go by id; main/storage.ts sends a removed board's records after it. */
   boardMoved(from: string): void {
     this.heads.delete(from)
   }
 
+  /** A records file left the folder (main/storage.ts, inside serial): its index goes too. */
+  forget(root: string, id: string): void {
+    this.indexes.delete(`${root}\0${id}`)
+  }
+
   // ---------- Inside ----------
 
-  /** The index of a board id, read the first time in this run. Its file deleted since: it starts again from nothing. */
+  /** The index of a board id, read the first time in this run. Its file deleted since, or put back since: it is read again. */
   private async indexFor(root: string, id: string, look?: () => Promise<BoardLook | null>): Promise<RecordIndex> {
     const known = this.indexes.get(`${root}\0${id}`)
     if (known) {
-      if (known.lines && !(await stat(known.file).catch(() => null))) {
-        console.log(`scene records: ${known.file} was deleted; the next line starts a new file`)
-        return this.load(root, id, true)
-      }
-      return known
+      const onDisk = (await stat(known.file).catch(() => null)) !== null
+      if (onDisk === known.lines > 0) return known
+      console.log(`scene records: ${known.file} ${onDisk ? 'came back' : 'was deleted; the next line starts a new file'}`)
+      return this.load(root, id, true)
     }
     return this.load(root, id, false, look ? await look() : null)
   }
@@ -413,7 +418,7 @@ export class SceneStore {
    * newest line and every older line whose version the board shows (an undo can leave it there).
    */
   private async load(root: string, id: string, compacted = false, look: BoardLook | null = null): Promise<RecordIndex> {
-    const file = join(root, SCENES_DIR, `${id}.jsonl`)
+    const file = join(root, RECORD_DIR, `${id}.jsonl`)
     const index: RecordIndex = { id, file, scenes: new Map(), segment: 0, lines: 0, openTail: false }
     /** For compaction: each line's place in the file, each scene's first and last scene line, the drop after its last one, and the lines that stay. */
     const places: Array<[number, number]> = []
@@ -546,13 +551,14 @@ export class SceneStore {
     }
   }
 
-  /** The text of each module once, by its SHA-256 (again when the file was deleted). Throws when one cannot be saved: no scene line may name code that is not on disk. */
+  /** The text of each module once, by its SHA-256 (again when the file was deleted). A copy that is used again gets a new date: the clean-up goes by age (main/storage.ts). Throws when one cannot be saved: no scene line may name code that is not on disk. */
   private async saveCode(dir: string, source: SceneSource): Promise<void> {
     const codeDir = join(dir, 'code')
     for (const module of source.modules) {
       if (!SHA.test(module.sha256)) throw new Error(`the module ${module.path ?? '(inline code)'} has no SHA-256`)
       const file = join(codeDir, `${module.sha256}.js`)
-      if (await stat(file).catch(() => null)) continue
+      const now = new Date()
+      if (await utimes(file, now, now).then(() => true, () => false)) continue
       await mkdir(codeDir, { recursive: true })
       const temp = `${file}.${process.pid}.${Date.now()}.tmp`
       try {
@@ -595,7 +601,7 @@ function derivedId(id: string, path: string): string {
 }
 
 /** The id in a board file (the top-level "id"), read from the top of the file when it is there; null when it has none or cannot be read. */
-async function boardIdOf(file: string): Promise<string | null> {
+export async function boardIdOf(file: string): Promise<string | null> {
   try {
     const handle = await open(file, 'r')
     let head: string

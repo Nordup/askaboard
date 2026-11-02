@@ -13,7 +13,8 @@ import { installMenu, setFolderOpen, setReadLinesChecked } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
-import { cleanVoiceClips } from './voice'
+import { cleanFolder, cleanTraces, limitDiskCache, removedBoardData, trimCodeCache } from './storage'
+import { boardIdOf } from './scene-store'
 import { installShim, writeRelayState } from './agent-home'
 import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
@@ -208,7 +209,7 @@ async function openFolder(path: string): Promise<void> {
   session = next
   store.rememberFolder(next.root)
   setFolderOpen(true)
-  void cleanVoiceClips(next.root).catch((error) => console.error(`voice clips: ${String(error)}`))
+  void cleanFolder(next, agentServer.records).catch((error) => console.error(`storage: ${String(error)}`))
   // A scan under way when the folder changes reports nothing: its folder is not the open one.
   next.startWatching({
     filesChanged: (tree) => {
@@ -378,10 +379,13 @@ function registerIpc(): void {
   })
   handle(IPC.deleteBoard, async (path: string) => {
     const current = requireSession()
+    // The id is in the file, so it is read before the file goes.
+    const id = await current.resolvePath(path).then(boardIdOf)
     await current.deleteBoard(path)
     store.forgetBoardState(current.root, path)
     agentServer.boardMoved(path, null)
     await dropRecovery(current.root, path)
+    if (id) void removedBoardData(current, agentServer.records, id).catch((error) => console.error(`storage: the data of ${path} stays: ${String(error)}`))
   })
 
   handle(IPC.readFile, (path: string) => requireSession().readPreview(path))
@@ -602,6 +606,7 @@ if (uncappedAtLaunch) {
   app.commandLine.appendSwitch('disable-frame-rate-limit')
   app.commandLine.appendSwitch('disable-gpu-vsync')
 }
+limitDiskCache()
 registerIpc()
 
 void app.whenReady().then(async () => {
@@ -643,6 +648,8 @@ void app.whenReady().then(async () => {
     agentServer.start()
   })
   void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
+  void cleanTraces().catch((error) => console.error(`storage: ${String(error)}`))
+  void trimCodeCache().catch((error) => console.error(`storage: ${String(error)}`))
   mainWindow = createWindow()
   // The hidden helpers load once the board is up and has settled, so an agent's first screenshot and first scene are as fast as the later ones.
   mainWindow.webContents.once('did-finish-load', () => {
