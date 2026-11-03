@@ -46,7 +46,7 @@
 The stage evaluates the agent's program 30 times per second
 (`SAMPLE_FPS`, `space/src/stage/live-prelude.js`), and only where something
 animates. Since T30 this runs after `write_scene` returns: a play can start while the sweep
-runs, and the clock holds if it reaches what is ready (T28). It drops a sample that equals the one before. The player runs at
+runs, and the clock holds if it reaches what is ready (T28). A seek ahead of what is ready waits at its own time (T37). It drops a sample that equals the one before. The player runs at
 the display rate (60–120 Hz) and blends two samples (`blendD`,
 `blendLines`, `BLEND_GAP` in `space/src/renderer/src/live/player.ts`).
 

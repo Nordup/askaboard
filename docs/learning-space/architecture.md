@@ -288,7 +288,8 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   what that board got.
 - **Replay after a restart re-runs the scene.** No play data is saved.
   A replay, a play from a step or a preview of a restored scene asks main
-  to run the log again and sample that scene (`live-scene.ts resample`).
+  to run the log again up to that scene and sample it (`live-scene.ts
+  resample`); its frames stream, and the idle rebuild does the rest (T36).
   The renderer compiles the run on the board as it was before the scene,
   from the recorded before-state (`run.ts sceneMemory`, `sceneAt` exact).
   Each node takes the board's id through the record: the object's key
@@ -310,8 +311,10 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   results carry no warnings (decision B18). An error at a moment that
   write_scene did not evaluate comes in the next tool result (T31).
 - **Streaming** ([`streaming-scenes-plan.md`](streaming-scenes-plan.md),
-  T27-T32). A draft's order: the program body, `end()`, seeds, the description,
-  the reply, then the sweep. Seeds are a few moments of each dynamic object, and
+  T27-T32, T36, T37). The order of every run for the board (a draft, a start
+  that runs again, a restage, a replay rebuild): the program body, `end()`,
+  seeds, the description, the reply, then the sweep. A scene-mode run bakes
+  at the end of its sweep, and the context is clean only after that. Seeds are a few moments of each dynamic object, and
   the end seed is the final state. The sweep is one forward pass, moment by
   moment, in 8 ms batches between the worker's messages, and in short batches
   with gaps while the pen is down or a scene waits in a pause (decision B32). Frame chunks
@@ -320,11 +323,15 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   sweep's terminal event, and the idle rebuild (T26) starts from that event.
   Work that needs the realm goes through `onRealm`, so no sweep wait stays in
   the stage lock. On the board, a job keeps `readyThrough`, and the scene clock
-  (`timeOf`) never passes it (T28). A preview past it asks for its moments on
+  (`timeOf`) never passes it (T28). A hold never moves the clock back: a
+  seek ahead of the stream waits at its own time (`holdAt`, T37). A preview past it asks for its moments on
   the frames port, and the worker answers between two batches (T32). What the
   sweep finds later waits in `lateNotes` for the next tool result (T31). A
-  scene with a world, and every run that is not a draft, drains before its
-  reply, on the same code.
+  scene whose sweep holds a world (`stepping()`) drains before its reply, on
+  the same code. An earlier object joins a scene's sweep only when the scene
+  can change it: each recipe records what it reads (`recipe.sources`), and
+  `sweepSet()` chooses from that record (T37). A stream ends only when its
+  scene leaves the board, or a new write replaces a draft that is not on it.
 
 - **Main process.** `write_scene` and `play_scene` (`src/main/mcp.ts`) send
   the program to the board's stage (`live-scene.ts`, decision T18): one
@@ -352,8 +359,8 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   functions to the worker directly (they are not globals). The worker's
   scheduler runs every pending job, then ends the earliest pending action,
   one task per action. Cancel ends the worker; a crash of the stage process
-  starts a new one, and the stage is rebuilt from its log. A draft replies
-  after its seeds, and its sweep then streams samples in batches to the board
+  starts a new one, and the stage is rebuilt from its log. A run for the
+  board replies after its seeds, and its sweep then streams samples in batches to the board
   ([`streaming-scenes-plan.md`](streaming-scenes-plan.md)). Changing objects
   are sampled only where what their recipes read changes (values, object
   tracks, the camera); a recipe that reads the time, takes random numbers
