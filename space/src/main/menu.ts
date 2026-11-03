@@ -1,5 +1,6 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
 import { PACES, VOICES, type PaceName } from './voice'
+import { INTERFACE_SIZES, percent, type InterfaceSize } from './interface-size'
 
 export interface MenuActions {
   openFolder(): void
@@ -19,11 +20,16 @@ export interface MenuActions {
   setVoice(voice: string): void
   pace: PaceName
   setPace(pace: PaceName): void
+  /** View > Interface Size: the setting, the automatic factor for the window's display, and the changes. The menu is built again after each change. */
+  interfaceSize: InterfaceSize
+  automaticSize: number
+  setInterfaceSize(size: InterfaceSize): void
+  stepInterfaceSize(direction: 1 | -1): void
 }
 
 /**
  * The app menu. View > Zoom In / Zoom Out / Actual Size zoom the canvas, not
- * the page (there are no zoom roles). The Edit roles make text editing work in inputs;
+ * the page (there are no zoom roles); View > Interface Size zooms the page (interface-size.ts). The Edit roles make text editing work in inputs;
  * the canvas handles ⌘Z / ⌘C / ⌘V itself when no input has focus.
  */
 const SETUP_ITEM = 'setup-folder'
@@ -74,6 +80,16 @@ export function installMenu(actions: MenuActions): void {
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => actions.zoom('in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => actions.zoom('out') },
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => actions.zoom('reset') },
+        {
+          label: 'Interface Size',
+          submenu: [
+            { label: 'Larger', accelerator: 'CmdOrCtrl+Alt+=', click: () => actions.stepInterfaceSize(1) },
+            { label: 'Smaller', accelerator: 'CmdOrCtrl+Alt+-', click: () => actions.stepInterfaceSize(-1) },
+            { type: 'separator' },
+            { label: `Automatic (${percent(actions.automaticSize)})`, accelerator: 'CmdOrCtrl+Alt+0', type: 'radio', checked: actions.interfaceSize === 'auto', click: () => actions.setInterfaceSize('auto') },
+            ...INTERFACE_SIZES.map((size) => ({ label: percent(size), type: 'radio' as const, checked: actions.interfaceSize === size, click: () => actions.setInterfaceSize(size) }))
+          ]
+        },
         { type: 'separator' },
         { label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
         { type: 'separator' },

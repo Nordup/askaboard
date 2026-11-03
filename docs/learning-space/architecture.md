@@ -85,8 +85,11 @@ limits scripts, images and media.
   `src/shared/hand-font.ts`); KaTeX keeps its fonts. `BOARD_LAYOUT` in
   `board-format.ts` is the layout version: raise it when a board font or its
   metrics change, so recorded text measures are measured again. Camera zoom
-  is screen points per board point; 100% is `HOME_ZOOM` (0.85, in
-  `board/geometry.ts`).
+  is CSS pixels per board point; 100% is `HOME_ZOOM` (0.85, in
+  `board/geometry.ts`). View > Interface Size is the main window's page zoom
+  (`main/interface-size.ts`, B63); it changes the size of a CSS pixel, not
+  camera zoom. `styles/hand-heavy.woff2` is the same hand with a wider line
+  and the same metrics, for screens below 1.5 dppx (B64).
 - **Common fields:** `id`, `name`, `parent`, `x`, `y` (relative to the parent),
   `z`, `author` (`learner` or `agent`), `seq`, `locked`.
 - **Style:** a whitelisted CSS object (`STYLE_KEYS`): the browser lays out

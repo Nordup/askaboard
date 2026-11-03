@@ -164,10 +164,18 @@
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
 }
 
-/* The hand as a font: scripts/lab/make-hand-webfont.mjs makes the file. main.tsx loads it before the first render. */
+/* The hand as a font: scripts/lab/make-hand-webfont.mjs makes both files. main.tsx loads both before the first render. */
 @font-face {
   font-family: 'Learning Hand';
   src: url('./hand.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+/* The same hand with a wider line and the same metrics, for screens of low pixel density (board/content.css). */
+@font-face {
+  font-family: 'Learning Hand Heavy';
+  src: url('./hand-heavy.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: block;

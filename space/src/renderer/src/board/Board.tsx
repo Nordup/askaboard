@@ -212,6 +212,25 @@ const PICK_HOLD_MS = 30
 const PICK_MARK_MS = 300
 /** A wheel event this soon after the last one belongs to the same gesture. */
 const WHEEL_GAP_MS = 200
+/** One mouse-wheel notch with ⌘ or Ctrl zooms by this factor (tldraw and ruimte use about 1.1; the founder found that a little slow). */
+const NOTCH_ZOOM = 1.15
+/**
+ * A notch glides to its zoom with this time constant: it settles in about 3.5 of them (about 280 ms). It is longer
+ * than the gap between the notches of a spin, so their glides join into one motion instead of a stop at each notch.
+ */
+const NOTCH_GLIDE_MS = 80
+
+/**
+ * The notches in a ⌘ / Ctrl wheel event, signed (+ zooms in), or 0 for a continuous event.
+ * A mouse wheel sends whole notches: line or page deltas, or one large pixel delta on one axis.
+ * A trackpad pinch (and ⌘ + trackpad scroll) sends small pixel deltas. `dy` is in CSS px; 25,
+ * not 40, because Interface Size 200% halves the CSS delta of a 100 px notch.
+ */
+function wheelNotches(event: WheelEvent, dy: number): number {
+  if (dy === 0) return 0
+  if (event.deltaMode === 0 && (Math.abs(dy) < 25 || event.deltaX !== 0)) return 0
+  return -Math.sign(dy) * Math.max(1, Math.round(Math.abs(dy) / 120))
+}
 /** A linked item fades out over this long when its point is hidden. */
 const LINK_FADE_MS = 200
 /** How long the "an agent looked here" outline shows. */
@@ -1909,17 +1928,45 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const [x, y] = screenToBoard([event.clientX - rect.left, event.clientY - rect.top], viewportRef.current, cameraRef.current)
       return { kind: 'wheel', x, y, buttons: event.buttons, pressure: 0, pointerType: 'mouse', deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey }
     }
+    /** The zoom that mouse-wheel notches glide to, while their glide runs (its glideRef token). */
+    let notch: { token: number; zoom: number; point: Point } | null = null
+    const glideNotch = (token: number): void => {
+      let last = performance.now()
+      const step = (): void => {
+        if (glideRef.current !== token || !notch) return
+        const now = performance.now()
+        const share = 1 - Math.exp(-(now - last) / NOTCH_GLIDE_MS)
+        last = now
+        const current = cameraRef.current
+        const gap = Math.log(notch.zoom / current.zoom)
+        const done = Math.abs(gap * (1 - share)) < 0.003
+        applyCamera(zoomAt(current, notch.point, viewportRef.current, done ? notch.zoom : current.zoom * Math.exp(gap * share)))
+        if (done) notch = null
+        else requestAnimationFrame(step)
+      }
+      requestAnimationFrame(step)
+    }
     const boardWheel = (event: WheelEvent): void => {
-      glideRef.current++
+      const prior = glideRef.current
+      const token = ++glideRef.current
       learnerViewAtRef.current = Date.now()
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
       let dx = event.deltaX * scale
       let dy = event.deltaY * scale
       const current = cameraRef.current
       if (event.ctrlKey || event.metaKey) {
-        // A trackpad pinch arrives as ctrl + wheel with small deltas.
-        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
         const point = cssPoint(event, host.getBoundingClientRect())
+        // A mouse-wheel notch adds a fixed step to the zoom a short glide goes to; a fast spin adds up.
+        const notches = wheelNotches(event, dy)
+        if (notches) {
+          const from = notch && notch.token === prior ? notch.zoom : current.zoom
+          notch = { token, zoom: clampZoom(from * Math.pow(NOTCH_ZOOM, notches)), point }
+          glideNotch(token)
+          return
+        }
+        notch = null
+        // A trackpad pinch arrives as ctrl + wheel with small deltas: it zooms at once.
+        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
         applyCamera(zoomAt(current, point, viewportRef.current, current.zoom * Math.exp(-dy * speed)))
         return
       }
