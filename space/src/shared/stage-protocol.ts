@@ -30,6 +30,9 @@ export interface StageTiming {
   /** Recipe evaluations the sampling made, and the evaluations that sampling every object over every span would make. */
   evaluations: number
   fullEvaluations: number
+  /** The objects the sweep samples (this scene's, and the earlier ones it can change), and the objects with seeds. */
+  swept: number
+  seeded: number
   /** The frames (shared/frames.ts): ms to encode them, ms the worker waited for the board's credit, and their bytes. */
   encode: number
   wait: number
@@ -53,7 +56,7 @@ export type ToStage =
  * keys: the stage id and the scene-local key of each object the program made (null for a reset); a rebuild gives them to the board.
  * range: the stage ids the program took, [first, end) (null for a reset).
  * orderDependent: the objects whose recipe gave the sweep another result than its seed at the same moment.
- * sweeping: a draft's early reply: its sweep goes on, and ends with "swept" or, when it fails, a failed reply with the same id.
+ * sweeping: an early reply (a scene or a draft whose world does not step): its sweep goes on, and ends with "swept" or, when it fails, a failed reply with the same id.
  * at: in that failed reply, the scene time of the stream's last complete moment.
  * An error's line is in the module file (a path in boards/scenes/), or in the inline code when file is null.
  */
@@ -111,10 +114,10 @@ const keysAre = (value: Shape, keys: string[]): boolean => {
 
 function parseTiming(value: unknown): StageTiming | null | undefined {
   if (value === null) return null
-  if (!isShape(value) || !keysAre(value, ['body', 'seeds', 'result', 'bake', 'evaluations', 'fullEvaluations', 'encode', 'wait', 'bytes'])) return undefined
-  const { body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes } = value
-  if (![body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes].every(isMs)) return undefined
-  return { body, seeds, result, bake, evaluations, fullEvaluations, encode, wait, bytes } as StageTiming
+  if (!isShape(value) || !keysAre(value, ['body', 'seeds', 'result', 'bake', 'evaluations', 'fullEvaluations', 'swept', 'seeded', 'encode', 'wait', 'bytes'])) return undefined
+  const { body, seeds, result, bake, evaluations, fullEvaluations, swept, seeded, encode, wait, bytes } = value
+  if (![body, seeds, result, bake, evaluations, fullEvaluations, swept, seeded, encode, wait, bytes].every(isMs)) return undefined
+  return { body, seeds, result, bake, evaluations, fullEvaluations, swept, seeded, encode, wait, bytes } as StageTiming
 }
 
 function parseKeys(value: unknown): Array<[number, string]> | null | undefined {

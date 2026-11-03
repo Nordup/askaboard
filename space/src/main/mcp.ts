@@ -896,10 +896,12 @@ export class AgentServer {
   }
 
   /** Run a board tool in the renderer, as this session. */
-  /** End running scene programs (all, or one session's). Returns how many were running. */
+  /**
+   * End running scene programs (all, or one session's). Returns how many were running. A sweep is not a program in flight:
+   * the stream of a scene on the board plays on, and a scene that leaves the board ends its own (stage.drop, discard).
+   */
   private cancelPrograms(sessionId: string | null): number {
     this.stopIdleRebuild()
-    if (sessionId === null) this.stage.cancelSweep()
     let count = 0
     for (const [program, owner] of this.programs) {
       if (sessionId !== null && owner !== sessionId) continue
@@ -1041,6 +1043,8 @@ export class AgentServer {
      * restore cannot be cancelled: these programs ran to their end before.
      */
     const restore = async (): Promise<void> => {
+      // A new run that still streams goes off the board with the rest.
+      this.stage.cancelSweep()
       this.stage.truncate(cut.index)
       await control({ action: 'revert', scenes: affected, step, boardId })
       const now = (await control({ action: 'status' })) as { waiting?: string[]; playing_scene?: { id: string } | null }

@@ -1363,21 +1363,32 @@ export class ScenePlayer {
   /** The scene clock. Every consumer reads this one, so all of a scene stops together when it holds. */
   private timeOf(scene: Playing, now: number): number {
     if (scene.origin === null) return -1
-    return Math.min(scene.pausedAt ?? (now - scene.origin) / 1000, scene.play.ready())
+    return Math.min(scene.pausedAt ?? (now - scene.origin) / 1000, this.holdAt(scene))
   }
 
   /**
-   * The clock stands at what the scene has ready, and goes on by itself when
-   * more is ready. A hold is not a pause, and it is no mode: it comes from the
-   * clock and ready() alone, so a pause, a resume or a seek owes it nothing.
+   * Where the clock stands when it holds: at what the scene has ready, or at
+   * the time it shows already (lastT), when a seek or a replay from a step
+   * put it ahead of the stream. A hold never moves the clock back: the board
+   * shows the seek time from the seeds (liveSamples) until the samples reach it.
+   */
+  private holdAt(scene: Playing): number {
+    return Math.max(scene.play.ready(), scene.lastT)
+  }
+
+  /**
+   * The clock stands at holdAt, and goes on by itself when more is ready. A
+   * hold is not a pause, and it is no mode: it comes from the clock, ready()
+   * and the time shown alone, so a pause, a resume or a seek owes it nothing.
    * While it holds, origin moves with the wall clock, so time goes on from the
    * held time with no jump. A scene that has all it needs (ready at its end or
    * after) never holds, and ends at its exact time.
    */
   private hold(scene: Playing, now: number): void {
     const ready = scene.play.ready()
-    if ((scene.pausedAt ?? (now - (scene.origin as number)) / 1000) >= ready && ready < scene.play.duration) {
-      scene.origin = now - ready * 1000
+    const at = this.holdAt(scene)
+    if ((scene.pausedAt ?? (now - (scene.origin as number)) / 1000) >= at && ready < scene.play.duration) {
+      scene.origin = now - at * 1000
       scene.heldSince ??= now
     } else if (scene.heldSince !== null) {
       report('hold', scene.play, undefined, performance.timeOrigin + scene.heldSince, now - scene.heldSince)

@@ -68,6 +68,20 @@
   let T = 0
   /** While a recipe is evaluated in the end sampling: { impure } (see "Pure evaluations"); null otherwise. */
   let tracking = null
+  /**
+   * While a recipe is evaluated (at any time, in any mode): its sources, what it reads ({ values, objects, impure }, kept on the
+   * recipe across evaluations). A later scene sweeps an earlier object only when it can change one of them (sweepSet).
+   */
+  let reader = null
+  /** An evaluation that reads the time itself, takes the program's random numbers, or changes the scene: it changes in every scene. */
+  function impure() {
+    if (tracking) tracking.impure = true
+    if (reader) reader.impure = true
+  }
+  /** A recipe reads an object of the stage (its shape, its tracks, its place). Bare entries a creator builds are not objects yet. */
+  function readsObject(entry) {
+    if (reader && objects[entry.id] === entry) reader.objects.add(entry.id)
+  }
   let endTime = 0
   /** The scene number in this stage (1 for the first program). */
   let sceneNo = 0
@@ -111,7 +125,7 @@
   let programStream = mulberry32(1)
   function programRandom() {
     // Each call takes the next number of one stream: how many evaluations there are changes what the next object gets.
-    if (tracking) tracking.impure = true
+    impure()
     return programStream()
   }
   Math.random = () => programRandom()
@@ -125,7 +139,7 @@
    */
   const sceneNow = () => {
     // The time itself: a recipe that reads it changes at every moment.
-    if (tracking) tracking.impure = true
+    impure()
     return Math.round(T * 1000)
   }
   function SceneDate(...args) {
@@ -404,7 +418,7 @@
     return n === 1 ? base : `${base}#${n}`
   }
   function register(entry) {
-    if (tracking) tracking.impure = true
+    impure()
     entry.id = objects.length
     entry.key = keyFor(entry)
     entry.born = sceneNo
@@ -545,6 +559,7 @@
   }
 
   function valueAt(entry, prop, t) {
+    readsObject(entry)
     return trackValue(entry.tracks[prop] || [], base(entry, prop), t)
   }
 
@@ -577,7 +592,7 @@
   }
 
   function addTrack(entry, prop, start, dur, to, ease, from) {
-    if (tracking) tracking.impure = true
+    impure()
     const a = { obj: entry.id, prop, start: f3(start), dur: f3(Math.max(0, dur)), from: from === undefined ? valueAt(entry, prop, start) : from, to, ease: ease || 'inOut' }
     ;(entry.tracks[prop] ||= []).push(a)
     actions.push(a)
@@ -631,6 +646,7 @@
     /** The value now: at the current time while the program runs, at the sample time while a changing object is drawn. */
     get() {
       reads++
+      if (reader) reader.values.add(this.id)
       const v = values[this.id]
       return sortedTrackValue(v.tracks, v.base, T)
     }
@@ -652,7 +668,7 @@
   }
 
   function addValueTrack(v, start, dur, to, ease) {
-    if (tracking) tracking.impure = true
+    impure()
     const from = sortedTrackValue(v.tracks, v.base, start)
     const a = { start: f3(start), dur: f3(Math.max(0, dur)), from, to, ease }
     const last = v.tracks[v.tracks.length - 1]
@@ -664,7 +680,7 @@
   }
 
   function value(initial) {
-    if (tracking) tracking.impure = true
+    impure()
     if (initial === undefined) initial = 0
     num(initial, 'value(n)')
     values.push({ base: initial, tracks: [] })
@@ -709,6 +725,8 @@
     rng = seeded(recipe.seed)
     const outer = earlierRecipe
     earlierRecipe = outer || recipe.scene !== sceneNo
+    const outerReader = reader
+    reader = recipe.sources ||= { values: new Set(), objects: new Set(), impure: false }
     try {
       let args = recipe.args.map((x, i) => (recipe.skip.includes(i) ? x : resolveArg(x, 5)))
       if (recipe.overrides) {
@@ -725,11 +743,13 @@
     } finally {
       building--
       earlierRecipe = outer
+      reader = outerReader
     }
   }
 
   /** The entry of a changing object at time t (its own entry when it does not change). */
   function specAt(entry, t) {
+    readsObject(entry)
     if (!entry.dynamic || entry.evaluating) return entry
     // Read by another recipe (a label of a curve, an arrow to an object): its sampling keeps its shape for that recipe.
     if (building > 0) entry.readByOthers = true
@@ -1486,7 +1506,7 @@
   /** The path a moving point leaves: fn() → [x, y] at every moment from the trace's start until now. */
   function trace(fn, t0, opts) {
     // A trace is the path up to now: it changes with the time itself.
-    if (tracking) tracking.impure = true
+    impure()
     if (typeof fn !== 'function') fail('trace(fn, options) needs a function that returns the point now, like () => [x.get(), y.get()]')
     opts = options(opts, 'trace options')
     const now = T
@@ -1574,6 +1594,7 @@
 
   /** Ask the board (the app) a question: the layout of HTML, a picture, an empty place, an item's content. Blocks until it answers. */
   function ask(request, what) {
+    // Not impure(): the board's answers stand still while a scene plays, so a recipe that asks changes only with what it reads.
     if (tracking) tracking.impure = true
     if (!hostMeasure) fail(`${what}: the board cannot answer here`)
     let got
@@ -2134,7 +2155,7 @@
   const spans = new WeakMap()
   class Action {
     constructor(start, end) {
-      if (tracking) tracking.impure = true
+      impure()
       spans.set(this, { start: f3(start), end: f3(end), parts: [] })
     }
     get start() {
@@ -2496,7 +2517,7 @@
   }
 
   function step(name, opts) {
-    if (tracking) tracking.impure = true
+    impure()
     if (typeof name !== 'string' || !name.trim()) fail('step(name) needs a name string')
     opts = options(opts, 'step options')
     steps.push({ name: name.trim(), at: f3(T), ...(opts.pause ? { pause: true } : {}) })
@@ -2893,6 +2914,9 @@
   /** Recipe evaluations of this scene's sweep, and how many sampling every object at every sample time would make. */
   let evaluations = 0
   let fullEvaluations = 0
+  /** How many objects this scene's sweep samples, and how many have seeds. */
+  let sweptCount = 0
+  let seededCount = 0
 
   // ---------- Pure evaluations ----------
   //
@@ -2925,7 +2949,6 @@
     for (const entry of list) {
       if (!entry.dynamic || entry.kind === 'group' || entry.kind === 'node') continue
       const times = sampleTimes(entry.born === sceneNo ? entry.created : 0)
-      fullEvaluations += times.length
       /**
        * kept: how many samples the object kept. first: its first sample, until a second one is kept. runEnd: the last sample of the
        * current run of equal samples, when it is not kept yet. lastChange: the time of its last sample that differs from the one before.
@@ -2933,7 +2956,46 @@
        */
       runs.push({ entry, times, next: 0, kept: 0, first: null, lastKey: null, lastChange: 0, runEnd: null, seeds: new Map(), changes: false, final: null, orderDependent: false })
     }
-    return { runs, moments: [...new Set(runs.flatMap((run) => run.times))].sort((p, q) => p - q), next: 0 }
+    // seeded: every run that has seeds (the description and bake read them); runs: the ones the sweep samples (sweepSet).
+    return { seeded: runs, runs, moments: [], next: 0 }
+  }
+
+  /**
+   * The runs of a scene's sweep: this scene's objects, and the earlier ones it can change over time. An earlier object changes
+   * when this scene acts on it, edits it, moves it with a group or brings it back (sentObjects); when its recipe reads a value
+   * with tracks in this scene, an object that changes, or the time itself (impure); and when its seeds differ from each other
+   * (a source that its reads do not name). The rest keep their seeds: each one is the same at every time of this scene, and
+   * a world among them integrates nothing (stepping).
+   */
+  function sweepSet(runs, fresh) {
+    const changing = new Set([...sentObjects(fresh, new Set())].map((e) => e.id))
+    const joins = (run) => {
+      const { entry } = run
+      if (entry.born === sceneNo || changing.has(entry.id) || run.changes) return true
+      const from = entry.recipe && entry.recipe.sources
+      // A recipe that never ran here has no record: it joins, as every earlier object did before.
+      if (!from || from.impure) return true
+      for (const id of from.values) if (values[id].tracks.length > 0) return true
+      for (const id of from.objects) if (changing.has(id)) return true
+      return false
+    }
+    const out = []
+    let left = runs
+    // A label that follows a curve reads it: each round adds the readers of what joined in the round before.
+    for (let grew = true; grew; ) {
+      grew = false
+      const rest = []
+      for (const run of left) {
+        if (joins(run)) {
+          out.push(run)
+          changing.add(run.entry.id)
+          grew = true
+        } else rest.push(run)
+      }
+      left = rest
+    }
+    const set = new Set(out)
+    return runs.filter((run) => set.has(run))
   }
 
   /** The sweep of this scene: seeds() makes it, sample() runs it, bake() reads its end seeds. */
@@ -3219,8 +3281,9 @@
   /**
    * The seeds of this scene, in a fixed order: ascending time, object order
    * inside one time. With an action or a value change in the scene, every
-   * earlier dynamic object takes part. An object's fields hold its end seed
-   * after this: that is the final state, and the description is built from it.
+   * earlier dynamic object takes part; the sweep then samples only those that
+   * can change (sweepSet). An object's fields hold its end seed after this:
+   * that is the final state, and the description is built from it.
    */
   const seeds = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
@@ -3235,19 +3298,25 @@
     const moments = [...new Set(due.flatMap((times) => [...times]))].sort((p, q) => p - q)
     for (const t of moments) sweep.runs.forEach((run, i) => due[i].has(t) && (run.final = seedOne(run, t) ?? run.final))
     sweep.runs.forEach(keepSeeds)
+    // After the seeds: their evaluations add what each recipe reads now, and run.changes is known.
+    sweep.runs = sweepSet(sweep.seeded, fresh)
+    sweep.moments = [...new Set(sweep.runs.flatMap((run) => run.times))].sort((p, q) => p - q)
+    for (const run of sweep.runs) fullEvaluations += run.times.length
+    sweptCount = sweep.runs.length
+    seededCount = sweep.seeded.length
   }
 
   /** The scene's description (JSON): its objects at their end seeds, and its timeline. Nothing changes it after this. */
   const result = () => {
     const fresh = objects.filter((e) => e.born === sceneNo && !e.dropped)
-    const earlierRuns = sweep.runs.filter((run) => run.entry.born < sceneNo)
+    const earlierRuns = sweep.seeded.filter((run) => run.entry.born < sceneNo)
     // An earlier object whose seeds differ from its baked state changes on the board.
     const changed = new Set(earlierRuns.filter(({ entry, seeds: done }) => [...done.values()].some(({ key }) => key !== entry.bakedKey)).map((run) => run.entry))
     const sent = sentObjects(fresh, changed)
     // Any other earlier dynamic object goes too, marked: its board items stay as they are, and it shows only if the sweep gives it samples.
     const unchanged = new Set(earlierRuns.map((run) => run.entry).filter((e) => !sent.has(e)))
     const emit = sentObjects(fresh, new Set([...changed, ...unchanged]))
-    const changes = new Set(sweep.runs.filter((run) => run.changes).map((run) => run.entry))
+    const changes = new Set(sweep.seeded.filter((run) => run.changes).map((run) => run.entry))
     const list = objects.filter((e) => emit.has(e))
     const local = new Map(list.map((e, i) => [e.id, i]))
     const out = list.map((e) => {
@@ -3289,7 +3358,7 @@
    * any object (a trace walks it). The rest then bakes from these saved results.
    */
   const bake = () => {
-    const ends = new Map(sweep ? sweep.runs.map((run) => [run.entry, run.final]) : [])
+    const ends = new Map(sweep ? sweep.seeded.map((run) => [run.entry, run.final]) : [])
     for (const e of objects) {
       if (!e.dynamic || e.dropped || e.kind === 'group' || e.kind === 'node' || (e.gone && !e.revealed)) continue
       if (!ends.get(e)) ends.set(e, specAt(e, endTime))
@@ -3383,6 +3452,8 @@
     activeSpans.length = 0
     evaluations = 0
     fullEvaluations = 0
+    sweptCount = 0
+    seededCount = 0
     sweep = null
     tracking = null
     markTimes.clear()
@@ -3429,19 +3500,19 @@
     {},
     {
       set(target, key, value, receiver) {
-        if (tracking) tracking.impure = true
+        impure()
         return Reflect.set(target, key, value, receiver)
       },
       defineProperty(target, key, descriptor) {
-        if (tracking) tracking.impure = true
+        impure()
         return Reflect.defineProperty(target, key, descriptor)
       },
       deleteProperty(target, key) {
-        if (tracking) tracking.impure = true
+        impure()
         return Reflect.deleteProperty(target, key)
       },
       setPrototypeOf(target, proto) {
-        if (tracking) tracking.impure = true
+        impure()
         return Reflect.setPrototypeOf(target, proto)
       }
     }
@@ -3496,7 +3567,7 @@
 
   // ---------- The host functions ----------
 
-  const stats = () => ({ evaluations, fullEvaluations })
+  const stats = () => ({ evaluations, fullEvaluations, swept: sweptCount, seeded: seededCount })
   /** The stage id and key of each object this scene made and kept (a cut drops some): what a rebuild tells the board (main/live-scene.ts). */
   const keys = () => objects.filter((e) => e.born === sceneNo && !e.dropped && e.key !== undefined).map((e) => [e.id, e.key])
   /** The stage ids this program took: [first, end). */

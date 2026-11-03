@@ -73,7 +73,7 @@ interface Host {
   /** The scene has an item that integrates its params, so its sweep drains before the reply. */
   stepping(): boolean
   bake(): void
-  stats(): { evaluations: number; fullEvaluations: number }
+  stats(): { evaluations: number; fullEvaluations: number; swept: number; seeded: number }
   /** The stage id and key of each object the program made (live-prelude.js keyFor). */
   keys(): Array<[number, string]>
   /** The stage ids the program took, [first, end) (live-prelude.js range). */
@@ -110,7 +110,7 @@ let bridge: { state: Int32Array; bytes: Uint8Array } | null = null
 let host: Host | null = null
 /** While a program's seeds and sweep stream frames: where they go. */
 let frameSink: FrameStream | null = null
-/** The sweep after a draft's reply, while it runs. */
+/** The sweep after an early reply, while it runs. */
 let sweeping: { fns: Host; id: number; frames: FrameStream } | null = null
 /** The board asks the sweep to give way (frames.ts sweepPace). */
 let calm = false
@@ -370,8 +370,10 @@ function runModules(program: Extract<StageProgram, { kind: 'modules' }>): Promis
 /**
  * The end of a program that ran: one path for every mode (the cut and the
  * end state). A scene and a draft are seeded, described and swept (their
- * frames go to the board); a scene and a replay bake. A draft replies before
- * its sweep, with the seeds as its first chunk.
+ * frames go to the board); a scene and a replay bake. A run whose frames go
+ * to the board replies before its sweep, with the seeds as its first chunk,
+ * so the board can play while the frames arrive; a scene then bakes at the
+ * sweep's end. Only a world whose values change (stepping) sweeps first.
  */
 function finish(fns: Host, id: number, mode: StageMode, started: number): void {
   if (mode === 'lines') {
@@ -395,7 +397,7 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): void {
         if (typeof text !== 'string' || text.length > STAGE_LIMITS.description) throw new RangeError('the scene description is too large')
         return text
       }
-      early = mode === 'draft' && !fns.stepping()
+      early = !fns.stepping()
       if (early) {
         json = description()
         frames.send(false)
@@ -412,29 +414,31 @@ function finish(fns: Host, id: number, mode: StageMode, started: number): void {
     // Before bake: bake turns the objects a cut dropped into gone ones, and keys() leaves the dropped ones out.
     const keys = fns.keys()
     const range = fns.range()
-    if (mode !== 'draft') fns.bake()
+    if (mode !== 'draft' && !early) fns.bake()
     const tBake = clock()
-    const { evaluations, fullEvaluations } = fns.stats()
-    const timing: StageTiming = { body: tBody - started, seeds: tSeeds - tBody, result: tResult - tSeeds, bake: tBake - tResult, evaluations, fullEvaluations, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
+    const { evaluations, fullEvaluations, swept, seeded } = fns.stats()
+    const timing: StageTiming = { body: tBody - started, seeds: tSeeds - tBody, result: tResult - tSeeds, bake: tBake - tResult, evaluations, fullEvaluations, swept, seeded, encode: frames?.encodeMs ?? 0, wait: frames?.waitMs ?? 0, bytes: frames?.total ?? 0 }
     reply = { t: 'reply', id, ok: true, json, frames: frames?.sent ?? 0, ms: clock() - started, timing, keys, range, orderDependent, sweeping: early }
   } catch (error) {
     early = false
     reply = failure(id, error, started)
   }
   post(reply)
-  if (early) sweepOn(fns, id, frames as FrameStream, started)
+  if (early) sweepOn(fns, id, frames as FrameStream, started, mode === 'scene')
   else frameSink = null
 }
 
 /**
- * The sweep after a draft's reply: batches of SWEEP_BATCH_MS, with the tick of
- * the program's clock between them, so the worker's message loop runs. While
+ * The sweep after an early reply: batches of SWEEP_BATCH_MS, with the tick of
+ * the program's clock between them, so the worker's message loop runs. bake:
+ * a scene bakes at the sweep's end, before "swept", so the context then holds
+ * it as a scene that swept first would leave it. While
  * the board asks for calm, the batches are short, with a gap. Each
  * batch ends with a chunk, so the board's coverage moves often. The stream
  * ends with "swept", or a failed reply with the program's id and its cutoff:
  * the last complete moment, which the board has by then.
  */
-function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): void {
+function sweepOn(fns: Host, id: number, frames: FrameStream, started: number, bake: boolean): void {
   const done = (): void => {
     tick.port1.onmessage = null
     frameSink = null
@@ -452,6 +456,7 @@ function sweepOn(fns: Host, id: number, frames: FrameStream, started: number): v
         tick.port2.postMessage(null)
         return
       }
+      if (bake) fns.bake()
       done()
       frames.send(true, swept.lastChange)
       post({ t: 'swept', id, frames: frames.sent, ms: clock() - started, orderDependent: swept.orderDependent, logs: swept.logs })
