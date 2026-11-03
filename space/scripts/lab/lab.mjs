@@ -2,7 +2,7 @@
 /**
  * Start, stop or show the lab app: an own Learning Space instance for
  * live-drawing experiments, with a scratch HOME, user-data-dir, traces and a
- * learning folder with one board under /private/tmp/claude-501/ls-lab/<name>/.
+ * learning folder with one board under SCRATCH/<name>/ (common.mjs: /tmp/claude-<uid>/ls-lab).
  *
  *   node scripts/lab/lab.mjs start [--name lab] [--built] [--fresh] [--no-code] [--no-html] [--brief <file>] [--tune <json>] [--mcp-port 47890] [--debug-port 9490]
  *   node scripts/lab/lab.mjs stop [--name lab]

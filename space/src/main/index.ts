@@ -19,6 +19,7 @@ import { installShim, writeRelayState } from './agent-home'
 import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
+import { resourcePath } from './resources'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
 const BACKGROUND = '#111113'
@@ -62,6 +63,10 @@ if (remoteDebugPort !== null) {
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
   // Check scripts drive the window while the learner works in front of it. A
   // covered window must keep rendering, or CDP input waits forever for a frame.
+  // These switches change only Chromium's own throttling: on Wayland the
+  // compositor sends a covered window no frame callbacks, and frames stop. The
+  // scene clock's events (end, queue, pause, voice) run on a timer
+  // (live/player.ts schedule()), so a scene still ends there.
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
   app.commandLine.appendSwitch('disable-renderer-backgrounding')
   app.commandLine.appendSwitch('disable-background-timer-throttling')
@@ -530,6 +535,10 @@ function createWindow(): BrowserWindow {
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
+    // Linux and Windows draw the application menu as a bar inside the window, above the app's own top bar.
+    // Hidden, it shows on Alt, and its accelerators keep working.
+    autoHideMenuBar: process.platform !== 'darwin',
+    ...(process.platform === 'linux' ? { icon: resourcePath('icon.png') } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

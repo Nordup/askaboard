@@ -19,7 +19,14 @@ export const LAB = dirname(fileURLToPath(import.meta.url))
 export const SPACE = resolve(LAB, '../..')
 export const DRIVE = join(SPACE, 'scripts/drive.mjs')
 export const TEMPLATE = join(SPACE, 'resources/learning-folder')
-export const SCRATCH = '/private/tmp/claude-501/ls-lab'
+/**
+ * The scratch root of the lab, the bench and perf runs: /tmp/claude-<uid>, with /tmp as its
+ * real path (/private/tmp on macOS, so the Mac path stays /private/tmp/claude-501). The real
+ * path matters: an orphan app is found by its --user-data-dir in the command line.
+ * LS_SCRATCH_ROOT sets another root.
+ */
+export const SCRATCH_ROOT = process.env.LS_SCRATCH_ROOT ? resolve(process.env.LS_SCRATCH_ROOT) : join(process.platform === 'darwin' ? '/private/tmp' : '/tmp', `claude-${process.getuid?.() ?? 'user'}`)
+export const SCRATCH = join(SCRATCH_ROOT, 'ls-lab')
 export const RUNS = join(SPACE, '.lab/runs')
 export const FFMPEG = existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg'
 export const FOUNDER_PORT = 47821
@@ -181,10 +188,10 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   const spawnedAt = Date.now()
   let child
   if (!built) {
-    child = spawn(join(SPACE, 'node_modules/.bin/electron-vite'), ['dev', '--', `--user-data-dir=${inst.userData}`], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd], detached: true })
+    child = spawn(join(SPACE, 'node_modules/.bin/electron-vite'), ['dev', '--', `--user-data-dir=${inst.userData}`, ...displaySwitches(env)], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd], detached: true })
   } else {
     const electron = createRequire(join(SPACE, 'package.json'))('electron')
-    child = spawn(electron, [`--user-data-dir=${inst.userData}`, '.'], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd], detached: true })
+    child = spawn(electron, [`--user-data-dir=${inst.userData}`, ...displaySwitches(env), '.'], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd], detached: true })
   }
   closeSync(logFd)
   child.unref()
@@ -217,14 +224,35 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   return state
 }
 
+/**
+ * The display switches of every app instance that the lab, bench and perf scripts start.
+ * GNOME Wayland sends a covered window no frame callbacks, so requestAnimationFrame stops in a
+ * check instance behind other windows (no frames recorded, scenes never end); under XWayland
+ * it runs on. LS_NATIVE_WAYLAND=1 keeps native Wayland, for runs that test Wayland itself.
+ */
+export function displaySwitches(env = process.env) {
+  return process.platform === 'linux' && env.WAYLAND_DISPLAY && env.DISPLAY && env.LS_NATIVE_WAYLAND !== '1' ? ['--ozone-platform=x11'] : []
+}
+
+/** The PIDs that listen on a TCP port: from lsof, or from ss (iproute2) where there is no lsof. */
+function portHolders(port) {
+  try {
+    return execFileSync('lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').map(Number).filter(Boolean)
+  } catch (error) {
+    // lsof exits 1 when nothing listens.
+    if (error.code !== 'ENOENT') return []
+  }
+  try {
+    const out = execFileSync('ss', ['-Hltnp', `sport = :${port}`], { encoding: 'utf8' })
+    return [...new Set([...out.matchAll(/pid=(\d+)/g)].map((m) => Number(m[1])))]
+  } catch {
+    return []
+  }
+}
+
 /** An app of this instance that holds a port with no state file: found by its user-data-dir, so it is never another app. */
 async function stopOrphan(port, inst) {
-  let holders = []
-  try {
-    holders = execFileSync('lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').map(Number).filter(Boolean)
-  } catch {
-    return
-  }
+  const holders = portHolders(port)
   const command = (pid) => {
     try {
       return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
@@ -268,8 +296,23 @@ export function guardRun(name, label) {
   }
 }
 
-/** The lid is closed and that puts this Mac to sleep: a run measures nothing then. */
+/**
+ * The lid is closed and that puts the machine to sleep: a run measures nothing then.
+ * macOS: ioreg. Linux: the ACPI lid state, and logind's lid action that applies now
+ * (docked, then on external power, then the plain one). Without busctl: sleep unless an
+ * external display is connected (logind's defaults).
+ */
 export function lidSleeps() {
+  if (process.platform === 'linux') {
+    const closed = readdirSafe('/proc/acpi/button/lid').some((lid) => /closed/.test(readSafe(join('/proc/acpi/button/lid', lid, 'state'))))
+    const logind = lidSettings()
+    if (logind) {
+      const action = logind.Docked ? logind.HandleLidSwitchDocked : logind.OnExternalPower && logind.HandleLidSwitchExternalPower ? logind.HandleLidSwitchExternalPower : logind.HandleLidSwitch
+      return closed && ['suspend', 'hibernate', 'hybrid-sleep', 'suspend-then-hibernate'].includes(action)
+    }
+    const docked = readdirSafe('/sys/class/drm').some((name) => /^card\d+-/.test(name) && !/-(eDP|LVDS|DSI)-/.test(name) && readSafe(join('/sys/class/drm', name, 'status')).trim() === 'connected')
+    return closed && !docked
+  }
   try {
     const out = execFileSync('ioreg', ['-r', '-k', 'AppleClamshellState', '-d', '1'], { encoding: 'utf8' })
     return /"AppleClamshellState" = Yes/.test(out) && /"AppleClamshellCausesSleep" = Yes/.test(out)
@@ -278,17 +321,61 @@ export function lidSleeps() {
   }
 }
 
-/** Keep the Mac from idle sleep while this process lives. A closed lid still sleeps: sleptSeconds tells. */
-export function stayAwake() {
+/** Linux: logind's lid settings over D-Bus, or null without busctl. An empty HandleLidSwitchExternalPower means HandleLidSwitch. */
+export function lidSettings() {
+  const names = ['HandleLidSwitch', 'HandleLidSwitchExternalPower', 'HandleLidSwitchDocked', 'Docked', 'OnExternalPower']
   try {
-    spawn('caffeinate', ['-i', '-m', '-s', '-w', String(process.pid)], { stdio: 'ignore', detached: true }).unref()
+    const out = execFileSync('busctl', ['get-property', 'org.freedesktop.login1', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', ...names], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 })
+    const values = out.trim().split('\n').map((line) => {
+      const [, type, raw] = /^(\w)\s+(.*)$/.exec(line.trim()) ?? []
+      return type === 'b' ? raw === 'true' : type === 's' ? JSON.parse(raw) : undefined
+    })
+    if (values.length !== names.length || values.includes(undefined)) return null
+    return Object.fromEntries(names.map((name, i) => [name, values[i]]))
   } catch {
-    // Not a Mac.
+    return null
   }
 }
 
-/** Seconds the machine was asleep or in dark wake between two times (ms), from the power log; null when unknown. */
+function readSafe(path) {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+function readdirSafe(path) {
+  try {
+    return readdirSync(path)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Keep the machine from idle sleep while this process lives. macOS: caffeinate. Linux: a
+ * systemd-inhibit lock held by a `tail --pid` that ends with this process. A closed lid
+ * still sleeps on a Mac: sleptSeconds tells.
+ */
+export function stayAwake() {
+  const [command, argv] =
+    process.platform === 'linux'
+      ? ['systemd-inhibit', ['--what=idle:sleep', '--who=learning-space-scripts', '--why=A lab, bench or perf run measures', '--mode=block', 'tail', `--pid=${process.pid}`, '-f', '/dev/null']]
+      : ['caffeinate', ['-i', '-m', '-s', '-w', String(process.pid)]]
+  try {
+    const child = spawn(command, argv, { stdio: 'ignore', detached: true })
+    // A missing command arrives as an event, not a throw.
+    child.on('error', () => undefined)
+    child.unref()
+  } catch {
+    // No such command here.
+  }
+}
+
+/** Seconds the machine was asleep or in dark wake between two times (ms), from the macOS power log; null when unknown (always on Linux). */
 export function sleptSeconds(from, to) {
+  if (process.platform !== 'darwin') return null
   let log
   try {
     log = execFileSync('pmset', ['-g', 'log'], { encoding: 'utf8', maxBuffer: 1 << 28 })

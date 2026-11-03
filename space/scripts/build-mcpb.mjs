@@ -43,7 +43,7 @@ const manifest = {
     entry_point: shim,
     mcp_config: { command: shim, args: ['mcp'] }
   },
-  compatibility: { platforms: ['darwin'] }
+  compatibility: { platforms: ['darwin', 'linux'] }
 }
 
 const stage = mkdtempSync(join(tmpdir(), 'learning-space-mcpb-'))

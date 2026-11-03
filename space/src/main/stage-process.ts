@@ -171,8 +171,10 @@ export class StageProcess {
       const wasRunning = this.port !== null
       this.stop()
       failStart?.(new Error(`the stage process stopped (${why})`))
-      // V8 out of heap: Electron says "oom", or on macOS "crashed" with exit code 5 (seen for every heap-limit end).
-      const outOfMemory = details.reason === 'oom' || (process.platform === 'darwin' && details.reason === 'crashed' && details.exitCode === 5)
+      // V8 out of heap: Electron says "oom", or "crashed" by the SIGTRAP that V8 raises at its heap limit. Electron gives
+      // that as exit code 5 on macOS and as 133 (128 + 5) on Linux (both measured for every heap-limit end).
+      const heapTrap = process.platform === 'darwin' ? 5 : process.platform === 'linux' ? 133 : null
+      const outOfMemory = details.reason === 'oom' || (details.reason === 'crashed' && heapTrap !== null && details.exitCode === heapTrap)
       if (wasRunning) this.onGone(why, outOfMemory)
     })
     try {

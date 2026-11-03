@@ -8,6 +8,8 @@ Change one thing, measure it, and compare. The scripts write to `space/.lab/perf
 
 `render.mjs` measures what the worlds and the board cost on this machine, as it is now. The standard condition is the founder's M1 MacBook Air (2020) with Firefox, ChatGPT and Claude Code open (decision P20). Do not ask for a quiet machine: the load average and the top processes go in each run.
 
+On Linux (decision D6) the run takes CPU per process from `/proc`, the GPU load from the AMD `gpu_busy_percent` of the card that the app's GPU process uses, and the machine name from DMI. It has no footprint, no `sample` stacks (`--profile`) and no `seen`: those values are empty. A Linux run is not comparable with the M1 standard.
+
 Run `npm run build` first. From `space/`:
 
 ```sh
@@ -57,7 +59,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `MP` | Output pixels of the worlds rendered per picture, in millions. A pass inside a world can use more pixels than this. |
 | `bmp` | Pixels of the bitmap that goes to the page per picture, in millions: the canvas that covers the worlds, and more than `MP` when worlds stand apart. |
 | `res` | The lowest resolution share of a shown world in the phase. 1 is full resolution. Dynamic resolution lowers it while worlds move. |
-| `util%` | `Device Utilization %` of `ioreg`, median over the phase. It is the whole GPU: this app, the window server and the other apps. |
+| `util%` | `Device Utilization %` of `ioreg` (Linux: `gpu_busy_percent`), median over the phase. It is the whole GPU: this app, the window server and the other apps. |
 | `load` | The 1-minute load average at the end of the phase. |
 | `seen` | The share of the app window that shows on the screen, at the start of the phase. |
 | `zoom` | The board zoom. `MP` changes with its square, so compare only runs with the same zoom. |
@@ -79,7 +81,7 @@ Each phase adds one line to `.lab/perf/render-history.jsonl`. The line also has 
 | `items`, `strokes`, `others`, `openMs` | `bigboard`: what the board holds, and the time of `open_board` to a painted board. |
 | `pageHeapMb`, `workerHeapMb`, `stageHeapMb` | `memory`: `Runtime.getHeapUsage` after `HeapProfiler.collectGarbage`. The worker is a thread of a renderer, so it has no RSS of its own. The history line has each target in `heap`. |
 | `rendererRssMb`, `gpuRssMb`, `mainRssMb`, `allRssMb` | `memory`: RSS from `ps`, the sum per process type. There is more than one renderer: the page, the stage and the snapshot window. `rendererLargestRssMb` is the largest. `processes` in the line has each one. macOS compresses idle pages, so RSS can fall while the app holds the same memory. |
-| `rendererFootprintMb`, `gpuFootprintMb`, `allFootprintMb` | `memory`: the physical footprint from `top`, which also counts compressed pages. Use this number for growth. `footprint` in the line has each process. |
+| `rendererFootprintMb`, `gpuFootprintMb`, `allFootprintMb` | `memory`: the physical footprint from `top`, which also counts compressed pages (macOS only: null on Linux, where RSS is the only number). Use this number for growth. `footprint` in the line has each process. |
 | `growth...` | `memory`: the change from the phase `fresh`. |
 | `strokesDrawn`, `strokesLeft` | `memory`: the items after the drawing and after the eraser. |
 | `windowMs`, `boardMs`, `mcpMs`, `cold` | `start`: from the spawn of the process to the first contentful paint of the window, to the board in the page plus two frames, and to the open MCP port. `cold`: no user data. |
@@ -194,13 +196,13 @@ screencast costs some CPU, so compare only runs with the same setting (`video` i
 in `trace/`; a replay's `calls.json` names it per call (`image_files`).
 
 Parallel runs: give each one its own `--name <instance>` (the lab folder and state under
-`/private/tmp/claude-501/ls-lab/`) and its own `--mcp-port` / `--debug-port`. Parallel runs
+`/tmp/claude-<uid>/ls-lab/`, `/private/tmp/claude-501/ls-lab/` on the Mac) and its own `--mcp-port` / `--debug-port`. Parallel runs
 load the same machine, so their times are noisy: take the numbers that decide a change
 from a run when nothing else runs.
 
 Other options of `run.mjs`: `--built` (runs `out/`; run `npm run build` first), `--no-web`,
 `--no-news-hook`, `--timeout-min 15`, `--mcp-port`, `--debug-port`. Codex uses its own
-`CODEX_HOME` at `/private/tmp/claude-501/ls-lab/codex-home-perf` (the login is a symlink).
+`CODEX_HOME` at `/tmp/claude-<uid>/ls-lab/codex-home-perf` (the login is a symlink).
 `--dev` (the default) measures the current source; `--built` measures whatever `out/` holds.
 
 A run folder holds `prompt.md`, the agent output (`work-claude.jsonl` (one event per line, so a silent agent shows) or `work-codex.jsonl`),

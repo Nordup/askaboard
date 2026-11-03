@@ -1,5 +1,6 @@
 import { Folder, FolderOpen, PenLine } from 'lucide-react'
 import type { RecentFolder } from '@shared/space-api'
+import { shortcut } from '../platform'
 
 interface WelcomeCardProps {
   recent: RecentFolder[]
@@ -8,8 +9,6 @@ interface WelcomeCardProps {
 }
 
 export function WelcomeCard({ recent, onOpenFolder, onOpenRecent }: WelcomeCardProps) {
-  const isMac = window.space.platform === 'darwin'
-
   return (
     <div className="overlay-center">
       <div className="welcome__card">
@@ -22,7 +21,7 @@ export function WelcomeCard({ recent, onOpenFolder, onOpenRecent }: WelcomeCardP
         <button className="button-primary" onClick={onOpenFolder}>
           <FolderOpen size={15} strokeWidth={2} />
           Open learning folder…
-          <span className="kbd">{isMac ? '⌘O' : 'Ctrl O'}</span>
+          <span className="kbd">{shortcut('O')}</span>
         </button>
 
         <div className="welcome__recent">

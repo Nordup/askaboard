@@ -5,6 +5,7 @@ import { FileTree } from './FileTree'
 import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
 import { SetupMenu } from './SetupMenu'
+import { revealLabel, shortcut } from '../platform'
 
 export interface BoardEntry {
   path: string
@@ -99,7 +100,7 @@ export function Sidebar(props: SidebarProps) {
       x,
       y,
       entries: [
-        { label: 'Open Learning Folder…', icon: <FolderOpen {...ICON} />, hint: '⌘O', onSelect: props.onOpenFolder },
+        { label: 'Open Learning Folder…', icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
         ...(others.length
           ? (['separator', { heading: 'Recent' }] as MenuEntry[]).concat(
               others.map((entry) => ({
@@ -114,7 +115,7 @@ export function Sidebar(props: SidebarProps) {
               'separator',
               { label: 'Set Up for Learning…', icon: <GraduationCap {...ICON} />, onSelect: props.onSetUpFolder },
               { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
-              { label: 'Reveal in Finder', icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') }
+              { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') }
             ] as MenuEntry[])
           : [])
       ]
@@ -127,7 +128,7 @@ export function Sidebar(props: SidebarProps) {
       y,
       entries: [
         { label: 'Rename', icon: <Pencil {...ICON} />, onSelect: () => props.onStartRename(board.path) },
-        { label: 'Reveal in Finder', icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal(board.path) },
+        { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal(board.path) },
         'separator',
         { label: 'Move to Trash', icon: <Trash {...ICON} />, danger: true, onSelect: () => props.onDeleteBoard(board.path) }
       ]
@@ -191,7 +192,7 @@ export function Sidebar(props: SidebarProps) {
           <header className="section__header">
             <span className="section__title">Boards</span>
             {folderName && (
-              <button className="icon-button" title="New board (⌘N)" aria-label="New board" onClick={props.onCreateBoard}>
+              <button className="icon-button" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
                 <Plus size={14} strokeWidth={2} />
               </button>
             )}

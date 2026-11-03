@@ -17,7 +17,7 @@
  * --no-pan: toon without its pan phase. --dev: the dev renderer, not out/. The window opens at its normal place, with no focus.
  */
 import { execFile, execFileSync } from 'node:child_process'
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { loadavg } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,8 +30,11 @@ const OUT = join(SPACE, '.lab/perf')
 const HISTORY = join(OUT, 'render-history.jsonl')
 const REPORT = join(OUT, 'render-report.md')
 const NAME = 'perf-render'
-const MCP_PORT = 47882
-const DEBUG_PORT = 9482
+const run = promisify(execFile)
+const { option, flag } = args()
+const MCP_PORT = Number(option('--mcp-port', '47882'))
+const DEBUG_PORT = Number(option('--debug-port', '9482'))
+if ([MCP_PORT, DEBUG_PORT].includes(47821)) throw new Error('Port 47821 is the founder\'s app.')
 const PAN_SECONDS = 5
 const BIGBOARD_SECONDS = 8
 const METER_SECONDS = 15
@@ -41,23 +44,133 @@ const ALL_SCENES = ['toon', 'many', 'three', 'ink', 'shapes', 'pen', 'bigboard',
 /** The default run. The others are for one question: how a style looks, what the meter costs. */
 const DEFAULT_SCENES = ['toon', 'many', 'three', 'ink', 'pen', 'bigboard', 'memory', 'start']
 
-const run = promisify(execFile)
-const { option, flag } = args()
-
 // ---------- What the machine does ----------
 
+const LINUX = process.platform === 'linux'
+/** The main PID of the app under measure: on Linux it picks the GPU card that the app's GPU process uses. */
+let appMain = null
+
+const readText = (path) => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+}
+const listDir = (path) => {
+  try {
+    return readdirSync(path)
+  } catch {
+    return []
+  }
+}
+
+/** Linux: every process from /proc, with its CPU seconds (utime + stime), parent, short name and command line. */
+const CLOCK_TICKS = LINUX ? Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim()) || 100 : 100
+function procTable() {
+  const rows = []
+  for (const entry of listDir('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    const stat = readText(`/proc/${entry}/stat`)
+    const close = stat.lastIndexOf(')')
+    if (close < 0) continue
+    const comm = stat.slice(stat.indexOf('(') + 1, close)
+    const fields = stat.slice(close + 2).split(' ')
+    // After the name: state ppid ... utime is field 14 of stat, here index 11.
+    rows.push({ pid: Number(entry), ppid: Number(fields[1]), seconds: (Number(fields[11]) + Number(fields[12])) / CLOCK_TICKS, comm, command: readText(`/proc/${entry}/cmdline`).replaceAll('\0', ' ').trim() })
+  }
+  return rows
+}
+
+/** The PIDs under a process, at any depth: Linux renderers are children of the zygote, not of the main process. rows: { pid, ppid }. */
+function descendants(main, rows) {
+  const found = new Set([main])
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const { pid, ppid } of rows) if (found.has(ppid) && !found.has(pid)) grew = found.add(pid)
+  }
+  return found
+}
+
+/** Linux: the name of a process as macOS names Electron's helpers, so "Renderer" and "GPU" match on both systems. */
+const ELECTRON_TYPES = { renderer: 'Renderer', 'gpu-process': 'GPU', utility: 'Utility', zygote: 'Zygote', broker: 'Broker' }
+function linuxName({ comm, command }) {
+  const type = /--type=([\w-]+)/.exec(command)?.[1]
+  return type ? `${comm} (${ELECTRON_TYPES[type] ?? type})` : comm
+}
+
+/** Linux: the compositor processes, the window server of macOS. */
+const COMPOSITORS = new Set(['gnome-shell', 'kwin_wayland', 'kwin_x11', 'Xorg', 'Xwayland', 'mutter', 'sway', 'Hyprland', 'weston'])
+const isWindowServer = (name) => name === 'WindowServer' || COMPOSITORS.has(name)
+
+/** Linux: the DRM cards with a busy counter (AMD), by PCI address. */
+function busyCards() {
+  const cards = new Map()
+  for (const name of listDir('/sys/class/drm')) {
+    if (!/^card\d+$/.test(name)) continue
+    const busy = `/sys/class/drm/${name}/device/gpu_busy_percent`
+    if (!existsSync(busy)) continue
+    let pci = name
+    try {
+      pci = realpathSync(`/sys/class/drm/${name}/device`).split('/').at(-1)
+    } catch {
+      // Keep the card name.
+    }
+    cards.set(pci, busy)
+  }
+  return cards
+}
+
+/** Linux: the busy file of the card that the app's GPU process has open (drm-pdev in its fdinfo), cached per app. */
+const gpuCardOf = new Map()
+function appGpuCard(cards) {
+  if (!appMain) return null
+  if (gpuCardOf.has(appMain)) return gpuCardOf.get(appMain)
+  const rows = procTable()
+  const family = descendants(appMain, rows)
+  const gpu = rows.find((p) => family.has(p.pid) && /--type=gpu-process/.test(p.command))
+  let found = null
+  for (const fd of gpu ? listDir(`/proc/${gpu.pid}/fdinfo`) : []) {
+    const pdev = /^drm-pdev:\s*(\S+)/m.exec(readText(`/proc/${gpu.pid}/fdinfo/${fd}`))?.[1]
+    if (pdev && cards.has(pdev)) {
+      found = cards.get(pdev)
+      break
+    }
+  }
+  if (gpu) gpuCardOf.set(appMain, found)
+  return found
+}
+
+/** GPU utilization in %. macOS: the IOAccelerator's Device Utilization. Linux (AMD): gpu_busy_percent of the app's card, or the busiest card. Null: no source. */
 const gpuUtilization = async () => {
+  if (LINUX) {
+    const cards = busyCards()
+    const card = appGpuCard(cards)
+    const values = (card ? [card] : [...cards.values()]).map((path) => Number(readText(path).trim())).filter((n) => Number.isFinite(n))
+    return values.length ? Math.max(...values) : null
+  }
   const { stdout } = await run('ioreg', ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator'], { maxBuffer: 1 << 24 })
   const found = /"Device Utilization %"=(\d+)/.exec(stdout)
   return found ? Number(found[1]) : null
 }
 
+/** The 5 busiest processes, "%CPU name". Linux: the CPU of one second from /proc (procps' %CPU is the average since the start). */
 const topProcesses = async () => {
+  if (LINUX) {
+    const from = new Map(procTable().map((p) => [p.pid, p.seconds]))
+    await sleep(1000)
+    return procTable()
+      .filter((p) => from.has(p.pid))
+      .map((p) => ({ name: linuxName(p), percent: (p.seconds - from.get(p.pid)) * 100 }))
+      .sort((a, b) => b.percent - a.percent)
+      .slice(0, 5)
+      .map((p) => `${p.percent.toFixed(1)} ${p.name}`)
+  }
   const { stdout } = await run('ps', ['-Aceo', 'pcpu=,comm=', '-r'])
   return stdout.trim().split('\n').slice(0, 5).map((line) => line.trim().replace(/\s+/, ' '))
 }
 
-/** The share of the app's window that is on screen and in no other window's shade, 0 to 1, on a grid. Null: this Mac gave no answer. */
+/** The share of the app's window that is on screen and in no other window's shade, 0 to 1, on a grid. Null: no answer (always on Linux: macOS only). */
 const COVER_SCRIPT = `
 ObjC.import('AppKit'); ObjC.import('CoreGraphics');
 function run(argv) {
@@ -80,6 +193,7 @@ function run(argv) {
 }`
 
 async function windowShare(pids) {
+  if (process.platform !== 'darwin') return null
   try {
     const { stdout } = await run('osascript', ['-l', 'JavaScript', '-e', COVER_SCRIPT, ...pids.map(String)])
     return JSON.parse(stdout)
@@ -96,7 +210,17 @@ function codeIdentity() {
     dirty: git('status', '--porcelain').length > 0,
     three: version('three'),
     electron: version('electron'),
-    machine: execFileSync('sysctl', ['-n', 'hw.model'], { encoding: 'utf8' }).trim()
+    machine: machineModel()
+  }
+}
+
+/** macOS: hw.model. Linux: the DMI product name. */
+function machineModel() {
+  if (LINUX) return readText('/sys/devices/virtual/dmi/id/product_name').trim() || 'unknown Linux machine'
+  try {
+    return execFileSync('sysctl', ['-n', 'hw.model'], { encoding: 'utf8' }).trim()
+  } catch {
+    return 'unknown machine'
   }
 }
 
@@ -148,14 +272,20 @@ async function measure(cdp, seconds, work) {
   const reads = []
   const utilization = []
   const processes = []
+  let topping = null
+  let toppingError = null
   const start = Date.now()
   for (let i = 1; i <= seconds; i++) {
     await sleep(Math.max(0, start + i * 1000 - Date.now()))
     const [read, gpu] = await Promise.all([cdp.evaluate('window.__spaceDev.perf.read()'), gpuUtilization()])
     reads.push(read)
     utilization.push(gpu)
-    if (i === Math.ceil(seconds / 2)) processes.push(...(await topProcesses()))
+    // Not awaited here: on Linux it reads the CPU over one second.
+    // The handler is on at once: a failed read must not stop Node before the finally that stops the app.
+    if (i === Math.ceil(seconds / 2)) topping = topProcesses().then((list) => processes.push(...list), (error) => (toppingError = error))
   }
+  await topping
+  if (toppingError) throw toppingError
   const wheel = motion ? await motion : null
   const last = reads.at(-1)
   // The first window holds the start of the meter, so it does not count.
@@ -209,8 +339,17 @@ async function measure(cdp, seconds, work) {
 
 // ---------- Where the CPU goes ----------
 
-/** CPU seconds so far of the app's processes, and of the window server. */
+/** CPU seconds so far of the app's processes, and of the window server (Linux: the compositor). */
 async function processTimes(main) {
+  if (LINUX) {
+    const rows = procTable()
+    const family = descendants(main, rows)
+    const times = {}
+    for (const p of rows) {
+      if (family.has(p.pid) || COMPOSITORS.has(p.comm)) times[p.pid] = { name: linuxName(p), seconds: p.seconds }
+    }
+    return times
+  }
   const { stdout } = await run('ps', ['-Ao', 'pid=,ppid=,time=,comm='])
   const seconds = (text) => text.split(':').reduce((sum, part) => sum * 60 + Number(part), 0)
   const family = new Set([main, ...childPids(main)])
@@ -308,8 +447,9 @@ async function profileScene(scene, state, cdp) {
     .map(([pid, { name, seconds }]) => ({ pid: Number(pid), name, percent: Math.round(((seconds - (from[pid]?.seconds ?? seconds)) / wall) * 1000) / 10 }))
     .sort((a, b) => b.percent - a.percent)
   const busiest = processes.find((p) => p.name.includes('Renderer'))
-  const sampleFile = join(OUT, `sample-${scene}.txt`)
-  if (busiest) await run('sample', [String(busiest.pid), '5', '1', '-file', sampleFile]).catch(() => undefined)
+  // `sample` (the stacks of the busiest renderer) is macOS only.
+  const sampleFile = process.platform === 'darwin' ? join(OUT, `sample-${scene}.txt`) : 'not available on Linux'
+  if (busiest && process.platform === 'darwin') await run('sample', [String(busiest.pid), '5', '1', '-file', sampleFile]).catch(() => undefined)
   const later = []
   for (let i = 0; i < 3; i++) {
     await sleep(20_000)
@@ -338,7 +478,7 @@ async function profileScene(scene, state, cdp) {
 /** CPU of the app in the first 30 s of a world, from the moment the scene is sent: % of one core per window. Renderer: all renderer processes. */
 async function burstScene(scene, state, cdp) {
   const main = state.pids[0]
-  const group = (name) => (name.includes('Renderer') ? 'renderer' : name.includes('GPU') ? 'gpu' : name === 'WindowServer' ? 'windowserver' : 'other')
+  const group = (name) => (name.includes('Renderer') ? 'renderer' : name.includes('GPU') ? 'gpu' : isWindowServer(name) ? 'windowserver' : 'other')
   const start = Date.now()
   const marks = []
   const mark = async () => marks.push({ at: (Date.now() - start) / 1000, times: await processTimes(main) })
@@ -505,6 +645,8 @@ async function withGpuSamples(work) {
     }
   })()
   const processes = sleep(3000).then(() => (running ? topProcesses() : []))
+  // A handler at once, so a failed read while work() still runs is no unhandled rejection; the await below still throws it.
+  processes.catch(() => undefined)
   try {
     const result = await work()
     return { result, gpuUtilization: median(samples), gpuUtilizationMax: Math.max(...samples.filter((n) => n !== null)), topProcesses: await processes }
@@ -691,8 +833,9 @@ async function heaps(state) {
   return found
 }
 
-/** MB per process from `top`: the physical footprint, which counts compressed pages and the GPU memory of the process. RSS loses compressed pages. */
+/** MB per process from `top`: the physical footprint, which counts compressed pages and the GPU memory of the process. RSS loses compressed pages. Null on Linux: no such measure. */
 async function footprints() {
+  if (process.platform !== 'darwin') return null
   const { stdout } = await run('top', ['-l', '1', '-stats', 'pid,mem', '-n', '1000'], { maxBuffer: 1 << 24 })
   const unit = { B: 1 / 1048576, K: 1 / 1024, M: 1, G: 1024 }
   const found = new Map()
@@ -706,14 +849,15 @@ async function processMemory(main) {
   const footprint = await footprints()
   const groups = {}
   const prints = {}
-  for (const line of stdout.trim().split('\n')) {
-    const [pid, ppid, rss, ...command] = line.trim().split(/\s+/)
-    if (Number(pid) !== main && Number(ppid) !== main) continue
+  const rows = stdout.trim().split('\n').map((line) => line.trim().split(/\s+/))
+  const family = descendants(main, rows.map(([pid, ppid]) => ({ pid: Number(pid), ppid: Number(ppid) })))
+  for (const [pid, , rss, ...command] of rows) {
+    if (!family.has(Number(pid))) continue
     const type = /--type=([\w-]+)/.exec(command.join(' '))?.[1] ?? 'main'
     ;(groups[type] ??= []).push(Math.round(Number(rss) / 1024))
-    ;(prints[type] ??= []).push(footprint.get(Number(pid)) ?? 0)
+    if (footprint) (prints[type] ??= []).push(footprint.get(Number(pid)) ?? 0)
   }
-  return { rss: groups, footprint: prints }
+  return { rss: groups, footprint: footprint ? prints : null }
 }
 
 async function memorySnapshot(state, base) {
@@ -721,8 +865,10 @@ async function memorySnapshot(state, base) {
   const heap = await heaps(state)
   const { rss: processes, footprint } = await processMemory(state.pids[0])
   const sum = (list) => Math.round((list ?? []).reduce((a, b) => a + b, 0))
+  // No footprint (Linux): null, not 0, so a growth is null too.
+  const print = (list) => (footprint ? sum(list) : null)
   const heapOf = (test) => round1(heap.filter((h) => test(h.type)).reduce((a, h) => a + h.mb, 0))
-  return { ...base, seconds: null, heap: heap.map((h) => ({ ...h, mb: round1(h.mb) })), processes, footprint, detail: { pageHeapMb: heapOf((t) => t === 'page'), workerHeapMb: heapOf((t) => t.includes('worker')), stageHeapMb: heapOf((t) => t.startsWith('stage')), rendererRssMb: sum(processes.renderer), rendererLargestRssMb: Math.max(...(processes.renderer ?? [0])), gpuRssMb: sum(processes['gpu-process']), mainRssMb: sum(processes.main), allRssMb: sum(Object.values(processes).flat()), rendererFootprintMb: sum(footprint.renderer), gpuFootprintMb: sum(footprint['gpu-process']), allFootprintMb: sum(Object.values(footprint).flat()) } }
+  return { ...base, seconds: null, heap: heap.map((h) => ({ ...h, mb: round1(h.mb) })), processes, footprint, detail: { pageHeapMb: heapOf((t) => t === 'page'), workerHeapMb: heapOf((t) => t.includes('worker')), stageHeapMb: heapOf((t) => t.startsWith('stage')), rendererRssMb: sum(processes.renderer), rendererLargestRssMb: Math.max(...(processes.renderer ?? [0])), gpuRssMb: sum(processes['gpu-process']), mainRssMb: sum(processes.main), allRssMb: sum(Object.values(processes).flat()), rendererFootprintMb: print(footprint?.renderer), gpuFootprintMb: print(footprint?.['gpu-process']), allFootprintMb: print(Object.values(footprint ?? {}).flat()) } }
 }
 
 /** Small wiggles in rows, inside the view, and one eraser line along each row. */
@@ -775,7 +921,7 @@ async function memoryScene({ state, cdp, base }) {
     line.detail.growthPageHeapMb = round1(line.detail.pageHeapMb - first.pageHeapMb)
     line.detail.growthRendererRssMb = line.detail.rendererRssMb - first.rendererRssMb
     line.detail.growthAllRssMb = line.detail.allRssMb - first.allRssMb
-    line.detail.growthAllFootprintMb = line.detail.allFootprintMb - first.allFootprintMb
+    line.detail.growthAllFootprintMb = first.allFootprintMb === null ? null : line.detail.allFootprintMb - first.allFootprintMb
   }
   lines.at(-1).detail.strokesDrawn = drawn
   lines.at(-1).detail.strokesLeft = left
@@ -865,6 +1011,7 @@ async function runScene(scene, { tune: given, label, seconds, dev, profile, burs
   else delete process.env.SPACE_WORLD_TUNE
   if (scene === 'start') return startScene({ label, identity, capped, tune })
   const state = await startInstance({ name: NAME, mcpPort: MCP_PORT, debugPort: DEBUG_PORT, built: !dev, fresh: true })
+  appMain = state.pids[0]
   const lines = []
   let cdp = null
   try {
@@ -972,7 +1119,7 @@ function problems(line) {
     if (!d.paints || !d.mainThreadCpuMs) found.push('a paint or CPU number is zero')
   }
   if (line.scene === 'bigboard' && d.items < 5000) found.push(`the board has ${d.items} items`)
-  if (line.scene === 'memory' && (!d.pageHeapMb || !d.rendererRssMb || !d.rendererFootprintMb)) found.push('no memory numbers')
+  if (line.scene === 'memory' && (!d.pageHeapMb || !d.rendererRssMb || (d.rendererFootprintMb !== null && !d.rendererFootprintMb))) found.push('no memory numbers')
   if (d?.strokesLeft > 5) found.push(`the eraser left ${d.strokesLeft} strokes`)
   if (line.scene === 'memory' || line.scene === 'start') return found
   if (!line.fps && line.scene !== 'meter') found.push('no paints')

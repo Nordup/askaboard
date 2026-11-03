@@ -7,7 +7,7 @@
  *   node scripts/lab/council.mjs --client codex|claude --task <id|text>
  *        [--model M] [--effort E] [--title T] [--timeout-min 20]
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
- *        [--codex-home /private/tmp/claude-501/ls-lab/codex-home] [--no-news-hook] [--keep-app]
+ *        [--codex-home <SCRATCH>/codex-home] [--no-news-hook] [--keep-app]
  *        [--brief-only] [--no-code] [--no-html] [--brief <file>] [--no-web] [--interview] [--wait-media]
  *
  * Tasks: council/tasks.json (id → text; "learner": "S3" draws the bench's S3

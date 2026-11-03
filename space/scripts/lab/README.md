@@ -13,7 +13,7 @@ node scripts/lab/lab.mjs stop             # stops only the PIDs in its state fil
 ```
 
 The app gets a scratch HOME, user-data-dir, traces and a learning folder with
-one board under `/private/tmp/claude-501/ls-lab/<name>/` (`--name`, default
+one board under `/tmp/claude-<uid>/ls-lab/<name>/` (on the Mac `/private/tmp/claude-501/…`; `LS_SCRATCH_ROOT` sets another root; `--name`, default
 `lab`; `--fresh` starts from an empty board). Ports: MCP 47890, debug 9490
 (`--mcp-port`, `--debug-port`). Never 47821 (the founder's app).
 
@@ -65,7 +65,7 @@ before the script exits. Two video jobs can run at once.
 same session with `council/interview.md` and saves the answer as
 `feedback.md` (about 1 min). It is off by default. Without it, the gallery
 card has no feedback section. Codex uses its own scratch
-`CODEX_HOME` (`/private/tmp/claude-501/ls-lab/codex-home`); its `auth.json`
+`CODEX_HOME` (`/tmp/claude-<uid>/ls-lab/codex-home`); its `auth.json`
 is a symlink to the founder's login. Never read or print it.
 
 ## Videos
@@ -87,5 +87,6 @@ images on `file://` pages: serve the folder instead, for example
 `python3 -m http.server 8765 --bind 127.0.0.1 -d space/.lab`. To share it,
 zip `space/.lab/`.
 
-Needs `/opt/homebrew/bin/ffmpeg` and Python 3 with Pillow (for the filmstrip
-labels: this ffmpeg has no `drawtext`).
+Needs ffmpeg (`/opt/homebrew/bin/ffmpeg` on the Mac, else `ffmpeg` on PATH)
+and Python 3 with Pillow (for the filmstrip labels: the Homebrew ffmpeg has no
+`drawtext`).

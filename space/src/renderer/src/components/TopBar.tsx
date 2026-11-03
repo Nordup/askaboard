@@ -3,6 +3,7 @@ import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
 import { PerfPill } from './PerfPill'
 import { ScenePill } from './ScenePill'
+import { shortcut } from '../platform'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
@@ -60,7 +61,7 @@ export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, a
         <ScenePill />
         <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
         {zoom !== null && (
-          <button className="zoom" title="Reset zoom to 100% (⌘0)" onClick={onResetZoom}>
+          <button className="zoom" title={`Reset zoom to 100% (${shortcut('0')})`} onClick={onResetZoom}>
             {Math.round(zoom * 100)}%
           </button>
         )}

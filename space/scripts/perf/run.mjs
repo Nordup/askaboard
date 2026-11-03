@@ -251,7 +251,7 @@ async function oneRun(task, index) {
 
 async function main() {
   const task = getTask(opts.task)
-  if (lidSleeps()) throw new Error('The lid is closed, so this Mac sleeps: open it, or connect a display, power and a keyboard.')
+  if (lidSleeps()) throw new Error('The lid is closed, so the machine sleeps: open it, or connect a display, power and a keyboard.')
   stayAwake()
   const done = guardRun(NAME, 'perf')
   for (let i = 0; i < opts.repeat; i++) await oneRun(task, i)

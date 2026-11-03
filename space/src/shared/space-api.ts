@@ -655,6 +655,8 @@ export interface SpaceApi {
   /** Snapshot window only: draw requests from the main process. */
   onSnapshotRequest(listener: (request: SnapshotRequest) => void): Unsubscribe
   snapshotReady(reply: SnapshotReply): void
+  /** Snapshot window only: its request listener is registered, so main/snapshot.ts may send requests. */
+  snapshotListening(): void
   /** Board window only: a scene's playback event, for the session trace (main/trace.ts scene_event). */
   sceneEvent(event: SceneEvent): void
   /** A line of a world's console: it reaches the agent in the next tool result. */
@@ -722,6 +724,7 @@ export const IPC = {
   importAsset: 'space:import-asset',
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready',
+  snapshotListening: 'space:snapshot-listening',
   sceneEvent: 'space:scene-event',
   worldLog: 'space:world-log',
   worldFilesGrant: 'space:world-files-grant',

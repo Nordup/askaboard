@@ -1,7 +1,7 @@
-import { execFile } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir, userInfo } from 'node:os'
+import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import { app, shell } from 'electron'
 import type { AgentClientAction, AgentClientId, AgentClientStatus, AgentClientsStatus, ConnectResult } from '@shared/space-api'
 import { shimPath } from './agent-home'
@@ -61,36 +61,77 @@ function failure(result: RunResult): string {
 
 interface Tools {
   env: NodeJS.ProcessEnv
+  /** The folders of the login PATH, then the fallback folders. */
+  dirs: string[]
   claude: string | null
   codex: string | null
 }
 
+/** Shells that take `-lc` and POSIX `printf`: only these run the login PATH script. */
+const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh'])
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** The learner's login shell when it is POSIX-style (fish and others print another syntax), else /bin/sh. */
+function loginShell(): string {
+  let account: string | undefined
+  try {
+    account = userInfo().shell ?? undefined
+  } catch {
+    account = undefined
+  }
+  const shell = [account, process.env.SHELL].find((path) => path && isAbsolute(path) && POSIX_SHELLS.has(basename(path)) && isExecutable(path))
+  return shell ?? '/bin/sh'
+}
+
+/** The usual install folders of the CLIs on macOS and Linux, for a PATH that the login shell does not set. */
+function fallbackDirs(): string[] {
+  const home = homedir()
+  return [
+    join(home, '.local/bin'),
+    join(home, '.claude/local'),
+    join(home, '.npm-global/bin'),
+    join(home, '.bun/bin'),
+    join(home, '.volta/bin'),
+    join(home, 'bin'),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin'
+  ]
+}
+
+/** The first executable file with this name in the folders. An alias or a shell function is not a file, so it never counts. */
+function which(name: string, dirs: string[]): string | null {
+  for (const dir of dirs) {
+    if (!isAbsolute(dir)) continue
+    const candidate = join(dir, name)
+    if (isExecutable(candidate)) return candidate
+  }
+  return null
+}
+
 /**
- * An app started from the Dock gets a short PATH, so ask the login shell
- * (`/bin/zsh -lc 'command -v claude'`) for the learner's PATH and the CLIs.
- * A CLI the login shell misses (PATH set in .zshrc only) is looked up in the
- * usual install folders.
+ * An app started from the Dock or a desktop launcher gets a short PATH, so ask
+ * the learner's login shell (`$SHELL -lc`, a POSIX shell only) for its PATH.
+ * The CLIs are then found by a walk over that PATH and the usual install
+ * folders (a PATH set in .zshrc or .bashrc only is not in a login shell).
  */
 async function findTools(): Promise<Tools> {
-  const script = 'printf "\\n__LS_PATH=%s\\n" "$PATH"; printf "__LS_claude=%s\\n" "$(command -v claude)"; printf "__LS_codex=%s\\n" "$(command -v codex)"'
-  const result = await run('/bin/zsh', ['-lc', script], process.env, SHELL_TIMEOUT_MS)
-  const value = (key: string): string | null => {
-    const line = result.stdout.split('\n').find((entry) => entry.startsWith(`__LS_${key}=`))
-    return line ? line.slice(`__LS_${key}=`.length).trim() || null : null
-  }
-  const path = value('PATH') ?? process.env.PATH ?? '/usr/bin:/bin'
-  const home = homedir()
-  const fallbackDirs = [join(home, '.local/bin'), join(home, '.claude/local'), '/opt/homebrew/bin', '/usr/local/bin', join(home, '.npm-global/bin')]
-  const locate = (name: string): string | null => {
-    const found = value(name)
-    // `command -v` prints "alias claude=..." for an alias; only an absolute path is runnable.
-    if (found?.startsWith('/')) return found
-    return fallbackDirs.map((dir) => join(dir, name)).find((candidate) => existsSync(candidate)) ?? null
-  }
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: [path, ...fallbackDirs].join(':') }
+  const result = await run(loginShell(), ['-lc', 'printf "\\n__LS_PATH=%s\\n" "$PATH"'], process.env, SHELL_TIMEOUT_MS)
+  const line = result.stdout.split('\n').find((entry) => entry.startsWith('__LS_PATH='))
+  const loginPath = line?.slice('__LS_PATH='.length).trim() || process.env.PATH || '/usr/bin:/bin'
+  const dirs = [...new Set([...loginPath.split(delimiter).filter(Boolean), ...fallbackDirs()])]
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: dirs.join(delimiter) }
   // The CLIs must not inherit the dev hook that runs Electron as Node.
   delete env.ELECTRON_RUN_AS_NODE
-  return { env, claude: locate('claude'), codex: locate('codex') }
+  return { env, dirs, claude: which('claude', dirs), codex: which('codex', dirs) }
 }
 
 // ---------- Status ----------
@@ -212,34 +253,98 @@ async function cliStatus(cli: Cli, tools: Tools): Promise<AgentClientStatus> {
   return toStatus(cli, await found(cli, tools))
 }
 
-function claudeAppPath(): string | null {
-  return ['/Applications/Claude.app', join(homedir(), 'Applications/Claude.app')].find((path) => existsSync(path)) ?? null
+/** Where Claude Desktop is installed. executable: the program to run, when it is known (Linux). */
+export interface ClaudeApp {
+  path: string
+  executable: string | null
+}
+
+/** The XDG folders of .desktop files, and the Flatpak export folders. */
+function applicationDirs(): string[] {
+  const home = homedir()
+  const dataHome = process.env.XDG_DATA_HOME || join(home, '.local/share')
+  const dataDirs = (process.env.XDG_DATA_DIRS || '/usr/local/share:/usr/share').split(':').filter(Boolean)
+  const roots = [dataHome, ...dataDirs, join(home, '.local/share/flatpak/exports/share'), '/var/lib/flatpak/exports/share']
+  return [...new Set(roots.filter((root) => isAbsolute(root)).map((root) => join(root, 'applications')))]
+}
+
+const DESKTOP_FILE = /^(claude-desktop|claude|com\.anthropic\.claude.*)\.desktop$/i
+
+/** A field code of a .desktop Exec line, such as %U: the launcher puts the files there. */
+const FIELD_CODE = /^%[fFuUdDnNickvm]$/
+
+/**
+ * The program of a .desktop file's Exec line, when the line is one executable file and field codes only. Any other
+ * line (`flatpak run …`, `env FOO=1 …`) gives null: the caller then lets gio run the .desktop file itself.
+ */
+function desktopExecutable(file: string, dirs: string[]): string | null {
+  try {
+    // The Exec line of the [Desktop Entry] group, not of a [Desktop Action …] group after it.
+    const entry = readFileSync(file, 'utf8').split(/^\[/m).find((group) => group.startsWith('Desktop Entry]')) ?? ''
+    const exec = /^Exec\s*=(.*)$/m.exec(entry)?.[1]?.trim()
+    const words = exec?.match(/"[^"]*"|\S+/g) ?? []
+    const program = words[0]?.replace(/^"|"$/g, '')
+    if (!program || !words.slice(1).every((word) => FIELD_CODE.test(word))) return null
+    if (isAbsolute(program)) return isExecutable(program) ? program : null
+    // "claude" on PATH is the Claude Code CLI, not the app: gio runs such a .desktop file as the desktop does.
+    if (program === 'claude') return null
+    return which(program, dirs)
+  } catch {
+    return null
+  }
+}
+
+function claudeApp(dirs: string[]): ClaudeApp | null {
+  if (process.platform === 'darwin') {
+    const path = ['/Applications/Claude.app', join(homedir(), 'Applications/Claude.app')].find((candidate) => existsSync(candidate))
+    return path ? { path, executable: null } : null
+  }
+  if (process.platform !== 'linux') return null
+  const executable = which('claude-desktop', dirs)
+  if (executable) return { path: executable, executable }
+  for (const dir of applicationDirs()) {
+    let names: string[]
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue
+    }
+    const name = names.find((entry) => DESKTOP_FILE.test(entry))
+    if (name) return { path: join(dir, name), executable: desktopExecutable(join(dir, name), dirs) }
+  }
+  return null
 }
 
 /**
  * The Claude app unpacks each extension into its own folder under "Claude
- * Extensions". The folder name is not a published contract, so any folder
- * whose name holds "learning-space" counts.
+ * Extensions", in its folder of the app data (macOS: ~/Library/Application
+ * Support/Claude, Linux: ~/.config/Claude). The folder name is not a published
+ * contract, so any folder whose name holds "learning-space" counts.
  */
 function claudeAppHasExtension(): boolean {
   try {
-    const dir = join(homedir(), 'Library/Application Support/Claude/Claude Extensions')
+    // On macOS, Electron's appData ignores HOME, so a lab instance with a scratch HOME would read the real folder.
+    const data = process.platform === 'darwin' ? join(homedir(), 'Library/Application Support') : app.getPath('appData')
+    const dir = join(data, 'Claude', 'Claude Extensions')
     return readdirSync(dir).some((name) => name.toLowerCase().includes(SERVER_NAME))
   } catch {
     return false
   }
 }
 
-function claudeAppStatus(): AgentClientStatus {
+function claudeAppStatus(dirs: string[]): AgentClientStatus {
   const base = { id: 'claude-app' as const, label: 'Claude Desktop' }
   if (claudeAppHasExtension()) return { ...base, state: 'connected', detail: null, action: null }
-  if (!claudeAppPath()) return { ...base, state: 'missing', detail: 'Claude Desktop was not found in Applications.', action: null }
+  if (!claudeApp(dirs)) {
+    const detail = process.platform === 'darwin' ? 'Claude Desktop was not found in Applications.' : 'Claude Desktop was not found.'
+    return { ...base, state: 'missing', detail, action: null }
+  }
   return { ...base, state: 'available', detail: null, action: 'install-extension' }
 }
 
 export async function agentClients(): Promise<AgentClientsStatus> {
   const tools = await findTools()
-  const clients = await Promise.all([cliStatus('claude', tools), cliStatus('codex', tools), Promise.resolve(claudeAppStatus())])
+  const clients = await Promise.all([cliStatus('claude', tools), cliStatus('codex', tools), Promise.resolve(claudeAppStatus(tools.dirs))])
   return { shimPath: shimPath(), clients }
 }
 
@@ -319,19 +424,93 @@ async function cliAction(cli: Cli, action: AgentClientAction): Promise<ConnectRe
   })
 }
 
+/** Absolute: Claude Desktop on Linux reads the path from its argv and ignores the working directory. */
 function mcpbPath(): string {
-  return resourcePath('learning-space.mcpb')
+  return resolve(resourcePath('learning-space.mcpb'))
+}
+
+const OPENED = 'Opened in Claude. Confirm the install there.'
+
+/**
+ * The environment for another Electron app: the CLIs' env (no ELECTRON_RUN_AS_NODE), without what this app's
+ * Electron and Chromium set for themselves. CHROME_DESKTOP names our .desktop file (Chromium sets it at start);
+ * ELECTRON_* holds electron-vite's dev renderer URL and Electron's own switches; an older Electron moved the
+ * desktop name to ORIGINAL_XDG_CURRENT_DESKTOP, so that value goes back.
+ */
+function otherAppEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base }
+  for (const key of Object.keys(env)) if (/^(ELECTRON|CHROME)_/.test(key)) delete env[key]
+  if (env.ORIGINAL_XDG_CURRENT_DESKTOP) env.XDG_CURRENT_DESKTOP = env.ORIGINAL_XDG_CURRENT_DESKTOP
+  delete env.ORIGINAL_XDG_CURRENT_DESKTOP
+  return env
+}
+
+/** How long a launch may still fail: a launcher that cannot start the app exits within this time. */
+const LAUNCH_SETTLE_MS = 1500
+
+/**
+ * Start a program and leave it running. null: it still runs after LAUNCH_SETTLE_MS, or it exited with 0 (a launcher
+ * that handed the file to a running Claude Desktop). Else the error: a start error (ENOENT and the like) or a
+ * non-zero exit. stdio is ignored, so a program that lives on never blocks on a full pipe.
+ */
+function launch(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<string | null> {
+  return new Promise((done) => {
+    let settled = false
+    const settle = (error: string | null): void => {
+      if (settled) return
+      settled = true
+      done(error)
+    }
+    try {
+      const child = spawn(file, args, { detached: true, stdio: 'ignore', env })
+      child.once('error', (error) => settle(error.message))
+      child.once('exit', (code, signal) => {
+        if (code === 0) settle(null)
+        else settle(`${basename(file)} stopped (${signal ? `signal ${signal}` : `exit code ${code}`}).`)
+      })
+      child.once('spawn', () => {
+        child.unref()
+        setTimeout(() => settle(null), LAUNCH_SETTLE_MS)
+      })
+    } catch (error) {
+      settle(error instanceof Error ? error.message : String(error))
+    }
+  })
+}
+
+/**
+ * On Linux, Claude Desktop opens its install dialog for a .mcpb path in its argv, at start and from a second
+ * instance. Its launcher may live as long as the app, so only the first moments of it are awaited.
+ */
+async function installExtensionLinux(path: string): Promise<ConnectResult> {
+  const tools = await findTools()
+  const found = claudeApp(tools.dirs)
+  if (!found) return { ok: false, message: 'Claude Desktop was not found.' }
+  const gio = found.executable ? null : which('gio', tools.dirs)
+  if (!found.executable && !gio) return { ok: false, message: `Open ${path} from Claude Desktop to install it.` }
+  const [file, args] = found.executable ? [found.executable, [path]] : [gio as string, ['launch', found.path, path]]
+  const env = otherAppEnv(tools.env)
+  if (dryRunOpen) {
+    const removed = Object.keys(process.env).filter((key) => !(key in env))
+    const changed = Object.keys(env).filter((key) => key in process.env && env[key] !== process.env[key])
+    console.log(`connect: dry run, would run ${JSON.stringify([file, ...args])}; env removed ${JSON.stringify(removed)}, changed ${JSON.stringify(changed)}`)
+    return { ok: true, message: OPENED }
+  }
+  const error = await launch(file, args, env)
+  console.log(`connect: ${file} ${args.join(' ')} → ${error ?? 'started'}`)
+  return error ? { ok: false, message: error } : { ok: true, message: OPENED }
 }
 
 async function installExtension(): Promise<ConnectResult> {
   const path = mcpbPath()
   if (!existsSync(path)) return { ok: false, message: 'The extension file is missing (run npm run build:mcpb).' }
+  if (process.platform === 'linux') return installExtensionLinux(path)
   if (dryRunOpen) {
     console.log(`connect: dry run, would open ${path}`)
-    return { ok: true, message: 'Opened in Claude. Confirm the install there.' }
+    return { ok: true, message: OPENED }
   }
   const error = await shell.openPath(path)
-  return error ? { ok: false, message: error } : { ok: true, message: 'Opened in Claude. Confirm the install there.' }
+  return error ? { ok: false, message: error } : { ok: true, message: OPENED }
 }
 
 export async function connectAgentClient(id: AgentClientId, action: AgentClientAction): Promise<ConnectResult> {

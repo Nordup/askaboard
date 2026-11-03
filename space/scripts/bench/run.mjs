@@ -64,7 +64,7 @@ import { fileURLToPath } from 'node:url'
 import { ALL_SCENARIOS, CONVERSATIONS, PERCEPTION, S_SCENARIOS, TURN0_CODEX_EFFORT, TURN0_MODEL, TURN0_PROMPT } from './scenarios.mjs'
 import { seedBusy } from './busy.mjs'
 import { analyzeFile, readJsonl, totalOf, rectText, LOOK_TOOLS } from '../trace-report.mjs'
-import { claudeTurn, codexRollout, codexTurn, prepareCodexHome } from '../lab/common.mjs'
+import { SCRATCH_ROOT, claudeTurn, displaySwitches, codexRollout, codexTurn, prepareCodexHome } from '../lab/common.mjs'
 
 const SPACE = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const DRIVE = join(SPACE, 'scripts/drive.mjs')
@@ -91,8 +91,8 @@ const opts = {
   client: option('--client', 'claude'),
   model: option('--model', null),
   effort: option('--effort', null),
-  codexHome: resolve(option('--codex-home', '/private/tmp/claude-501/ls-bench-codex/codex-home')),
-  out: resolve(option('--out', `/private/tmp/claude-501/ls-bench/runs/${stamp}`)),
+  codexHome: resolve(option('--codex-home', join(SCRATCH_ROOT, 'ls-bench-codex/codex-home'))),
+  out: resolve(option('--out', join(SCRATCH_ROOT, `ls-bench/runs/${stamp}`))),
   dev: flag('--dev'),
   mcpPort: Number(option('--mcp-port', '47870')),
   debugPort: Number(option('--debug-port', '9470')),
@@ -200,10 +200,10 @@ async function startApp(work) {
   const logFd = openSync(join(work.dir, 'app.log'), 'a')
   let child
   if (opts.dev) {
-    child = spawn(join(SPACE, 'node_modules/.bin/electron-vite'), ['dev', '--', `--user-data-dir=${work.userData}`], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd] })
+    child = spawn(join(SPACE, 'node_modules/.bin/electron-vite'), ['dev', '--', `--user-data-dir=${work.userData}`, ...displaySwitches(env)], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd] })
   } else {
     const electron = createRequire(join(SPACE, 'package.json'))('electron')
-    child = spawn(electron, [`--user-data-dir=${work.userData}`, '.'], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd] })
+    child = spawn(electron, [`--user-data-dir=${work.userData}`, ...displaySwitches(env), '.'], { cwd: SPACE, env, stdio: ['ignore', logFd, logFd] })
   }
   closeSync(logFd)
   pids.started.push({ pid: child.pid, what: opts.dev ? 'electron-vite dev' : 'Electron (built app)' })

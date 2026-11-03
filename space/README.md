@@ -1,6 +1,6 @@
 # Learning Space
 
-Learning Space is a desktop app (Electron) for macOS. It gives the learner a
+Learning Space is a desktop app (Electron) for macOS and Linux. It gives the learner a
 shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner. Its one AI call is optional: a speech API reads
@@ -25,6 +25,21 @@ npm start        # run the built app from out/
 
 Do not run test suites. Check a change with `npm run build`. The rules are in
 [`../AGENTS.md`](../AGENTS.md).
+
+### On Linux
+
+The same commands work (checked on Manjaro, GNOME on Wayland, decision D6).
+Electron runs native Wayland. Differences from macOS:
+
+- The window has the desktop's title bar. The menu bar is hidden; Alt shows it.
+  Shortcuts use Ctrl, and the UI shows them as `Ctrl+O`.
+- `npm run build:mcpb` needs the Info-ZIP `zip` command (`pacman -S zip`).
+- A shell that an agent app starts can have `ELECTRON_RUN_AS_NODE=1` set (T3 Code
+  does this). Then `electron .` runs as Node and fails with "bad option". Start
+  Electron directly with `env -u ELECTRON_RUN_AS_NODE`. `npm run dev`,
+  `npm start` and the lab remove the variable themselves.
+- Electron keeps its settings under `$HOME/.config`, so a scratch `HOME` also
+  separates them. Pass `--user-data-dir` anyway, as on macOS.
 
 ## What the app does today
 
@@ -93,7 +108,9 @@ the manual steps for each agent.
   writes this command on every launch. The relay lists the tools also when the
   app is closed.
 - **Claude Desktop extension:** `resources/learning-space.mcpb`. **Install**
-  opens it in Claude Desktop. `npm run build:mcpb` copies the plugin repo's
+  opens it in Claude Desktop. On Linux the app finds Claude Desktop as a
+  `claude-desktop` command or a `.desktop` file, and starts it with the file
+  path. `npm run build:mcpb` copies the plugin repo's
   `.mcpb` when the sibling repo is present. Otherwise it builds a minimal one.
 
 Use the plugin or a manual MCP entry, not both. With both, the agent sees
@@ -146,7 +163,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
-| `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the macOS desktop. The lab, the benchmarks and the render run set it. |
+| `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the desktop (a macOS Space). The lab, the benchmarks and the render run set it. |
 
 The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 

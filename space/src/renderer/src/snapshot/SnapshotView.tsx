@@ -325,14 +325,15 @@ export function SnapshotView() {
     document.fonts.forEach((face) => void face.load().catch(() => undefined))
   }, [])
 
-  useEffect(
-    () =>
-      window.space.onSnapshotRequest((next) => {
-        progress.current = { requestId: next.requestId, done: 0, missing: 0, failed: false }
-        setRequest({ request: next, cells: cellsOf(next) })
-      }),
-    []
-  )
+  // The page mounts after its load event, so the main process sends its first request only after this message.
+  useEffect(() => {
+    const stop = window.space.onSnapshotRequest((next) => {
+      progress.current = { requestId: next.requestId, done: 0, missing: 0, failed: false }
+      setRequest({ request: next, cells: cellsOf(next) })
+    })
+    window.space.snapshotListening()
+    return stop
+  }, [])
 
   const req = request?.request
   useLayoutEffect(() => {

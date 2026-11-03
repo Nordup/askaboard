@@ -77,6 +77,7 @@ const api: SpaceApi = {
   importAsset: (src) => ipcRenderer.invoke(IPC.importAsset, src),
   onSnapshotRequest: (listener) => listen(IPC.snapshotRequest, listener),
   snapshotReady: (reply) => ipcRenderer.send(IPC.snapshotReady, reply),
+  snapshotListening: () => ipcRenderer.send(IPC.snapshotListening),
   sceneEvent: (event) => ipcRenderer.send(IPC.sceneEvent, event),
   worldLog: (level, text) => ipcRenderer.send(IPC.worldLog, level, text),
   worldFilesGrant: (token) => void ipcRenderer.sendSync(IPC.worldFilesGrant, token),

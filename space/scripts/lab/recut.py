@@ -8,7 +8,7 @@ Called by common.mjs (encodeWatchVideo) with one argument, a JSON file:
     "labels": [{"from": <ms>, "to": <ms>, "label": "model writing write_scene"}],
     "playing": [{"from": <ms>, "to": <ms>}],           # when scenes played (never cut by label)
     "idle_ms": 1500, "cut_ms": 600, "fps": 30,
-    "out": "video.mp4", "ffmpeg": "/opt/homebrew/bin/ffmpeg"
+    "out": "video.mp4", "ffmpeg": "/opt/homebrew/bin/ffmpeg"     # or "ffmpeg" from PATH
   }
 A stretch with no visible change for longer than idle_ms plays in cut_ms of
 video: the frame stays, a label says how long the real wait was and what
@@ -25,6 +25,7 @@ frames through a concat list (each frame once, with its duration on the
 watch timeline) and lays a second concat list of small overlay PNGs (the
 clock and the cut labels, one per state) over them.
 """
+import functools
 import json
 import os
 import subprocess
@@ -65,8 +66,19 @@ def changed(a, b, size):
     return diff.histogram()[255] >= 4
 
 
+@functools.lru_cache(maxsize=1)
+def system_mono():
+    """The monospace font of fontconfig (Linux), or None."""
+    try:
+        return subprocess.run(["fc-match", "-f", "%{file}", "monospace"], capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def font(size):
-    for path in ("/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc"):
+    for path in ("/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc", system_mono()):
+        if not path:
+            continue
         try:
             return ImageFont.truetype(path, size)
         except OSError:
@@ -107,6 +119,8 @@ def main():
     labels = spec.get("labels", [])
     playing = [(p["from"], p["to"]) for p in spec.get("playing", [])]
     ffmpeg = spec.get("ffmpeg", "ffmpeg")
+    if os.path.isabs(ffmpeg) and not os.path.exists(ffmpeg):
+        ffmpeg = "ffmpeg"
     if not frames:
         sys.exit("No frames were recorded.")
 

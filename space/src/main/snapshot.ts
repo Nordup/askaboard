@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, type IpcMainEvent } from 'electron'
 import { IPC, type SnapshotReply, type SnapshotRequest } from '@shared/space-api'
 
 /**
@@ -108,16 +108,32 @@ export class SnapshotRenderer {
       if (this.window === win) this.window = null
     })
     this.loading = new Promise<BrowserWindow>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('The snapshot renderer did not load.')), LOAD_TIMEOUT_MS)
-      win.webContents.once('did-finish-load', () => {
+      // Ready when the page says that it listens (SnapshotView), not at did-finish-load: the view mounts after the
+      // load event, and a request sent before its listener exists is lost.
+      let settled = false
+      const finish = (error: Error | null): void => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
+        ipcMain.removeListener(IPC.snapshotListening, onListening)
+        if (error) {
+          // A window that never listens is no use; the next capture makes a new one.
+          if (!win.isDestroyed()) win.destroy()
+          return reject(error)
+        }
         this.window = win
         resolve(win)
+      }
+      const onListening = (event: IpcMainEvent): void => {
+        if (event.sender === win.webContents) finish(null)
+      }
+      const timer = setTimeout(() => finish(new Error('The snapshot renderer did not load.')), LOAD_TIMEOUT_MS)
+      ipcMain.on(IPC.snapshotListening, onListening)
+      win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+        if (isMainFrame) finish(new Error(`The snapshot renderer failed to load (${code} ${description}).`))
       })
-      win.webContents.once('did-fail-load', (_event, code, description) => {
-        clearTimeout(timer)
-        reject(new Error(`The snapshot renderer failed to load (${code} ${description}).`))
-      })
+      win.webContents.once('render-process-gone', (_event, details) => finish(new Error(`The snapshot renderer stopped (${details.reason}).`)))
+      win.once('closed', () => finish(new Error('The snapshot window closed before it loaded.')))
       const devUrl = process.env.ELECTRON_RENDERER_URL
       if (!app.isPackaged && devUrl) void win.loadURL(`${devUrl}?snapshot=1`)
       else void win.loadFile(join(__dirname, '../renderer/index.html'), { query: { snapshot: '1' } })

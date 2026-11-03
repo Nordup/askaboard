@@ -997,6 +997,8 @@ function sceneLists(play: ScenePlay): SceneListEntry {
 
 /** A queued scene that starts within this long of the one before it ends starts exactly at that end (no gap, no overlap). */
 const HANDOFF_MS = 250
+/** The longest wait of the clock's tick while a scene plays (the voice and the scene panel follow the clock at least this often). */
+const WAKE_MS = 250
 const NO_CLOCKS: ReadonlyMap<string, Clock> = new Map()
 
 /** A scene's playback event for the session trace (main/trace.ts scene_event). Never throws. */
@@ -1012,6 +1014,12 @@ export class ScenePlayer {
   private board: BoardHandle | null = null
   private scenes: Playing[] = []
   private frame: number | null = null
+  /**
+   * The clock's own tick: one timer at the next scene event (an end, a pause step, a line, a camera move), at most WAKE_MS away.
+   * A display frame does not come while the window is covered (Wayland sends a covered window no frame callbacks, a Mac
+   * throttles it), and a scene must still end, the queue go on and the voice follow. Painting stays on the display frame.
+   */
+  private wake: ReturnType<typeof setTimeout> | null = null
   private inkPoints: InkIndex = new Map()
   private wasDrawing = false
   private notes: ScenePauseNote[] = []
@@ -1188,6 +1196,8 @@ export class ScenePlayer {
     this.scenes = this.scenes.filter((scene) => scene.play.id !== id)
     this.history.delete(id)
     this.render()
+    // A queued scene behind the dropped one may start now: it needs the frame and the clock's tick.
+    this.schedule()
   }
 
   /** When scenes started and ended on the clock (Date ms), oldest first (list_items's "last played"). */
@@ -1322,8 +1332,7 @@ export class ScenePlayer {
 
   /** End every scene at once (a board switch): items stay in their final state. */
   stopAll(): void {
-    if (this.frame !== null) cancelAnimationFrame(this.frame)
-    this.frame = null
+    this.unschedule()
     for (const scene of this.scenes) report('end', scene.play, 'removed')
     this.scenes = []
     this.inkPoints.clear()
@@ -1336,8 +1345,7 @@ export class ScenePlayer {
   /** The board went away (unmount, another board): forget it without touching it. */
   detach(board: BoardHandle | null): void {
     if (board && board !== this.board) return
-    if (this.frame !== null) cancelAnimationFrame(this.frame)
-    this.frame = null
+    this.unschedule()
     for (const scene of this.scenes) report('end', scene.play, 'removed')
     this.scenes = []
     this.inkPoints.clear()
@@ -1350,20 +1358,66 @@ export class ScenePlayer {
     this.idle()
   }
 
-  /** A frame on the next display frame, while a scene plays (not while every started scene is paused, or nothing plays). */
+  /**
+   * A frame on the next display frame, and the clock's tick at the next scene event, while a scene plays (not while every
+   * started scene is paused, or nothing plays). Both run render(), and render() is a function of the clock: each event
+   * happens once, whichever runs first (an ended scene leaves `scenes`, a started one has its origin, a passed pause step
+   * is in `passed`, a camera move starts in (lastT, t], the voice follows the clock).
+   */
   private schedule(): void {
-    if (this.frame !== null || !this.scenes.some((scene) => scene.origin !== null && scene.pausedAt === null)) return
-    this.frame = requestAnimationFrame(() => {
-      this.frame = null
+    if (!this.scenes.some((scene) => scene.origin !== null && scene.pausedAt === null)) {
+      this.unschedule()
+      return
+    }
+    if (this.frame === null) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = null
+        this.render()
+        this.schedule()
+      })
+    }
+    if (this.wake !== null) clearTimeout(this.wake)
+    this.wake = setTimeout(() => {
+      this.wake = null
       this.render()
       this.schedule()
-    })
+    }, this.nextEventIn(performance.now()))
+  }
+
+  private unschedule(): void {
+    if (this.frame !== null) cancelAnimationFrame(this.frame)
+    this.frame = null
+    if (this.wake !== null) clearTimeout(this.wake)
+    this.wake = null
+  }
+
+  /** Milliseconds to the next event of a running scene (its end, a pause step, a line's start or end, a camera move), at most WAKE_MS. */
+  private nextEventIn(now: number): number {
+    let next = WAKE_MS / 1000
+    const at = (t: number, event: number): void => {
+      if (event > t) next = Math.min(next, event - t)
+    }
+    for (const scene of this.scenes) {
+      if (scene.origin === null || scene.pausedAt !== null || scene.heldSince !== null) continue
+      const t = this.timeOf(scene, now)
+      const play = scene.play
+      at(t, play.duration)
+      if (scene.pauseAt !== null) at(t, scene.pauseAt)
+      for (const step of play.steps) if (step.pause) at(t, step.at)
+      for (const cue of play.cues) {
+        at(t, cue.at)
+        at(t, cue.at + cue.dur)
+      }
+      for (const move of play.camera) at(t, move.start)
+    }
+    // A little after the event, so the clock stands at or past it when the timer runs.
+    return Math.max(0, Math.ceil(next * 1000) + 2)
   }
 
   /** The scene clock. Every consumer reads this one, so all of a scene stops together when it holds. */
   private timeOf(scene: Playing, now: number): number {
     if (scene.origin === null) return -1
-    return Math.min(scene.pausedAt ?? (now - scene.origin) / 1000, this.holdAt(scene))
+    return Math.min(scene.pausedAt ?? (now - scene.origin) / 1000, this.holdAt(scene), scene.play.duration)
   }
 
   /**
@@ -1684,6 +1738,8 @@ export class ScenePlayer {
 
   /** No scene shows: the panel and the voice go quiet together. */
   private idle(): void {
+    if (this.wake !== null) clearTimeout(this.wake)
+    this.wake = null
     setSceneUiState(null)
     stopVoice()
   }

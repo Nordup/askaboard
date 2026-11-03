@@ -394,10 +394,14 @@ export class FolderSession {
     const target = dir === '.' ? `${name}${BOARD_SUFFIX}` : `${dir}/${name}${BOARD_SUFFIX}`
     if (target === rel) return rel
     const to = await this.boardFullPath(target, { allowMissing: true })
-    // macOS folders are usually case-insensitive: "a" -> "A" is the same file.
-    const caseOnly = target.toLowerCase() === rel.toLowerCase()
-    if (!caseOnly && (await stat(to).then(() => true, () => false))) {
-      throw new Error(`A board named "${name}" already exists: ${target}. Choose another name.`)
+    // rename() replaces an existing target on every platform, so refuse any target that is another file. On a
+    // case-insensitive folder (macOS, usually) "a" -> "A" names the same file (same dev and ino), and that rename is allowed.
+    const existing = await stat(to).catch(() => null)
+    if (existing) {
+      const source = await stat(from)
+      if (existing.dev !== source.dev || existing.ino !== source.ino) {
+        throw new Error(`A board named "${name}" already exists: ${target}. Choose another name.`)
+      }
     }
     await rename(from, to)
     const hash = this.knownHashes.get(rel)

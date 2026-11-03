@@ -23,7 +23,17 @@ it points to. All paths are under `space/` unless stated otherwise.
   disk access through one path guard, the snapshot window, the files in
   `~/.learning-space/`, and the speech API (`src/main/voice.ts`, T34).
 - The **learning folder is the only persistent store** of learning content.
-  App preferences (recent folders, cameras) live in Electron's `userData`.
+  App preferences (recent folders, cameras) live in Electron's `userData`
+  (macOS: `~/Library/Application Support/`; Linux: `~/.config/`).
+- **One code base for macOS and Linux** (decision D6). Where the systems
+  differ, the code asks the platform, and macOS keeps its behaviour:
+  `src/main/connect.ts` finds the agent CLIs through the login shell and a
+  PATH walk, and finds Claude Desktop per platform (Linux: a `claude-desktop`
+  command or a `.desktop` file, started with the `.mcpb` path);
+  `src/main/folder.ts` refuses a rename onto another file by its device and
+  inode; `src/main/index.ts` hides the menu bar off macOS;
+  `src/main/stage-process.ts` reads the out-of-memory exit code per platform;
+  `src/renderer/src/platform.ts` holds the UI words and shortcut text.
 
 ## Processes
 

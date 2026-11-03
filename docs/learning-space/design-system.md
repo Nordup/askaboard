@@ -291,6 +291,11 @@ item pill).
 - Errors say what happened and what to do, in one short line.
 - Product names as the vendors write them: "Claude Code", "Claude Desktop",
   "ChatGPT and Codex".
+- Words and shortcuts that differ by platform come from
+  `src/renderer/src/platform.ts` (decision D6): `shortcut('O')` gives "⌘O" on
+  macOS and "Ctrl+O" elsewhere; the file manager item is "Reveal in Finder"
+  (macOS), "Open Containing Folder" (Linux) or "Show in Explorer" (Windows).
+  Never write "⌘" or "Finder" in a component.
 
 ## Checklist for any UI change
 
