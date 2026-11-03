@@ -1531,6 +1531,11 @@ export async function sceneControl(ctx: RunSceneContext, args: Record<string, un
       if ('error' in out) throw new Error(out.error)
       return { replay: out, ...status() }
     }
+    case 'stepScene': {
+      const found = scenePlayer.sceneOfStep(String(args.step))
+      if ('error' in found) throw new Error(found.error)
+      return found
+    }
     case 'resetStage':
       adoptEpoch(typeof args.epoch === 'string' ? args.epoch : undefined)
       return status()

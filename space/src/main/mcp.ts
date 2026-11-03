@@ -1788,15 +1788,15 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
           if (!name && from_step === undefined) return failure(new Error('replay needs name (a scene on the board), and from_step to start from a step.'))
           if (!name && typeof from_step === 'number') return failure(new Error('replay with a step number needs name; without name, from_step must be a step name.'))
           await this.restoreIfNeeded()
-          let sceneId: string | undefined
+          let sceneId: string
           if (name) {
             const entry = this.boardScene(name)
             if (!entry) return failure(this.unknownScene(name, 'board'))
             sceneId = entry.scene as string
-          }
-          // A scene restored from the records after a restart runs again first (without name: every scene, to find the step).
-          return this.withPlayable(sceneId ? [sceneId] : this.stageScenes().map((scene) => scene.id), async (failed) => {
-            if (sceneId && failed.has(sceneId)) return failure(new Error(`The scene "${name}" could not be rebuilt after the app started again, so it cannot be replayed (${failed.get(sceneId)}). Its items stay on the board.`))
+          } else sceneId = (await control({ action: 'stepScene', step: from_step })).scene as string
+          // A scene restored from the records after a restart runs again first; a step name names its scene first (the player's rule), so only that one runs.
+          return this.withPlayable([sceneId], async (failed) => {
+            if (failed.has(sceneId)) return failure(new Error(`The scene "${name ?? this.sceneName(sceneId)}" could not be rebuilt after the app started again, so it cannot be replayed (${failed.get(sceneId)}). Its items stay on the board.`))
             const out = await control({ action: 'replay', scene: sceneId, step: from_step, when: when ?? 'queue' })
             const replay = out.replay as { scene: string; of: string; from: number; starts_in_s: number }
             return text(json({ ...publicStatus(out), replay: { scene: name ?? this.sceneName(replay.of), from_s: replay.from, starts_in_s: replay.starts_in_s } }))

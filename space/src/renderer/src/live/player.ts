@@ -13,6 +13,7 @@ import { BLEND_GAP, paramSamplesOf, paramsAtTime } from './params'
 import { blendStyle } from '../board/style-edits'
 import { setSceneUiActions, setSceneUiState, type SceneCueState, type SceneListEntry, type SceneStart } from './state'
 import { addRestored, canRebuild, clearRestored, rebuildFailure, requestRebuild, type RestoredScene } from './rebuild'
+import { sceneWithStep } from './stories'
 import { followVoice, stopVoice, voicedLineAt } from './voice'
 import { isIdentity, multiply, type Matrix } from './timeline'
 
@@ -1217,6 +1218,10 @@ export class ScenePlayer {
    * where it starts, or an error text.
    */
   replay(board: BoardHandle, target: { scene?: string; step?: string | number; at?: number }, mode: 'queue' | 'now'): { scene: string; of: string; from: number; starts_in_s: number } | { error: string } {
+    if (!target.scene && typeof target.step === 'string') {
+      const found = this.sceneOfStep(target.step)
+      return 'error' in found ? found : this.replay(board, { ...target, scene: found.scene }, mode)
+    }
     let memory: SceneMemory | undefined
     let from = 0
     if (target.scene) {
@@ -1229,16 +1234,6 @@ export class ScenePlayer {
         if (!step) return { error: `The scene "${memory.play.name ?? target.scene}" has no step ${typeof target.step === 'number' ? target.step : `"${target.step}"`}. Its steps: ${steps.map((entry, i) => `${i + 1} "${entry.name}"`).join(', ') || 'none'}.` }
         from = step.at
       }
-    } else if (typeof target.step === 'string') {
-      for (const entry of [...this.history.values()].reverse()) {
-        const step = entry.play.steps.find((s) => s.name === target.step)
-        if (step) {
-          memory = entry
-          from = step.at
-          break
-        }
-      }
-      if (!memory) return { error: `No scene of this stage has a step "${target.step}".` }
     } else return { error: 'replay needs name, or from_step as a step name.' }
     // The scene that plays last goes last when the history must shrink.
     this.history.delete(memory.play.id)
@@ -1246,6 +1241,16 @@ export class ScenePlayer {
     const clone = this.replayClone(board, memory, `${memory.play.id}~r${++this.replays}`)
     const startsIn = this.enqueue(board, clone, { mode, revert: () => undefined, startAt: from })
     return { scene: clone.id, of: memory.play.id, from, starts_in_s: startsIn }
+  }
+
+  /**
+   * The one rule of a replay by step name with no scene: the newest scene of the board with that step
+   * that this stage can replay (held, or restored and rebuildable). Main asks it first (sceneControl
+   * stepScene), so a restored scene runs again alone, and the replay then names that scene.
+   */
+  sceneOfStep(name: string): { scene: string } | { error: string } {
+    const scene = sceneWithStep(name, (id) => this.history.has(id) || canRebuild(id))
+    return scene ? { scene } : { error: `No scene of this stage has a step "${name}".` }
   }
 
   /**

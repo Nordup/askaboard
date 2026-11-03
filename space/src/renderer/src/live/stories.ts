@@ -112,3 +112,8 @@ export function versionOnBoard(scene: BoardStory, look: BoardLook): SceneStory |
 export function scenesNewestFirst(value: BoardStories | null): BoardStory[] {
   return (value?.stories ?? []).filter((story) => !story.dropped).sort((a, b) => b.at.localeCompare(a.at))
 }
+
+/** The newest scene of the board (scenesNewestFirst) with a step of this name that `playable` takes, or null. Its steps come from its record, so a restored scene needs no run. */
+export function sceneWithStep(name: string, playable: (scene: string) => boolean): string | null {
+  return scenesNewestFirst(current).find((entry) => playable(entry.scene) && entry.story.steps.some((step) => step.name === name))?.scene ?? null
+}
