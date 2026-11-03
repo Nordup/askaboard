@@ -62,10 +62,21 @@ limits scripts, images and media.
   Unknown kinds and fields are kept untouched.
 - **Code:** `src/shared/board-format.ts` (parse, serialize, seq stamping,
   disk reconciliation).
-- **Node kinds:** `ink` (pen or highlighter stroke, points with pressure),
-  `frame` (a box with children; flex or free layout), `text` (light markup:
-  `**bold**`, `*italic*`, `$math$`), `svg` (sanitized markup), `image`
+- **Node kinds:** `ink` (pen or highlighter stroke, points with pressure;
+  a mouse stroke gets its pressure from speed at capture, in
+  `board/mouse-ink.ts`), `frame` (a box with children; flex or free layout;
+  a group's frame has `hug` and fits its items again after each scene and
+  each board measure, in `board/hug.ts`), `text` (light markup:
+  `**bold**`, `*italic*`, `$math$`; an optional `rotation` in degrees, with
+  its geometry in `board/rotation.ts`), `svg` (sanitized markup), `image`
   (a file in the folder, usually `assets/`).
+- **Fonts and sizes:** all board words use the hand webfont `--ls-hand`
+  (`styles/hand.woff2`, made by `scripts/lab/make-hand-webfont.mjs` from
+  `src/shared/hand-font.ts`); KaTeX keeps its fonts. `BOARD_LAYOUT` in
+  `board-format.ts` is the layout version: raise it when a board font or its
+  metrics change, so recorded text measures are measured again. Camera zoom
+  is screen points per board point; 100% is `HOME_ZOOM` (0.85, in
+  `board/geometry.ts`).
 - **Common fields:** `id`, `name`, `parent`, `x`, `y` (relative to the parent),
   `z`, `author` (`learner` or `agent`), `seq`, `locked`.
 - **Style:** a whitelisted CSS object (`STYLE_KEYS`): the browser lays out
