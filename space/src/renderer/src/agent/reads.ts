@@ -1,5 +1,5 @@
 import { authorOf, clusterByPlace, contextOf, firstWords, isItem, isOrphan, itemTexts, matchText, matchWords, nameOf, num, placeText as place, plural, q, relation, sceneIdOf, shownText, unionRegions, wholeRect } from '@shared/board-digest'
-import { boardName, isFrame, isInk, isKnown, isLive, savedInkPoints, type Author, type BoardNode, type InkNode } from '@shared/board-format'
+import { boardName, isFrame, isInk, isKnown, isLive, nodeRotation, savedInkPoints, type Author, type BoardNode, type InkNode } from '@shared/board-format'
 import type { BoardRect, ChangedItem, InkGroupSummary, RemovedItem } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import { describeChange, type ChangeDescription, type ChangeLog, type Tombstone } from '../board/changes'
@@ -307,6 +307,7 @@ function unitLine(m: Model, unit: Unit, refs: { scene?: boolean; author?: boolea
   const parts = [`${unit.kind}${unit.name ? ` ${q(unit.name)}` : ''} ${unit.id}`, place(unit.bounds)]
   const what = holds(m, unit)
   if (what) parts.push(what)
+  if (unit.node && nodeRotation(unit.node)) parts.push(`rotation ${nodeRotation(unit.node)}`)
   if (refs.author) parts.push(unit.author === 'learner' ? 'learner' : 'yours')
   if (unit.parent !== ROOT) parts.push(`inside ${frameLabel(m, unit.parent)}`)
   const linked = unit.node ?? (unit.group ? strokesOf(m, unit.group)[0] : undefined)
@@ -1167,7 +1168,7 @@ function intervalItems(ctx: ReadContext, interval: Interval, groups: InkGroup[])
   }
 }
 
-const CHANGE_WORDS: Record<string, string> = { added: 'new', restored: 'back (undo, redo or paste)', moved: 'moved', resized: 'resized', edited: 'edited', changed: 'changed', unchanged: 'changed and changed back' }
+const CHANGE_WORDS: Record<string, string> = { added: 'new', restored: 'back (undo, redo or paste)', moved: 'moved', resized: 'resized', turned: 'turned', edited: 'edited', changed: 'changed', unchanged: 'changed and changed back' }
 
 function itemWords(m: Model, entry: IntervalChange, all: boolean): string {
   const node = entry.node

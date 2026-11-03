@@ -1,3 +1,4 @@
+import { OWN_ROTATION } from './rotation'
 import type { BoardNode, Point } from './types'
 
 /**
@@ -279,7 +280,8 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
       const e = m[0] * px + m[2] * py + m[4] - px
       const f = m[1] * px + m[3] * py + m[5] - py
       element.style.transformOrigin = '0 0'
-      element.style.transform = `matrix(${m[0]}, ${m[1]}, ${m[2]}, ${m[3]}, ${e}, ${f})`
+      // The element's own rotation stays under the world matrix: the matrix applies to the final geometry.
+      element.style.transform = `matrix(${m[0]}, ${m[1]}, ${m[2]}, ${m[3]}, ${e}, ${f})${element.dataset.rotation ? ` ${OWN_ROTATION}` : ''}`
     } else {
       element.style.transform = saved.transform
       element.style.transformOrigin = saved.transformOrigin

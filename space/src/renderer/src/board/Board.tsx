@@ -9,6 +9,7 @@ import {
   boardToScreen,
   clampZoom,
   glideCamera,
+  HOME_ZOOM,
   inkBounds,
   inkLocalBounds,
   overlapShare,
@@ -21,12 +22,15 @@ import {
 } from './geometry'
 import type { BoardHistory } from './history'
 import { penOnBoard } from '../live/frames'
+import { MouseInk } from './mouse-ink'
+import { huggedNodes } from './hug'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves, wheelWorlds } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
 import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
+import { boxThrough, centerOf, handleCursor, normalRotation, placedBox, placedLayout, pointOnBox, rotatePoint, scaleFrom, turnAbout } from './rotation'
 import {
   addInkLayout,
   applyChanges,
@@ -54,7 +58,7 @@ import {
   type SceneIndex,
   type Shown
 } from './scene'
-import type { BoardNode, Camera, ContentNode, InkNode, LayoutBox, Point, Region, TextNode } from './types'
+import type { BoardNode, Camera, ContentNode, InkNode, LayoutBox, Point, Region, TextNode, TurnedRegion } from './types'
 import './board.css'
 
 /**
@@ -67,7 +71,9 @@ import './board.css'
  * The layout cache (`layoutRef`: id → world box) is the one source for hit
  * testing, selection boxes, lasso, ink parenting and agent bounds. Content
  * entries are measured from the DOM after each render; ink entries come from
- * the points.
+ * the points. A turned item has the box before it turns and its rotation:
+ * rotation.ts owns that geometry, and liveState gives readers outside the
+ * board where each box is on the board.
  */
 
 export type ZoomStep = 'in' | 'out' | 'reset'
@@ -153,7 +159,7 @@ export interface LiveBoardState {
   bounds(id: string): Region | null
   /** Every ink node with its world offset, in draw order. */
   inks(): readonly PaintInk[]
-  /** The layout cache: world boxes and child origins. */
+  /** The layout: where each box is on the board, and child origins. A turned item's box before it turns is in `own` (rotation.ts ownBox). */
   layout(): ReadonlyMap<string, LayoutBox>
   /** Who last changed a node in this app session ("learner" or "agent"), when known. */
   editor(id: string): Author | undefined
@@ -181,6 +187,8 @@ export interface BoardProps {
   width: number
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
+  /** The board ends a text edit by key and hands the tool back. */
+  onToolChange?(tool: ToolId): void
   /**
    * A commit stamped nodes: the ones that left the board (erase, cut, delete,
    * undo; each removal has its own seq) and the ones that took a new seq, with
@@ -214,11 +222,21 @@ const PARENT_SHARE = 0.6
 const DUPLICATE_OFFSET = 20
 /** The smallest size a resize makes (board points). */
 const MIN_SIZE = 8
+/** The smallest font size a corner of a text makes (board points). */
+const MIN_FONT_SIZE = 6
+/** Shift snaps a rotation to this many degrees. */
+const ROTATE_SNAP = 15
 /** Font size of a new text node (board points). */
 const NEW_TEXT_SIZE = 20
 
 type DragKind = 'pan' | 'lasso' | 'move' | 'ink' | 'erase' | 'resize' | 'none'
-type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | 'rotate'
+
+/** The selection handle a pointer event is on (every part of a handle carries data-handle), or undefined. */
+function handleOf(target: EventTarget | null): Handle | undefined {
+  const element = target instanceof Element ? target.closest<HTMLElement>('[data-handle]') : null
+  return (element?.dataset.handle as Handle | undefined) ?? undefined
+}
 
 interface DragState {
   kind: DragKind
@@ -237,7 +255,7 @@ interface DragState {
   moveIds?: Set<string>
   /** Move and resize: how far the pointer is from the start, in board points. */
   delta?: Point
-  /** Resize: Shift keeps the aspect ratio. */
+  /** Resize: Shift keeps the aspect ratio; on the rotate handle, it snaps. */
   keepAspect?: boolean
   /** Erase: the ids erased so far. */
   erased?: Set<string>
@@ -245,8 +263,13 @@ interface DragState {
   clicked?: string
   /** Lasso with Shift: add to the selection. */
   additive?: boolean
-  /** Resize: the node, the handle and the start box. */
-  resize?: { id: string; handle: Handle; box: LayoutBox }
+  /**
+   * Resize: the node, the handle and the start box. A text also has the place of the press, its font size at the start, and
+   * the size it measured for the last show of this drag: only the DOM knows how text wraps, and a turned box hangs from its anchor by its size.
+   */
+  resize?: { id: string; handle: Handle; box: LayoutBox; text?: { press: Point; fontSize: number; size?: Point } }
+  /** Ink from a pointer with no pressure, with the pen tool. */
+  mouseInk?: MouseInk
 }
 
 interface EditingState {
@@ -305,10 +328,10 @@ function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   } as CSSProperties
 }
 
-/** Which handles a node shows. Text resizes its width only; flowed nodes keep their place. */
+/** Which handles a node shows. Text turns, scales from its corners and sets its wrap width; flowed nodes keep their place. */
 function handlesFor(node: BoardNode | undefined): Handle[] {
   if (!node || !isKnown(node) || node.locked) return []
-  if (node.kind === 'text') return ['e', 'w']
+  if (node.kind === 'text') return ['nw', 'ne', 'e', 'se', 'sw', 'w', 'rotate']
   return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 }
 
@@ -339,6 +362,46 @@ function resizedBox(box: Region, handle: Handle, delta: Point, keepAspect: boole
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
+/**
+ * A text after a drag of a handle. The rotate handle turns it about its centre. A corner scales its
+ * font size and any width by one ratio, from the opposite corner. East and west set the wrap width,
+ * from the top of the opposite edge: the text grows down from there as it wraps.
+ */
+function resizedText(node: TextNode, info: NonNullable<DragState['resize']>, text: NonNullable<NonNullable<DragState['resize']>['text']>, delta: Point, snap: boolean, flowed: boolean): TextNode {
+  const { box, handle } = info
+  const rotation = box.rotation ?? 0
+  if (handle === 'rotate') {
+    const turned = rotation + turnAbout(centerOf(box), text.press, [text.press[0] + delta[0], text.press[1] + delta[1]])
+    const next = normalRotation(snap ? Math.round(turned / ROTATE_SNAP) * ROTATE_SNAP : turned)
+    const { rotation: _rotation, ...rest } = node
+    return next ? { ...rest, rotation: next } : rest
+  }
+  const style: NodeStyle = { ...node.style }
+  delete style.height
+  let anchorShare: Point
+  let size: Point
+  if (handle.length === 2) {
+    const corner: Point = [handle.includes('e') ? 1 : 0, handle.includes('s') ? 1 : 0]
+    anchorShare = [1 - corner[0], 1 - corner[1]]
+    const from = pointOnBox(box, corner, rotation)
+    const ratio = scaleFrom(pointOnBox(box, anchorShare, rotation), from, [from[0] + delta[0], from[1] + delta[1]])
+    const fontSize = Math.max(Math.min(MIN_FONT_SIZE, text.fontSize), Math.round(text.fontSize * ratio * 10) / 10)
+    const scale = fontSize / text.fontSize
+    style.fontSize = px(fontSize)
+    if (style.width) style.width = px((style.width.endsWith('px') ? parseFloat(style.width) : box.width) * scale)
+    size = text.size ?? [box.width * scale, box.height * scale]
+  } else {
+    anchorShare = [handle === 'e' ? 0 : 1, 0]
+    const along = rotatePoint(delta, [0, 0], -rotation)[0]
+    const width = Math.max(MIN_SIZE, box.width + (handle === 'e' ? along : -along))
+    style.width = px(width)
+    size = text.size ?? [width, box.height]
+  }
+  if (flowed) return { ...node, style }
+  const place = boxThrough(pointOnBox(box, anchorShare, rotation), anchorShare, size, rotation)
+  return { ...node, style, x: node.x + place.x - box.x, y: node.y + place.y - box.y }
+}
+
 /** A pin goes with its mark: an erased or undone mark leaves no pin. */
 function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   if (!nodes.some((node) => isLive(node) && node.pins?.length)) return nodes
@@ -346,7 +409,7 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
 }
 
-export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onChanges, onSelectionChange, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const penRef = useRef<HTMLDivElement>(null)
@@ -368,7 +431,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const stepKeyRef = useRef<string | null>(null)
   const extraRef = useRef(doc.extra)
   const idRef = useRef(doc.id)
-  const cameraRef = useRef<Camera>(initialCamera ?? { center: [0, 0], zoom: 1 })
+  const cameraRef = useRef<Camera>(initialCamera ?? { center: [0, 0], zoom: HOME_ZOOM })
   /** The camera the content layer's transform shows now. */
   const domCameraRef = useRef<Camera>(cameraRef.current)
   const needsFitRef = useRef(initialCamera === null)
@@ -455,6 +518,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   onCameraChangeRef.current = onCameraChange
   const onChangesRef = useRef(onChanges)
   onChangesRef.current = onChanges
+  const onToolChangeRef = useRef(onToolChange)
+  onToolChangeRef.current = onToolChange
   const onSelectionChangeRef = useRef(onSelectionChange)
   onSelectionChangeRef.current = onSelectionChange
   useEffect(() => {
@@ -504,6 +569,9 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   }, [])
 
   const applyPlaybackRef = useRef<() => void>(() => undefined)
+  /** Fit the hugging frames to their items after a measure (board/hug.ts): set once commitOver exists. */
+  const fitHugsRef = useRef<() => void>(() => undefined)
+  const hugFrameRef = useRef<number | null>(null)
 
   /**
    * Put the playback overrides on content elements, and take them off the
@@ -714,7 +782,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         dirtyLayersRef.current = { committed: false, active: false, playback: false }
         // The learner's stroke first: it never waits for the scene's ink.
         if (dirty.active) penOnBoard(activeRef.current !== null)
-        if (dirty.active) activeLayerRef.current.paint(penRef.current, activeInkRef.current, activeTailRef.current, activeRef.current, viewportRef.current, cameraRef.current)
+        if (dirty.active) activeLayerRef.current.paint(penRef.current, activeInkRef.current, activeTailRef.current, activeRef.current, viewportRef.current, cameraRef.current, dragRef.current?.mouseInk?.tip)
         if (dirty.committed) applyContentTransform()
         let again = false
         if (dirty.committed || dirty.playback) {
@@ -772,6 +840,16 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
   // ---------- Layout cache ----------
 
+  /** `nodes` with the turned text `id` where its box of a new size keeps the first corner of `box`. */
+  const onCorner = useCallback((nodes: BoardNode[], id: string, box: LayoutBox, size: Point): BoardNode[] => {
+    const node = indexRef.current.byId.get(id)
+    if (!node || isFlowed(node, indexRef.current.byId)) return nodes
+    const rotation = box.rotation ?? 0
+    const place = boxThrough(pointOnBox(box, [0, 0], rotation), [0, 0], size, rotation)
+    const delta: Point = [place.x - box.x, place.y - box.y]
+    return Math.abs(delta[0]) < 0.05 && Math.abs(delta[1]) < 0.05 ? nodes : moveNodes(nodes, new Set([id]), delta)
+  }, [])
+
   /** Measure every content element into the layout cache, then add ink. `inkOnly`: no content changed, so the boxes stand and setNodes added the ink. */
   const measure = useCallback((inkOnly = false) => {
     measuresRef.current++
@@ -796,6 +874,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
+    if (!inkOnly) fitHugsRef.current()
   }, [followPoints, linkedNodes, paintInks, placeLinks, requestPaint])
 
   /** Measure on the next frame (images, fonts and math settle late). */
@@ -820,6 +899,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const box = id ? layout.get(id) : undefined
         const size = entry.borderBoxSize?.[0]
         if (box && size && Math.abs(box.width - size.inlineSize) < 0.05 && Math.abs(box.height - size.blockSize) < 0.05) continue
+        // A turned text that grows as the learner types stays on its first corner, before this frame paints.
+        if (id && box?.rotation && size && id === editingRef.current?.id) {
+          const next = onCorner(nodesRef.current, id, box, [size.inlineSize, size.blockSize])
+          if (next !== nodesRef.current) flushSync(() => setNodesRef.current(next))
+        }
         requestMeasure()
         return
       }
@@ -847,6 +931,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     void document.fonts?.ready.then(() => requestMeasure())
   }, [requestMeasure])
 
+  const setNodesRef = useRef<(next: BoardNode[]) => void>(() => undefined)
+
   /** Replace the live nodes (no history, no save). Renders the content layer. */
   const setNodes = useCallback(
     (next: BoardNode[]) => {
@@ -866,6 +952,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     },
     [placeLinks, requestPaint]
   )
+  setNodesRef.current = setNodes
 
   // ---------- Camera ----------
 
@@ -883,10 +970,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const [vw, vh] = viewportRef.current
     const content = boundsOf(layoutRef.current.keys(), layoutRef.current)
     if (!content) {
-      applyCamera({ center: [0, 0], zoom: 1 })
+      applyCamera({ center: [0, 0], zoom: HOME_ZOOM })
       return
     }
-    const zoom = clampZoom(Math.min(1, (vw * 0.8) / Math.max(1, content.width), (vh * 0.7) / Math.max(1, content.height)))
+    const zoom = clampZoom(Math.min(HOME_ZOOM, (vw * 0.8) / Math.max(1, content.width), (vh * 0.7) / Math.max(1, content.height)))
     applyCamera({ center: [content.x + content.width / 2, content.y + content.height / 2], zoom })
   }, [applyCamera])
 
@@ -904,7 +991,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       learnerViewAtRef.current = Date.now()
       const [vw, vh] = viewportRef.current
       const current = cameraRef.current
-      const zoom = step === 'reset' ? 1 : step === 'out' ? current.zoom / 1.25 : current.zoom * 1.25
+      const zoom = step === 'reset' ? HOME_ZOOM : step === 'out' ? current.zoom / 1.25 : current.zoom * 1.25
       applyCamera(zoomAt(current, [vw / 2, vh / 2], viewportRef.current, zoom))
     },
     [applyCamera]
@@ -941,6 +1028,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const node = startById.get(info.id)
     if (!node || !isKnown(node)) return drag.startNodes
     const byId = indexRef.current.byId
+    if (node.kind === 'text' && info.text) {
+      const updated = resizedText(node, info, info.text, drag.delta ?? [0, 0], !!drag.keepAspect, isFlowed(node, byId))
+      return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
+    }
     const aspect = !!drag.keepAspect || (node.kind === 'image' && info.handle.length === 2)
     const next = resizedBox(info.box, info.handle, drag.delta ?? [0, 0], aspect)
     const dx = next.x - info.box.x
@@ -993,6 +1084,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   /** The document: the nodes of the last commit, without what the learner has open. */
   const documentNodes = useCallback((): BoardNode[] => openDrag()?.startNodes ?? editingRef.current?.snapshot ?? nodesRef.current, [openDrag])
 
+  /** Where a node is on the board now. */
+  const placedOf = useCallback((id: string): LayoutBox | null => {
+    const box = layoutRef.current.get(id)
+    return box ? placedBox(box) : null
+  }, [])
+
+  /** The layout for readers outside the board: the same map while the layout is the same. */
+  const placedRef = useRef<{ layout: LayoutMap | null; placed: ReadonlyMap<string, LayoutBox> }>({ layout: null, placed: new Map() })
+  const placedMap = useCallback((): ReadonlyMap<string, LayoutBox> => {
+    const memo = placedRef.current
+    if (memo.layout !== layoutRef.current) placedRef.current = { layout: layoutRef.current, placed: placedLayout(layoutRef.current) }
+    return placedRef.current.placed
+  }, [])
+
   const emit = useCallback(() => {
     onDocChangeRef.current({ ...(idRef.current ? { id: idRef.current } : {}), nextSeq: nextSeqRef.current, nodes: documentNodes(), extra: extraRef.current })
   }, [documentNodes])
@@ -1030,7 +1135,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         editorsRef.current.set(node.id, by)
         timesRef.current.set(node.id, now)
       }
-      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by }))
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: placedOf(removal.node.id), by }))
       setNodes(stamped.nodes)
       onChangesRef.current?.({ removed, revisions: stamped.revisions, by })
       // The new document, also when this commit ends a drag or an editor.
@@ -1063,6 +1168,26 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       return changed
     },
     [commitNodes, documentNodes, dragView, openDrag, setNodes]
+  )
+
+  // A hugging frame follows its items as the board measures them (a text the learner changed, a font
+  // that loaded): on the next frame, as part of the last step, by the one rule (board/hug.ts). An open
+  // edit or drag fits when it ends (its commit measures again).
+  fitHugsRef.current = () => {
+    if (hugFrameRef.current !== null) return
+    hugFrameRef.current = requestAnimationFrame(() => {
+      hugFrameRef.current = null
+      if (editingRef.current || openDrag()) return
+      const layout = placedLayout(restLayoutRef.current)
+      if (huggedNodes(nodesRef.current, layout)) commitOver((document) => huggedNodes(document, layout) ?? document, 'agent', false)
+    })
+  }
+  useEffect(
+    () => () => {
+      if (hugFrameRef.current !== null) cancelAnimationFrame(hugFrameRef.current)
+      hugFrameRef.current = null
+    },
+    []
   )
 
   /** An item whose frame left the board stays where it shows: top level, at its world place. So an item that came into a frame since an agent edit's base outlives that edit. */
@@ -1128,7 +1253,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         editorsRef.current.set(node.id, 'learner')
         timesRef.current.set(node.id, now)
       }
-      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: layoutRef.current.get(removal.node.id) ?? null, by: 'learner' as const }))
+      const removed = stamped.removed.map((removal) => ({ ...removal, bounds: placedOf(removal.node.id), by: 'learner' as const }))
       setNodes(stamped.nodes)
       onChangesRef.current?.({ removed, revisions: stamped.revisions, by: 'learner' })
       setSelectedIds([])
@@ -1194,6 +1319,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const value = editorRef.current?.value ?? editing.initial
     setEditingId(null)
     const node = indexRef.current.byId.get(editing.id)
+    const box = restLayoutRef.current.get(editing.id)
     let next = nodesRef.current
     if (!node || node.kind !== 'text') {
       // The node is gone (undo, reload): nothing to save.
@@ -1202,9 +1328,20 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     } else if (value !== (node as TextNode).text) {
       next = nodesRef.current.map((entry) => (entry.id === editing.id ? ({ ...entry, text: value } as BoardNode) : entry))
     }
+    if (node && box?.rotation && value.trim()) {
+      const start = editing.snapshot.find((entry) => entry.id === editing.id)
+      if (start && value === (node as TextNode).text) next = next.map((entry) => (entry.id === editing.id ? start : entry))
+      else {
+        // The words take the editor's place, in another size: a turned box keeps its first corner when they do.
+        const shown = next
+        flushSync(() => setNodes(shown))
+        const after = restLayoutRef.current.get(editing.id)
+        if (after) next = onCorner(next, editing.id, box, [after.width, after.height])
+      }
+    }
     commitNodes(next, editing.snapshot)
     setSelectedIds(value.trim() ? [editing.id] : [])
-  }, [commitNodes, setSelectedIds])
+  }, [commitNodes, onCorner, setNodes, setSelectedIds])
 
   /** Create a text node at a board point and edit it. Not in history until it has text. */
   const createText = useCallback(
@@ -1219,7 +1356,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         author: 'learner',
         seq: 0,
         text: '',
-        style: { color, fontSize: `${NEW_TEXT_SIZE}px` }
+        style: { color, fontSize: `${NEW_TEXT_SIZE}px`, fontFamily: 'var(--ls-hand)' }
       }
       setNodes([...snapshot, node])
       editingRef.current = { id: node.id, snapshot, initial: '' }
@@ -1236,6 +1373,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     editorRef,
     editorInitial: editingRef.current?.initial ?? '',
     onEditorCommit: commitEditing,
+    onEditorDone: () => {
+      commitEditing()
+      onToolChangeRef.current?.('select')
+    },
     register: (id, element) => {
       const elements = elementsRef.current
       const previous = elements.get(id)
@@ -1258,6 +1399,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     editorRef,
     editorInitial: '',
     onEditorCommit: () => undefined,
+    onEditorDone: () => undefined,
     register: (id, element) => {
       if (element) ghostElementsRef.current.set(id, element)
       else ghostElementsRef.current.delete(id)
@@ -1296,7 +1438,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     )
   }
 
-  const selectionBox = (ids: readonly string[]): Region | null => boundsOf(ids, layoutRef.current)
+  /** One turned item keeps its own frame; anything else is axis-aligned. */
+  const selectionBox = (ids: readonly string[]): TurnedRegion | null => {
+    const one = ids.length === 1 ? layoutRef.current.get(ids[0]) : undefined
+    return one?.rotation ? one : boundsOf(ids, layoutRef.current)
+  }
 
   const inSelectionBox = (screen: Point): boolean => {
     const box = selectionBox(selectedIdsRef.current)
@@ -1363,12 +1509,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       event.preventDefault()
       return
     } else if (tool === 'select') {
-      const handle = event.target instanceof HTMLElement ? (event.target.dataset.handle as Handle | undefined) : undefined
+      const handle = handleOf(event.target)
       const selected = selectedIdsRef.current
       const box = selected.length === 1 ? layoutRef.current.get(selected[0]) : undefined
       if (handle && box) {
         kind = 'resize'
-        resize = { id: selected[0], handle, box }
+        const element = elementsRef.current.get(selected[0])
+        const fontSize = element ? parseFloat(getComputedStyle(element).fontSize) : NaN
+        const text = indexRef.current.byId.get(selected[0])?.kind === 'text' && fontSize > 0 ? { press: startBoard, fontSize } : undefined
+        resize = { id: selected[0], handle, box, text }
       } else {
         const hit = hitAt(startBoard)
         const target = hit ? selectTarget(hit, selectionScope(), indexRef.current.byId) : null
@@ -1418,6 +1567,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (kind === 'pan') setPanning(true)
     else if (kind === 'ink') {
       const highlighter = tool === 'highlighter'
+      const mouseInk = !highlighter && event.pointerType !== 'pen' ? new MouseInk(startBoard[0], startBoard[1], event.timeStamp) : undefined
+      dragRef.current.mouseInk = mouseInk
       activeRef.current = {
         id: newItemId(),
         kind: 'ink',
@@ -1429,7 +1580,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         tool: highlighter ? 'highlighter' : 'pen',
         color,
         width: width * (highlighter ? HIGHLIGHTER_SCALE : 1),
-        points: [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
+        points: mouseInk?.points ?? [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
       }
       requestPaint({ active: true })
     } else if (kind === 'erase') {
@@ -1493,6 +1644,10 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const minDistance = sampleScreenDistance / zoom
       for (const sample of samples.length ? samples : [native]) {
         const point = screenToBoard(cssPoint(sample, rect), viewportRef.current, cameraRef.current)
+        if (drag.mouseInk) {
+          drag.mouseInk.add(point[0], point[1], sample.timeStamp, zoom)
+          continue
+        }
         const last = stroke.points[stroke.points.length - 1]
         if (Math.hypot(point[0] - last[0], point[1] - last[1]) < minDistance) continue
         stroke.points.push([point[0], point[1], pressureOf(event.pointerType, sample.pressure)])
@@ -1511,7 +1666,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       drag.delta = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
       drag.keepAspect = event.shiftKey
       drag.changed = true
-      setNodes(dragView(drag))
+      showResize(drag)
     } else if (drag.kind === 'lasso') {
       const native = event.nativeEvent
       const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
@@ -1547,6 +1702,24 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     void pinMark(node.id, 'learner')
   }
 
+  /** Show a resize. A text shows, measures, and takes its place from the size it measured, all before this frame paints. */
+  const showResize = (drag: DragState): void => {
+    const info = drag.resize
+    if (!info?.text) {
+      setNodes(dragView(drag))
+      return
+    }
+    info.text.size = undefined
+    flushSync(() => setNodes(dragView(drag)))
+    const box = restLayoutRef.current.get(info.id)
+    if (!box || info.handle === 'rotate') return
+    info.text.size = [box.width, box.height]
+    const view = dragView(drag)
+    const next = view.find((node) => node.id === info.id) as TextNode | undefined
+    const shown = nodesRef.current.find((node) => node.id === info.id) as TextNode | undefined
+    if (next && shown && (Math.abs(next.x - shown.x) > 0.01 || Math.abs(next.y - shown.y) > 0.01)) flushSync(() => setNodes(view))
+  }
+
   /** The drag's changes to the nodes on show become a commit. */
   const commitDrag = (drag: DragState): void => {
     if (!drag.changed) return
@@ -1563,15 +1736,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const dragEnds: Record<DragKind, (drag: DragState, screen: Point) => void> = {
     none: () => undefined,
     pan: () => setPanning(false),
-    ink: (_drag, screen) => {
+    ink: (drag, screen) => {
       const stroke = activeRef.current
       if (!stroke) return
       const end = screenToBoard(screen, viewportRef.current, cameraRef.current)
       const last = stroke.points[stroke.points.length - 1]
-      if (last[0] !== end[0] || last[1] !== end[1]) stroke.points.push([end[0], end[1], last[2]])
+      if (!drag.mouseInk && (last[0] !== end[0] || last[1] !== end[1])) stroke.points.push([end[0], end[1], last[2]])
       activeRef.current = null
       // A fresh object: the one drawn into was mutated while drawing.
-      commitStroke({ ...stroke, points: [...stroke.points] })
+      commitStroke({ ...stroke, points: drag.mouseInk?.finish(end[0], end[1], cameraRef.current.zoom) ?? [...stroke.points] })
       requestPaint({ active: true })
     },
     erase: (drag) => {
@@ -1704,10 +1877,17 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     // A world that takes input on entering: on something in it.
     const worlds = enterWorlds()
     if (worlds.length) void pickWorlds(worlds, point[0], point[1], PICK_MARK_MS).then((found) => found && enterLive(found.id))
+    // A selection handle (any part of it) takes the double-click, as it takes a press: nothing new is made or edited.
+    // By the point, not the event's target: the press before it captured the pointer, so the click goes to the board.
+    if (handleOf(document.elementFromPoint(event.clientX, event.clientY))) return
     const index = indexRef.current
     if (inkAt(index, layoutRef.current, point, TAP_SIZE / cameraRef.current.zoom, shown)) return
     const hit = contentAt(index, layoutRef.current, point, shown)
-    if (!hit) return
+    if (!hit) {
+      // Empty board: a new text, as the Text tool makes it. A press held for panning makes none.
+      if (!spaceRef.current) createText(point)
+      return
+    }
     const selected = selectedIdsRef.current.length === 1 ? index.byId.get(selectedIdsRef.current[0]) : undefined
     let target: BoardNode
     if (selected && selected.id === hit.id) target = hit
@@ -1865,11 +2045,11 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         viewport: viewportRef.current,
         selectedIds: selectedIdsRef.current,
         bounds: (id) => {
-          const box = layoutRef.current.get(id)
+          const box = placedOf(id)
           return box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null
         },
         inks: paintInks,
-        layout: () => layoutRef.current,
+        layout: placedMap,
         editor: (id) => editorsRef.current.get(id),
         changedAt: (id) => timesRef.current.get(id),
         learnerInkAt: lastStrokeAtRef.current,
@@ -2005,7 +2185,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, requestMeasure, requestPaint, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, zoomStep]
   )
   useEffect(
     () => () => {
@@ -2130,6 +2310,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       nudge(arrows[event.key][0] * step, arrows[event.key][1] * step)
       return
     }
+    if (event.key === 'Enter' && !modified && !event.altKey && !event.shiftKey && !event.repeat && tool === 'select' && selectedIdsRef.current.length === 1) {
+      const selected = indexRef.current.byId.get(selectedIdsRef.current[0])
+      if (selected?.kind === 'text' && !selected.locked) {
+        event.preventDefault()
+        startEditing(selected.id)
+        return
+      }
+    }
     const action = boardKeyAction(event, { hasSelection: selectedIdsRef.current.length > 0, hasClipboard: hasNodeClipboard() })
     if (action) {
       event.preventDefault()
@@ -2175,6 +2363,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   void layoutVersion // the selection box reads the layout cache, which this version tracks
   const selection = editingId ? null : selectionBox(selectedIds)
   const selectionTopLeft = selection ? boardToScreen([selection.x, selection.y], viewport, camera) : null
+  const selectionTurn = selection?.rotation ?? 0
   const single = selectedIds.length === 1 ? index.byId.get(selectedIds[0]) : undefined
   const handles = selection && single && tool === 'select' ? handlesFor(single) : []
   const flashTopLeft = flashRect ? boardToScreen([flashRect.rect.x, flashRect.rect.y], viewport, camera) : null
@@ -2220,11 +2409,13 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
             left: selectionTopLeft[0] - SELECTION_PAD,
             top: selectionTopLeft[1] - SELECTION_PAD,
             width: selection.width * camera.zoom + SELECTION_PAD * 2,
-            height: selection.height * camera.zoom + SELECTION_PAD * 2
+            height: selection.height * camera.zoom + SELECTION_PAD * 2,
+            ...(selectionTurn ? { transform: `rotate(${selectionTurn}deg)` } : {})
           }}
         >
+          {handles.includes('rotate') && <span className="board__rotate-stem" data-handle="rotate" />}
           {handles.map((handle) => (
-            <span key={handle} className="board__handle" data-handle={handle} />
+            <span key={handle} className="board__handle" data-handle={handle} style={selectionTurn ? { cursor: handleCursor(handle, selectionTurn) } : undefined} />
           ))}
         </div>
       )}

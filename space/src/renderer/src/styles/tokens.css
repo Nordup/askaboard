@@ -61,6 +61,14 @@
   --eraser-halo: rgba(0, 0, 0, 0.5);
   --swatch-edge: rgba(0, 0, 0, 0.25); /* inset line around an ink colour swatch */
 
+  --selection-border: 1.5px;
+  /* The rotate handle of a selected text */
+  --handle-rotate-size: 11px; /* the circle */
+  --handle-rotate-reach: 24px; /* its centre above the top edge of the selection */
+  --handle-rotate-stem: 20px; /* the stem up from the top edge */
+  --handle-rotate-stem-width: 1px;
+  --handle-rotate-hit: 8px; /* the stem and the circle take a press this far around them: one handle */
+
   /* Snapshot: the grid, labels and tags drawn into the image agents see */
   --snapshot-grid: rgba(255, 255, 255, 0.14);
   --snapshot-axis: rgba(255, 255, 255, 0.32);
@@ -154,4 +162,13 @@
   --reading-ease: 120ms; /* the reading view's focus and scroll follow their targets with this time constant (exponential) */
   --reading-return: 3000ms; /* while a scene plays, the focus glides back to the reading point this long after the last wheel input */
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
+}
+
+/* The hand as a font: scripts/lab/make-hand-webfont.mjs makes the file. main.tsx loads it before the first render. */
+@font-face {
+  font-family: 'Learning Hand';
+  src: url('./hand.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
 }

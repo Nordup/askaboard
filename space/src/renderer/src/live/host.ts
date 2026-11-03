@@ -7,6 +7,7 @@ import type { BoardHandle } from '../board/Board'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { checkDrafts, draftsToNodes, htmlToDrafts, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
+import { ownBox, placedLayout } from '../board/rotation'
 import type { LayoutBox } from '../board/types'
 import { coveredOf } from '../agent/covered'
 import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/placement'
@@ -79,6 +80,7 @@ async function layoutOf(nodes: readonly BoardNode[]): Promise<Map<string, Layout
       editorRef: createRef<HTMLTextAreaElement>(),
       editorInitial: '',
       onEditorCommit: () => undefined,
+      onEditorDone: () => undefined,
       register: (id, element) => {
         if (element) elements.set(id, element)
         else elements.delete(id)
@@ -130,6 +132,7 @@ function plainDrafts(drafts: readonly Draft[]): SceneDraft[] {
     x: draft.x,
     y: draft.y,
     ...(draft.text !== undefined ? { text: draft.text } : {}),
+    ...(draft.rotation ? { rotation: draft.rotation } : {}),
     ...(draft.markup !== undefined ? { markup: draft.markup } : {}),
     ...(draft.src !== undefined ? { src: draft.src } : {}),
     children: plainDrafts(draft.children)
@@ -149,6 +152,8 @@ interface HtmlAnswer {
   box?: { x: number; y: number; width: number; height: number }
   /** The root's children, relative to the root's top-left. */
   parts: Array<{ x: number; y: number; width: number; height: number; name?: string }>
+  /** A turned root: where its own box (its x, y) is from the top-left of its bounds. */
+  offset?: [number, number]
 }
 
 async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): Promise<HtmlAnswer | { error: string }> {
@@ -215,9 +220,13 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
       nodes = built.nodes.map((node) => (node.id === rootId ? root : node))
     }
   }
-  const layout = await layoutOf(nodes)
+  // Boxes as the board's readers give them (placedLayout): a turned item by its bounds on the board, so the program's
+  // object is as large as list_items and get_item say, and the next item it places clears it.
+  const layout = placedLayout(await layoutOf(nodes))
   const rootBox = layout.get(rootId)
   if (!rootBox) return { error: 'the material could not be laid out' }
+  const own = ownBox(rootBox)
+  const offset: [number, number] | undefined = own !== rootBox ? [r2(own.x - rootBox.x), r2(own.y - rootBox.y)] : undefined
   if (into) place = box(rootBox)
   const children = built.nodes.filter((node) => node.parent === rootId && isContent(node)).sort((a, b) => (a.z as number) - (b.z as number))
   const parts = children.map((child) => {
@@ -228,7 +237,8 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
     drafts: plainDrafts(drafts),
     size: [r2(rootBox.width), r2(rootBox.height)],
     ...(place ? { box: place } : {}),
-    parts
+    parts,
+    ...(offset ? { offset } : {})
   }
 }
 
@@ -265,7 +275,7 @@ async function itemAnswer(ctx: HostContext, request: Record<string, unknown>): P
   if (node.kind === 'live') return { error: `"${ref}" is a world or an older item, which a scene cannot change this way; make it again with world()` }
   const drafts = htmlToDrafts(nodesToHtml(node.id, s.index, false))
   const box = s.layout.get(node.id)
-  if (drafts[0] && box && isFlowed(node, s.index.byId) && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(box.width)}px` }
+  if (drafts[0] && box && isFlowed(node, s.index.byId) && !drafts[0].style.width) drafts[0].style = { ...drafts[0].style, width: `${r2(ownBox(box).width)}px` }
   return { kind: 'html', drafts: plainDrafts(drafts.map((draft) => ({ ...draft, x: 0, y: 0 }))) }
 }
 

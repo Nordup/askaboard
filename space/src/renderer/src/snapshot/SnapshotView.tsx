@@ -231,6 +231,7 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
     editorRef,
     editorInitial: '',
     onEditorCommit: () => undefined,
+    onEditorDone: () => undefined,
     register: (id, element) => {
       if (element) elements.current.set(id, element)
       else elements.current.delete(id)

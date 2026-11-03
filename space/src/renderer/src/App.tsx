@@ -24,6 +24,7 @@ import { dropTracker, moveTracker } from './agent/groups'
 import { Board, type BoardHandle } from './board/Board'
 import { ChangeLog } from './board/changes'
 import { BoardHistory, boardBytes } from './board/history'
+import { HOME_ZOOM } from './board/geometry'
 import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
@@ -115,6 +116,7 @@ export function App() {
   const [open, setOpen] = useState<OpenBoard | null>(null)
   const [boardError, setBoardError] = useState<{ path: string; message: string } | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
+  /** The zoom the top bar shows: the camera zoom as a share of the home zoom (1 is 100%). */
   const [zoom, setZoom] = useState(1)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
@@ -277,7 +279,7 @@ export function App() {
       if (!current) return
       cameraRef.current = { root: current.root, path: current.path, camera }
       // The top bar shows whole percents: a pan or a small zoom step renders nothing.
-      setZoom(Math.round(camera.zoom * 100) / 100)
+      setZoom(Math.round((camera.zoom / HOME_ZOOM) * 100) / 100)
       if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current)
       cameraTimerRef.current = setTimeout(flushCamera, CAMERA_SAVE_DELAY_MS)
     },
@@ -401,7 +403,7 @@ export function App() {
         leaveBoard()
         entry.doc = mountRecords(root, path, entry.doc, records)
         cameraRef.current = camera ? { root, path, camera } : null
-        setZoom(camera?.zoom ?? 1)
+        setZoom(camera ? Math.round((camera.zoom / HOME_ZOOM) * 100) / 100 : 1)
         setBoardError(null)
         setOpen({ root, path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
         trimBoards(path)
@@ -1161,7 +1163,7 @@ export function App() {
           boardName={open ? boardName(open.path) : null}
           saveStatus={open ? saveStatus : null}
           zoom={open ? zoom : null}
-          onResetZoom={() => boardRef.current?.zoomTo(1)}
+          onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}
           agentStatus={agentStatus}
           agentActivityAt={agentActivity?.at ?? null}
           guideOverrides={folder ? guideOverrides : null}
@@ -1182,6 +1184,7 @@ export function App() {
                 width={widthValue(tools)}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
+                onToolChange={(tool) => setTools((current) => ({ ...current, tool }))}
                 onChanges={onChanges}
                 onSelectionChange={setSelection}
               />

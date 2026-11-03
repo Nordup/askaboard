@@ -1,7 +1,8 @@
 import { MAX_COORD, MAX_HTML_DEPTH, MAX_HTML_ELEMENTS, MAX_STYLE_CHARS } from '@shared/limits'
-import { isContent, isInk, isKnown, newItemId, STYLE_KEYS, styleKey, type BoardNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isInk, isKnown, newItemId, nodeRotation, STYLE_KEYS, styleKey, type BoardNode, type NodeStyle } from '@shared/board-format'
 import { sanitizeSvg } from './content'
 import { parseMarkup, type Run } from './markup'
+import { normalRotation } from './rotation'
 import type { SceneIndex } from './scene'
 
 /**
@@ -83,6 +84,8 @@ export interface Draft {
   x: number
   y: number
   text?: string
+  /** Text only: degrees, clockwise (TextNode.rotation). */
+  rotation?: number
   markup?: string
   src?: string
   children: Draft[]
@@ -151,6 +154,9 @@ function baseDraft(element: Element, kind: Draft['kind']): { draft: Draft; absol
   if (wanted) draft.wantedId = wanted
   const name = element.getAttribute('layer-name')
   if (name) draft.name = name
+  // Rotation is its own attribute, as a number: `transform` stays out of the styles.
+  const rotation = normalRotation(Number(element.getAttribute('data-rotation')))
+  if (kind === 'text' && rotation) draft.rotation = rotation
   return { draft, absolute: position.absolute }
 }
 
@@ -343,7 +349,11 @@ export function checkDrafts(input: unknown): Draft[] {
     const coord = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= MAX_COORD ? n : 0)
     const draft: Draft = { kind, style, x: coord(value.x), y: coord(value.y), children: [] }
     if (typeof value.name === 'string' && value.name && value.name.length <= 200) draft.name = value.name
-    if (kind === 'text') draft.text = typeof value.text === 'string' ? value.text : ''
+    if (kind === 'text') {
+      draft.text = typeof value.text === 'string' ? value.text : ''
+      const rotation = normalRotation(Number(value.rotation))
+      if (rotation) draft.rotation = rotation
+    }
     if (kind === 'svg') {
       const parsed = typeof value.markup === 'string' ? htmlToDrafts(value.markup) : []
       if (parsed.length !== 1 || parsed[0].kind !== 'svg' || !parsed[0].markup) return null
@@ -387,7 +397,7 @@ export function draftsToNodes(
     const base = { id, kind: draft.kind, ...(draft.name ? { name: draft.name } : {}), ...(parent ? { parent } : {}), x: draft.x, y: draft.y, z, author: options.author, seq: 0 }
     const fields =
       draft.kind === 'text'
-        ? { text: draft.text ?? '', style: draft.style }
+        ? { text: draft.text ?? '', ...(draft.rotation ? { rotation: draft.rotation } : {}), style: draft.style }
         : draft.kind === 'svg'
           ? { style: draft.style, markup: draft.markup ?? '' }
           : draft.kind === 'image'
@@ -457,7 +467,8 @@ export function nodesToHtml(rootId: string, index: SceneIndex, includeIds: boole
         return
       }
       case 'text': {
-        lines.push(`${pad}<p${attrs(node)}${styleAttr}>${runsToHtml(parseMarkup(node.text))}</p>`)
+        const rotation = nodeRotation(node)
+        lines.push(`${pad}<p${attrs(node)}${rotation ? ` data-rotation="${rotation}"` : ''}${styleAttr}>${runsToHtml(parseMarkup(node.text))}</p>`)
         return
       }
       case 'svg': {

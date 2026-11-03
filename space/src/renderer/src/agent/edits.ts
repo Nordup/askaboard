@@ -1,8 +1,9 @@
-import { isKnown, isOldLive, type BoardNode } from '@shared/board-format'
+import { isKnown, isOldLive, nodeRotation, type BoardNode } from '@shared/board-format'
 import { followsText } from '@shared/world-links'
 import { liveParts } from '../live-pixels/registry'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
+import { ownBox } from '../board/rotation'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus } from '../live-pixels/registry'
@@ -74,7 +75,7 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
     author: node.author,
     parent: key === ROOT ? null : key,
     bounds: rect(box),
-    position_in_parent: box ? { x: r1(box.x - origin[0]), y: r1(box.y - origin[1]) } : null,
+    position_in_parent: box ? { x: r1(ownBox(box).x - origin[0]), y: r1(ownBox(box).y - origin[1]) } : null,
     placed_by: isFlowed(node, s.index.byId) ? 'flex layout of the parent' : 'x, y',
     z: node.z,
     children: (s.index.children.get(node.id) ?? []).map((child) => child.id),
@@ -87,6 +88,7 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
     if (node.kind === 'ink') Object.assign(info, { tool: node.tool, color: node.color, width: node.width, points: node.points.length })
     else info.style = node.style
     if (node.kind === 'text') info.text = node.text
+    if (nodeRotation(node)) info.rotation = nodeRotation(node)
     if (node.kind === 'image') info.src = node.src
     if (node.kind === 'live') {
       const status = liveStatus(node.id)

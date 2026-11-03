@@ -10,7 +10,7 @@ interface TopBarProps {
   folderName: string | null
   boardName: string | null
   saveStatus: SaveStatus | null
-  /** The canvas zoom factor, where 1 is 100%. Null when no board is open. */
+  /** The zoom as a share of the home zoom (HOME_ZOOM), where 1 is 100%. Null when no board is open. */
   zoom: number | null
   onResetZoom(): void
   agentStatus: AgentServerStatus | null

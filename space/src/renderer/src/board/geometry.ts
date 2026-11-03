@@ -1,4 +1,5 @@
-import type { Camera, InkNode, Point, Region } from './types'
+import { pointOnBox, turnedBounds, unturned } from './rotation'
+import type { Camera, InkNode, Point, Region, TurnedRegion } from './types'
 
 /**
  * Camera maths and ink geometry. Ink points are relative to the node: every
@@ -8,6 +9,12 @@ import type { Camera, InkNode, Point, Region } from './types'
 
 export const MIN_ZOOM = 0.1
 export const MAX_ZOOM = 8
+/**
+ * The home zoom: the camera zoom (CSS px per board point) that the learner
+ * sees as 100%. A new board, ⌘0 and the top bar's reset go to it, and the
+ * top bar shows the zoom as a share of it.
+ */
+export const HOME_ZOOM = 0.85
 
 export function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number.isFinite(value) ? value : 1))
@@ -90,13 +97,10 @@ export function regionsIntersect(a: Region, b: Region): boolean {
   return a.x <= b.x + b.width && b.x <= a.x + a.width && a.y <= b.y + b.height && b.y <= a.y + a.height
 }
 
-export function regionContains(region: Region, point: Point, pad = 0): boolean {
-  return (
-    point[0] >= region.x - pad &&
-    point[0] <= region.x + region.width + pad &&
-    point[1] >= region.y - pad &&
-    point[1] <= region.y + region.height + pad
-  )
+/** True when the point is inside the region, in the region's own frame when it turns. */
+export function regionContains(region: TurnedRegion, point: Point, pad = 0): boolean {
+  const [x, y] = unturned(region, point)
+  return x >= region.x - pad && x <= region.x + region.width + pad && y >= region.y - pad && y <= region.y + region.height + pad
 }
 
 /** The share (0..1) of `inner`'s area that lies inside `outer`. */
@@ -167,15 +171,14 @@ export function strokeInsidePolygon(stroke: InkNode, offset: Point, polygon: rea
 }
 
 /** Lasso rule for boxes: selected when at least `share` of the box area lies inside the polygon. */
-export function regionInsidePolygon(region: Region, polygon: readonly Point[], share = 0.6): boolean {
+export function regionInsidePolygon(region: TurnedRegion, polygon: readonly Point[], share = 0.6): boolean {
   if (polygon.length < 3) return false
-  if (!regionsIntersect(region, polygonBounds(polygon))) return false
+  if (!regionsIntersect(turnedBounds(region), polygonBounds(polygon))) return false
   const steps = 10
   let inside = 0
   for (let i = 0; i < steps; i++) {
     for (let j = 0; j < steps; j++) {
-      const point: Point = [region.x + (region.width * (i + 0.5)) / steps, region.y + (region.height * (j + 0.5)) / steps]
-      if (pointInPolygon(point, polygon)) inside++
+      if (pointInPolygon(pointOnBox(region, [(i + 0.5) / steps, (j + 0.5) / steps], region.rotation ?? 0), polygon)) inside++
     }
   }
   return inside / (steps * steps) >= share

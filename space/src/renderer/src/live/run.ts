@@ -9,6 +9,8 @@ import type { InkGroupTracker } from '../agent/groups'
 import { coveredOf, type Covered } from '../agent/covered'
 import { viewOf, type Scene } from '../agent/placement'
 import { itemNames } from '../agent/item-names'
+import { ownBox } from '../board/rotation'
+import { huggedNodes } from '../board/hug'
 import { buildIndex, isFlowed } from '../board/scene'
 import { allObjects, compileScene, packLines, type CompiledScene, type DynLookup, type PlayObject, type SceneRevert, type StageLookup } from './compile'
 import { connectFrames, cutJob, objectOf, onFramesGrowth, takeFrames, type RunFrames } from './frames'
@@ -214,44 +216,10 @@ function settleLayout(board: BoardHandle, compiled: CompiledScene): void {
       state = board.liveState()
     }
   }
-  // Each group frame: its box becomes the measured box of its children (innermost first).
-  for (const { id } of compiled.frames) {
-    state = board.liveState()
-    const frame = state.nodes.find((node) => node.id === id) as ContentNode | undefined
-    const box = state.layout().get(id)
-    if (!frame || !box) continue
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
-    for (const node of state.nodes) {
-      if (node.parent !== id) continue
-      const child = state.layout().get(node.id)
-      if (!child) continue
-      const pad = isInk(node) ? node.width : 0
-      x0 = Math.min(x0, child.x - pad)
-      y0 = Math.min(y0, child.y - pad)
-      x1 = Math.max(x1, child.x + child.width + pad)
-      y1 = Math.max(y1, child.y + child.height + pad)
-    }
-    if (x0 === Infinity) continue
-    const PAD = 6
-    const nx = Math.floor(x0 - PAD)
-    const ny = Math.floor(y0 - PAD)
-    const dx = nx - box.x
-    const dy = ny - box.y
-    const width = `${Math.ceil(x1 - nx + PAD)}px`
-    const height = `${Math.ceil(y1 - ny + PAD)}px`
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && frame.style.width === width && frame.style.height === height) continue
-    board.agentAmend(
-      state.nodes,
-      state.nodes.map((node) => {
-        if (node.id === id) return { ...frame, x: r1(frame.x + dx), y: r1(frame.y + dy), style: { ...frame.style, width, height } } as BoardNode
-        if (node.parent === id) return { ...node, x: r1((node.x as number) - dx), y: r1((node.y as number) - dy) } as BoardNode
-        return node
-      })
-    )
-  }
+  // Each group frame hugs its children, as the board keeps it after every measure (board/hug.ts).
+  state = board.liveState()
+  const hugged = huggedNodes(state.nodes, state.layout())
+  if (hugged) board.agentAmend(state.nodes, hugged)
 }
 
 /** Items that went into a frame glide from where they were to where the frame put them (measured now). */
@@ -262,7 +230,7 @@ function measureGlides(board: BoardHandle, compiled: CompiledScene): void {
     const object = compiled.play.objects.find((play) => play.id === entry.object)
     const box = layout.get(entry.nodeId)
     if (!object?.glide || !box) continue
-    const now: Point = entry.ink ? [box.ox, box.oy] : [box.x, box.y]
+    const now: Point = entry.ink ? [box.ox, box.oy] : [ownBox(box).x, ownBox(box).y]
     // The first node of the item decides (an ink group moves as one).
     if (object.glide.from[0] === 0 && object.glide.from[1] === 0) object.glide.from = [r1(entry.before[0] - now[0]), r1(entry.before[1] - now[1])]
   }
@@ -581,7 +549,8 @@ function commitScene(ctx: RunSceneContext, desc: SceneSummary, compiled: Compile
     for (const target of object.targets) {
       const node = byId.get(target.nodeId)
       if (!node || snapshot.has(node.id)) continue
-      const box = layout.get(node.id) as { x: number; y: number; ox?: number; oy?: number } | undefined
+      const placed = layout.get(node.id)
+      const box = placed && ownBox(placed)
       const ghost = isInk(node) ? { ...node, parent: undefined, x: box?.ox ?? node.x, y: box?.oy ?? node.y } : { ...node, parent: undefined, x: box?.x ?? (node as ContentNode).x, y: box?.y ?? (node as ContentNode).y }
       snapshot.set(node.id, { sig: nodeSig(node), ghost: ghost as BoardNode })
     }
@@ -1011,7 +980,8 @@ function restoredSnapshot(compiled: CompiledScene, story: SceneStory, board: Boa
       const sig = recorded.get(id)
       // No signature (a record from before 2026-10-29): unknown, so the node shows as a ghost of the re-run.
       const same = !!now && sig !== undefined && contentSig(now) === sig
-      const box = same || (now && isFlowed(node, byId)) ? (layout.get(id) as { x: number; y: number; ox?: number; oy?: number } | undefined) : undefined
+      const placed = same || (now && isFlowed(node, byId)) ? layout.get(id) : undefined
+      const box = placed && ownBox(placed)
       snapshot.set(id, { sig: same && now ? nodeSig(now) : '', ghost: worldGhost(node, byId, box) })
     }
   }

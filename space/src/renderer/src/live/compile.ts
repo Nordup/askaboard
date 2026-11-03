@@ -7,6 +7,7 @@ import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
 import { polylineInk } from '@shared/ink-points'
 import { humanize, strokeSeed } from '../agent/ink'
 import type { Scene } from '../agent/placement'
+import { ownBox } from '../board/rotation'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
 import type { Point, Region } from '../board/types'
 import { textHtml } from '../board/content'
@@ -453,7 +454,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     const inside = [...withDescendants([item.id], s.index)].filter((id) => id !== item.id).map((id) => s.index.byId.get(id) as BoardNode)
     const box = s.layout.get(item.id)
     const ghostIds = [item.id]
-    ghosts.push({ ...item, parent: undefined, x: box?.x ?? item.x, y: box?.y ?? item.y, style: { ...item.style, ...(box ? { width: `${box.width}px` } : {}) } } as BoardNode)
+    const own = box && ownBox(box)
+    ghosts.push({ ...item, parent: undefined, x: own?.x ?? item.x, y: own?.y ?? item.y, style: { ...item.style, ...(own ? { width: `${own.width}px` } : {}) } } as BoardNode)
     for (const node of inside) {
       if (isContent(node)) {
         ghosts.push(node)
@@ -741,7 +743,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       let replacedItem: ContentNode | null = null
       let parent: string | undefined
       let zRoot = z++
-      let position: Point = [r1(x), r1(y)]
+      // The bounds are where it shows; a turned root's own box (its x, y) sits inside them by offset.
+      const [ox, oy] = html.offset ?? [0, 0]
+      let position: Point = [r1(x + ox), r1(y + oy)]
       if (place) {
         const target = currentNode(place.ref)
         // The item it goes into is gone: it draws nothing.
@@ -755,7 +759,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           replacedItem = target as ContentNode
         } else zRoot = typeof place.index === 'number' && siblings[place.index] ? (siblings[place.index].z as number) - 0.5 : zAbove(siblings)
         const origin = parent ? (s.layout.get(parent) ? [s.layout.get(parent)!.ox, s.layout.get(parent)!.oy] : [0, 0]) : [0, 0]
-        position = replacing ? [(target as ContentNode).x, (target as ContentNode).y] : [r1(x - origin[0]), r1(y - origin[1])]
+        position = replacing ? [(target as ContentNode).x, (target as ContentNode).y] : [r1(x + ox - origin[0]), r1(y + oy - origin[1])]
       }
       // The description is the program's data: its drafts pass the HTML whitelist again before they become nodes.
       let drafts
@@ -787,7 +791,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       htmlNodes.set(object.id, { root: rootId, parts: partNodes.map((node) => node.id) })
       if (replacedItem && !isRemoved) replaceItem(replacedItem, rootNode, parent, object)
       if (isRemoved) {
-        for (const node of nodes) ghosts.push(node.id === rootId ? ({ ...node, parent: undefined, x: r1(x), y: r1(y) } as BoardNode) : node)
+        for (const node of nodes) ghosts.push(node.id === rootId ? ({ ...node, parent: undefined, x: r1(x + ox), y: r1(y + oy) } as BoardNode) : node)
       } else {
         created.push(...nodes)
         contentIds.push(rootId)
@@ -897,7 +901,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           removed.add(id)
           // The ghost shows the item where it was, at the top level.
           const descendants = [...withDescendants([id], s.index)].filter((d) => d !== id).map((d) => s.index.byId.get(d) as BoardNode)
-          ghosts.push({ ...content, parent: undefined, x: box?.x ?? content.x, y: box?.y ?? content.y, style: { ...content.style, ...(box ? { width: `${box.width}px` } : {}) } } as BoardNode)
+          const own = box && ownBox(box)
+          ghosts.push({ ...content, parent: undefined, x: own?.x ?? content.x, y: own?.y ?? content.y, style: { ...content.style, ...(own ? { width: `${own.width}px` } : {}) } } as BoardNode)
           for (const child of descendants) if (isContent(child)) ghosts.push(child)
           play.targets.push({ nodeId: id, ink: false, inverseBaked: IDENTITY })
           continue
@@ -998,6 +1003,8 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       author: 'agent',
       seq: 0,
       name: group.name,
+      // It hugs what it holds (board/hug.ts): the board keeps this box on its items as they change.
+      hug: `${Math.ceil(x1 - fx + PAD)}px ${Math.ceil(y1 - fy + PAD)}px`,
       style: { width: `${Math.ceil(x1 - fx + PAD)}px`, height: `${Math.ceil(y1 - fy + PAD)}px`, background: 'transparent', overflow: 'visible' },
       ...({ scene: sceneId } as object)
     } as FrameNode
@@ -1097,7 +1104,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const before: Point = isInk(node)
         ? [from[0] + node.x, from[1] + node.y]
         : old && box && isFlowed(old, s.index.byId)
-          ? [box.x, box.y]
+          ? [ownBox(box).x, ownBox(box).y]
           : [from[0] + (node as ContentNode).x, from[1] + (node as ContentNode).y]
       const moved = { ...node, parent: frameId, x: r1(before[0] - to[0]), y: r1(before[1] - to[1]), z: zNext } as BoardNode
       zNext += 0.001

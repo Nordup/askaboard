@@ -818,6 +818,10 @@ export function paintItems(
  * The pieces are the curves of drawStroke, so the committed stroke shows the
  * same pixels. A highlighter draws at full alpha in a group with its alpha:
  * the group shows one flat tone, as the one path of a committed highlighter.
+ *
+ * `pointer`: where the stroke's last piece ends when that is not its last
+ * sample, because the samples are smoothed (mouse-ink.ts). So the line stays
+ * at the pointer, and no sample changes for it.
  */
 export class ActiveInk {
   /** The stroke and the view on the first canvas. */
@@ -832,7 +836,7 @@ export class ActiveInk {
   private covered: Region | null = null
   private used = false
 
-  paint(group: HTMLElement | null, settled: HTMLCanvasElement | null, tail: HTMLCanvasElement | null, stroke: StrokeItem | null, viewport: Point, camera: Camera): void {
+  paint(group: HTMLElement | null, settled: HTMLCanvasElement | null, tail: HTMLCanvasElement | null, stroke: StrokeItem | null, viewport: Point, camera: Camera, pointer: readonly [number, number] | null = null): void {
     if (!group || !settled || !tail) return
     if (!stroke) {
       if (!this.used) return
@@ -914,16 +918,17 @@ export class ActiveInk {
       last.beginPath()
       last.arc(tip[0], tip[1], width / 2, 0, Math.PI * 2)
       last.fill()
-      this.covered = coverOf(tip, tip, width, scale, tx, ty)
+      this.covered = coverOf(tip, tip, tip, width, scale, tx, ty)
       return
     }
     const from = end === 1 && uniform ? points[0] : midpoint(points[end - 1], tip)
     last.lineWidth = width
     last.beginPath()
     last.moveTo(from[0], from[1])
-    last.lineTo(tip[0], tip[1])
+    if (pointer) last.quadraticCurveTo(tip[0], tip[1], pointer[0], pointer[1])
+    else last.lineTo(tip[0], tip[1])
     last.stroke()
-    this.covered = coverOf(from, tip, width, scale, tx, ty)
+    this.covered = coverOf(from, tip, pointer ?? tip, width, scale, tx, ty)
   }
 
   /** Samples only come at the end: each is checked once. A stroke that was just begun starts over. */
@@ -940,12 +945,14 @@ export class ActiveInk {
 
 const midpoint = (a: StrokeItem['points'][number], b: StrokeItem['points'][number]): Point => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
 
-/** The device pixels of a line between two board points, with its nib and a margin for the edge. */
-function coverOf(a: readonly number[], b: readonly number[], width: number, scale: number, tx: number, ty: number): Region {
+/** The device pixels of a line or curve inside three board points, with its nib and a margin for the edge. */
+function coverOf(a: readonly number[], b: readonly number[], c: readonly number[], width: number, scale: number, tx: number, ty: number): Region {
   const pad = (width * scale) / 2 + 2
-  const x = Math.floor(Math.min(a[0], b[0]) * scale + tx - pad)
-  const y = Math.floor(Math.min(a[1], b[1]) * scale + ty - pad)
-  return { x, y, width: Math.ceil(Math.abs(a[0] - b[0]) * scale + pad * 2) + 1, height: Math.ceil(Math.abs(a[1] - b[1]) * scale + pad * 2) + 1 }
+  const left = Math.min(a[0], b[0], c[0])
+  const top = Math.min(a[1], b[1], c[1])
+  const x = Math.floor(left * scale + tx - pad)
+  const y = Math.floor(top * scale + ty - pad)
+  return { x, y, width: Math.ceil((Math.max(a[0], b[0], c[0]) - left) * scale + pad * 2) + 1, height: Math.ceil((Math.max(a[1], b[1], c[1]) - top) * scale + pad * 2) + 1 }
 }
 
 /** A box drawn over an offscreen render, in board coordinates. */

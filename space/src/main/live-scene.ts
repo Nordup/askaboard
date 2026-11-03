@@ -1,4 +1,5 @@
 import { MessageChannelMain, type WebContents } from 'electron'
+import { BOARD_LAYOUT } from '@shared/board-format'
 import { HAND_FONT } from '@shared/hand-font'
 import type { SceneContext, SceneDescription } from '@shared/live-scene'
 import { IPC } from '@shared/space-api'
@@ -155,6 +156,16 @@ export const newSeed = (): number => Math.floor(Math.random() * 2 ** 31) + 1
 
 /** The error of a reply that never came, because the program was cancelled. */
 const CANCELLED = 'cancelled'
+
+/** The text layout a recorded text measure was taken under (BOARD_LAYOUT); 1 for a record from before the layout was recorded. */
+function measureLayout(answer: string): number {
+  try {
+    const layout = (JSON.parse(answer) as { layout?: unknown }).layout
+    return typeof layout === 'number' ? layout : 1
+  } catch {
+    return 1
+  }
+}
 /** The error of a program that ended the stage process by going over V8's heap limit (stage-process.ts, onGone). */
 const TOO_MUCH_MEMORY = 'The scene program ran out of memory and was stopped. The stage is rebuilt from the programs before it.'
 export class SceneStage {
@@ -844,8 +855,11 @@ export class SceneStage {
     try {
       const request = JSON.parse(text) as { kind?: string; items?: TextItem[] }
       if (request.kind === 'text') {
-        // Text measures are answers too (recorded, and given back on a rebuild), so a re-run lays text out as the first run did.
-        answer = answers.given?.get(text) ?? JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []) })
+        // Text measures are answers too (recorded, and given back on a rebuild), so a re-run lays text out as the first run did,
+        // but only under the same text layout (BOARD_LAYOUT): a measure of another layout is measured again, so the stage's
+        // objects (and its size cache, stage/live-prelude.js measureText) only ever hold sizes of the layout the board shows.
+        const given = answers.given?.get(text)
+        answer = given !== undefined && measureLayout(given) === BOARD_LAYOUT ? given : JSON.stringify({ sizes: await this.textSizes(Array.isArray(request.items) ? request.items : []), layout: BOARD_LAYOUT })
         answers.record.set(text, answer)
       } else if (request.kind === 'voiceLine') {
         // No network here: the run has its voice answers, and a line without one takes the reading pace ({}).

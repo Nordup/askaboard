@@ -105,7 +105,7 @@
 .board__selection {
   position: absolute;
   z-index: 3;
-  border: 1.5px dashed var(--accent);
+  border: var(--selection-border) dashed var(--accent);
   border-radius: var(--radius-md);
   background: var(--selection-fill);
   pointer-events: none;
@@ -178,6 +178,48 @@
 .board__handle[data-handle='s'] { left: 50%; top: 100%; cursor: ns-resize; }
 .board__handle[data-handle='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
 .board__handle[data-handle='w'] { left: 0; top: 50%; cursor: ew-resize; }
+
+/* The rotate handle of a text: a stem from the middle of the top edge, to a circle above it. Children count from inside the selection's border. */
+.board__handle[data-handle='rotate'] {
+  left: 50%;
+  top: calc(-1 * (var(--handle-rotate-reach) + var(--selection-border)));
+  width: var(--handle-rotate-size);
+  height: var(--handle-rotate-size);
+  margin: calc(var(--handle-rotate-size) / -2) 0 0 calc(var(--handle-rotate-size) / -2);
+  border-radius: var(--radius-pill);
+  cursor: grab;
+}
+
+.board__rotate-stem {
+  position: absolute;
+  left: 50%;
+  top: calc(-1 * (var(--handle-rotate-stem) + var(--selection-border)));
+  width: var(--handle-rotate-stem-width);
+  height: var(--handle-rotate-stem);
+  margin-left: calc(var(--handle-rotate-stem-width) / -2);
+  background: var(--accent);
+  pointer-events: auto;
+  cursor: grab;
+}
+
+/* The stem and the circle are one handle (both data-handle="rotate"): each takes a press a little around it
+   (the circle in a round area about its centre, so a turned selection takes the same presses). */
+.board__rotate-stem::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--handle-rotate-hit));
+}
+
+.board__handle[data-handle='rotate']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--handle-rotate-size) + 2 * var(--handle-rotate-hit));
+  height: calc(var(--handle-rotate-size) + 2 * var(--handle-rotate-hit));
+  border-radius: var(--radius-pill);
+  transform: translate(-50%, -50%);
+}
 
 .board[data-tool='text'] {
   cursor: text;

@@ -15,6 +15,7 @@
   --ls-bg: #161618;
   --ls-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
   --ls-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --ls-hand: 'Learning Hand', var(--font-ui);
 }
 
 .board__content {
@@ -27,7 +28,7 @@
   transform-origin: 0 0;
   pointer-events: none;
   color: var(--text-primary, #ececef);
-  font-family: var(--font-ui);
+  font-family: var(--ls-hand);
   font-size: 16px;
   line-height: 1.4;
 }
@@ -39,6 +40,11 @@
 .node-text {
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+
+/* A turned text (TextNode.rotation). A scene's move composes with it in playback.ts. */
+.node-text[data-rotation] {
+  transform: rotate(var(--node-rotation));
 }
 
 .node-math {

@@ -188,6 +188,8 @@ export interface SceneDraft {
   x: number
   y: number
   text?: string
+  /** Text only: degrees, clockwise (TextNode.rotation). */
+  rotation?: number
   markup?: string
   src?: string
   children: SceneDraft[]
@@ -212,6 +214,8 @@ export interface SceneHtmlObject extends SceneObjectBase {
   drafts: SceneDraft[]
   /** Into an existing frame or in place of an item; else at bounds.x, bounds.y at the top level. */
   place?: SceneHtmlPlace
+  /** A turned root: where its own box (the node's x, y) is from the top-left of bounds, which are its bounds on the board. */
+  offset?: [number, number]
   style: SceneStyle
 }
 

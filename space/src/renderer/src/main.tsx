@@ -7,19 +7,23 @@ import { App } from './App'
 
 const root = createRoot(document.getElementById('root')!)
 
+// The hand is on screen before anything draws, so text never flashes or measures in another font. Without the file, the fallback font shows.
+const fontsReady = document.fonts.load('20px "Learning Hand"').catch(() => undefined)
+
 // `?snapshot=1`: the hidden window that renders agent screenshots. Its view loads only there.
-if (new URLSearchParams(window.location.search).get('snapshot') === '1') {
-  void import('./snapshot/SnapshotView').then(({ SnapshotView }) =>
+void fontsReady.then(async () => {
+  if (new URLSearchParams(window.location.search).get('snapshot') === '1') {
+    const { SnapshotView } = await import('./snapshot/SnapshotView')
     root.render(
       <StrictMode>
         <SnapshotView />
       </StrictMode>
     )
-  )
-} else {
-  root.render(
-    <StrictMode>
-      <App />
-    </StrictMode>
-  )
-}
+  } else {
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    )
+  }
+})

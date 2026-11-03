@@ -1221,7 +1221,7 @@ Use it when you start work on a board, and whenever you need ids, sizes or free 
 - part chooses what to list: "view" (what the learner sees now; the default), "board" (the whole board), {region: {x, y, width, height}}, {id: "g3"} or {id: [...]} (items, ink groups or frames, with what they hold), {scene: "name"} (the items a scene made or changed), or {scene: "name", step: 2} or "name#2" (the items of one step: by number, or by name, which finds the first step with that name). The board keeps its scenes, so these work after the app restarts. A plain string works for an id or a name that only one thing has; when several have it, the result lists them.
 - With part "view", the items outside the view are summarised by place, each place with its region.
 - With part "view" or "board", when there are many items, the list summarises them by area, with counts and a region for each. Each area opens with one more call; nothing is left out.
-- query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the board's scenes. Handwriting is not text: read it with get_screenshot.
+- query searches the text on the open board: text, ${htmlMaterial('HTML material, ')}names, and the names and lines of the board's scenes. The learner's handwriting is ink, not text: read it with get_screenshot.
 - The last line names the calls that show more.
 - Coordinates are board points: origin at the centre, +x right, +y down.
 - Ink groups and their ids: get_guide topic "model".`,
@@ -1337,7 +1337,7 @@ Use it to learn what the learner did since you last looked. It returns no image;
 - Your last look starts where your app last looked at this board in an earlier connection; otherwise at your first look in this one (list_items, get_changes, get_screenshot or open_board), so the first call then lists nothing new.
 - since: 0 covers everything on the board now, and the items whose removal the app still knows.
 - The list includes your own writes; by tells them apart from the learner's.
-- change says what happened to the item since your last look: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
+- change says what happened to the item since your last look: added, restored (it was on the board before, was removed, and is back with the same id, by undo, redo or paste), moved (offset: dx, dy in board points), resized, turned (its rotation), edited (its content), changed (anything else, or not known), or unchanged (changed and changed back).
 - Board news: when the learner drew, erased, added, restored, moved, resized, edited or deleted something since your app's last look or last board news, the next result of any tool starts with a "Board news" line that names each change: strokes by ink group and place, other items by kind and name, with the offset of a move and the new bounds. Each change is in the news once.`,
         inputSchema: strictInput('get_changes', {
           since: z.union([z.number().int().min(0), z.string().regex(/^c\d+$/, 'since is a look such as "c336" or the number 336.')]).optional().describe('A look to compare against instead of your last look, such as "c336" or 336; 0 covers everything on the board now.'),
@@ -1374,7 +1374,7 @@ Use it when you need to know which boards exist or which board holds something, 
 - Without query, it returns every board, one line each: path, last change, counts (the learner's ink strokes, your items and scenes, other items) and the first words of its title. The open board is marked, also when it has unsaved changes.
 - With query, it searches every board: board and item names, text, HTML, SVG text, image files and code. It returns one block per board, each match with the words around it, its id and its place. The open board is searched with its unsaved changes.
 - When many boards match, the result gives one line per board, with the call that shows its matches.
-- Handwriting is not text: read it with get_screenshot on the open board.`,
+- The learner's handwriting is ink, not text: read it with get_screenshot on the open board.`,
         inputSchema: strictInput('list_boards', {
           query: z.string().min(1).optional().describe("The words to search for. Without it, the result lists every board."),
           board: z.string().min(1).optional().describe("With query: search only this board, by its path.")
@@ -1553,7 +1553,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       {
         title: 'Write a scene (draft)',
         description:
-          "Runs a JavaScript program that draws and writes on the open board over time, and keeps it as a draft under its name. The learner sees nothing of a draft until play_scene \"start\" plays it in front of them. It is the one way to put anything on the board or to change what is there.\n\nA program can draw shapes and ink stroke by stroke, write by hand, set typeset maths and text, fill, fade, move and erase; place " +
+          "Runs a JavaScript program that draws and writes on the open board over time, and keeps it as a draft under its name. The learner sees nothing of a draft until play_scene \"start\" plays it in front of them. It is the one way to put anything on the board or to change what is there.\n\nA program can draw shapes and ink stroke by stroke, write by hand, set handwritten text and typeset maths, fill, fade, move and erase; place " +
           htmlMaterial("HTML material (html(): pages, cards, frames with layout, exercises, inline SVG), ") +
           "pictures (image(): a URL or a file in the learning folder), copies (copy()) and empty space for new material (space()); change text and style (edit()); move items into frames and delete items and ink groups, the learner's too; " +
           codeItems("place worlds, which are plain three.js with any library, on the board with no frame; ") +

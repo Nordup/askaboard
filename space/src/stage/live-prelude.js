@@ -1716,6 +1716,8 @@
       name: nameOf(opts),
       drafts: answer.drafts,
       place,
+      // A turned root: its own box from the top-left of its bounds (the bounds are what the board shows).
+      ...(answer.offset ? { offset: [answer.offset[0], answer.offset[1]] } : {}),
       parts: (answer.parts || []).map((p) => ({ x: p.x, y: p.y, width: p.width, height: p.height, ...(p.name ? { name: p.name } : {}) })),
       partObjects: [],
       style: { color: 'text', width: 0, opacity: opts.opacity === undefined ? 1 : Math.max(0, Math.min(1, num(opts.opacity, `${api} opacity`))) },
@@ -3268,7 +3270,7 @@
       if (e.follows) o.follows = e.follows
       if (e.kind === 'group') o.members = e.members.filter((id) => local.has(id)).map((id) => local.get(id))
       if (e.kind === 'node') o.ref = e.ref
-      if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}) })
+      if (e.kind === 'html') Object.assign(o, { style: e.style, drafts: e.drafts, ...(e.place ? { place: e.place } : {}), ...(e.offset ? { offset: e.offset } : {}) })
       if (e.kind === 'part') Object.assign(o, { style: e.style, index: e.index })
       return o
     })

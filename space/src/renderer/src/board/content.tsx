@@ -1,7 +1,7 @@
-import { memo, useEffect, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import { memo, useEffect, useRef, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
-import { isContent, renderableStyle, type ContentNode } from '@shared/board-format'
+import { isContent, nodeRotation, renderableStyle, type ContentNode } from '@shared/board-format'
 import { LiveView } from '../live-pixels/LiveView'
 import { parseMarkup, toggleMarker, type Run } from './markup'
 import { ROOT, type SceneIndex } from './scene'
@@ -139,6 +139,8 @@ export interface ContentContext {
   /** The text the editor opens with. */
   editorInitial: string
   onEditorCommit(): void
+  /** The learner ended the edit by key: commit it and go back to the Select tool. */
+  onEditorDone(): void
   /** Register or unregister a node element for measuring. */
   register(id: string, element: HTMLElement | null): void
   /** An image loaded (its size may have changed). */
@@ -186,6 +188,8 @@ function boxStyle(node: ContentNode, placement: NodeViewProps['placement']): CSS
 
 function TextEditor({ ctx }: { ctx: RefObject<ContentContext> }) {
   const ref = ctx.current.editorRef
+  /** An Enter pressed in this editor: a repeat with no such press is the key that opened it, still held. */
+  const enterPressed = useRef(false)
   useEffect(() => {
     const area = ref.current
     if (!area) return
@@ -202,12 +206,19 @@ function TextEditor({ ctx }: { ctx: RefObject<ContentContext> }) {
       onBlur={() => ctx.current.onEditorCommit()}
       onKeyDown={(event) => {
         const area = event.currentTarget
-        if (event.key === 'Escape') {
+        const modified = event.metaKey || event.ctrlKey
+        if (event.key === 'Enter' && !modified) {
+          if (event.repeat && !enterPressed.current) {
+            event.preventDefault()
+            return
+          }
+          enterPressed.current = true
+        }
+        if (!event.nativeEvent.isComposing && (event.key === 'Escape' || (event.key === 'Enter' && modified))) {
           event.preventDefault()
-          area.blur()
+          ctx.current.onEditorDone()
           return
         }
-        const modified = event.metaKey || event.ctrlKey
         const key = event.key.toLowerCase()
         if (modified && !event.altKey && (key === 'b' || key === 'i')) {
           event.preventDefault()
@@ -238,12 +249,15 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
         </div>
       )
     }
-    case 'text':
+    case 'text': {
+      const rotation = nodeRotation(node)
+      const turn = rotation ? { 'data-rotation': rotation, style: { ...style, '--node-rotation': `${rotation}deg` } as CSSProperties } : { style }
       return (
-        <div {...common} className="node node-text" style={style}>
+        <div {...common} {...turn} className="node node-text">
           {editing === node.id ? <TextEditor ctx={ctx} /> : node.text ? renderRuns(parseMarkup(node.text)) : '​'}
         </div>
       )
+    }
     case 'svg': {
       const sized = { 'data-w': node.style.width ? '1' : undefined, 'data-h': node.style.height ? '1' : undefined }
       return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: scopeSvgIds(sanitizeSvg(node.markup), node.id) }} />
@@ -321,6 +335,17 @@ export function measureContent(root: HTMLElement, elements: ReadonlyMap<string, 
     if (!element.isConnected) continue
     const rect = element.getBoundingClientRect()
     if (rect.width === 0 && rect.height === 0 && getComputedStyle(element).display === 'none') continue
+    const rotation = Number(element.dataset.rotation) || 0
+    if (rotation) {
+      // A turned element's rect is its bounds, with the same centre as its box. Its computed size is the box before it turns, exact to the fraction.
+      const computed = getComputedStyle(element)
+      const width = parseFloat(computed.width) || element.offsetWidth
+      const height = parseFloat(computed.height) || element.offsetHeight
+      const x = ((rect.left + rect.right) / 2 - rootRect.left) / zoom - width / 2
+      const y = ((rect.top + rect.bottom) / 2 - rootRect.top) / zoom - height / 2
+      layout.set(id, { x, y, width, height, rotation, ox: x + element.clientLeft, oy: y + element.clientTop })
+      continue
+    }
     const x = (rect.left - rootRect.left) / zoom
     const y = (rect.top - rootRect.top) / zoom
     layout.set(id, { x, y, width: rect.width / zoom, height: rect.height / zoom, ox: x + element.clientLeft, oy: y + element.clientTop })

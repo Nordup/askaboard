@@ -20,6 +20,14 @@ import type { NodeFollows } from './world-links'
 export const BOARD_FORMAT = 'learning-space.board'
 export const BOARD_VERSION = 2
 export const BOARD_SUFFIX = '.board.json'
+/**
+ * The version of the board's text layout: its fonts and their metrics (board/content.css, styles/hand.woff2).
+ * A text measure is recorded with it (main/live-scene.ts answerHost), and a measure of another version is
+ * measured again, so a scene never lays text out by sizes of a layout the board no longer has.
+ * Raise it with every change of the board's fonts or their metrics.
+ * 1: the system font (before 2026-11-03). 2: the hand font (B59), with ink-covering advances and line metrics.
+ */
+export const BOARD_LAYOUT = 2
 /** New boards go to this folder, relative to the learning folder root. */
 export const BOARDS_DIR = 'boards'
 
@@ -153,13 +161,42 @@ export interface InkNode extends NodeBase {
  */
 export interface FrameNode extends NodeBase {
   kind: 'frame'
+  /**
+   * A frame that hugs its children (a group's frame): its box is the bounds of what it holds, and the
+   * board keeps it so as they change (renderer board/hug.ts). The value is the "width height" the board
+   * last gave it; a style width or height that another hand set since ends the hug (hugsChildren).
+   */
+  hug?: string
   style: NodeStyle
+}
+
+/** A frame whose box the board derives from its children (FrameNode.hug): its size is still the one the board gave it, and its children are placed, not flowed. */
+export function hugsChildren(node: BoardNode): node is FrameNode {
+  if (node.kind !== 'frame') return false
+  const frame = node as FrameNode
+  return typeof frame.hug === 'string' && frame.style?.display !== 'flex' && frame.hug === `${frame.style?.width} ${frame.style?.height}`
+}
+
+/**
+ * A group's frame saved before frames recorded their hug (before 2026-11-03): scenes made it with exactly
+ * this style (renderer live/compile.ts). It hugs from now on, from the size it has.
+ */
+function withHug(node: BoardNode): BoardNode {
+  if (node.kind !== 'frame' || node.author !== 'agent' || (node as FrameNode).hug !== undefined) return node
+  const style = (node as FrameNode).style
+  if (!isRecord(style)) return node
+  const keys = Object.keys(style).sort().join(' ')
+  const px = (value: unknown): boolean => typeof value === 'string' && /^\d+px$/.test(value)
+  if (keys !== 'background height overflow width' || style.background !== 'transparent' || style.overflow !== 'visible' || !px(style.width) || !px(style.height)) return node
+  return { ...node, hug: `${style.width} ${style.height}` } as FrameNode
 }
 
 /** Text with light inline markup: `**bold**`, `*italic*`, `$inline math$`. */
 export interface TextNode extends NodeBase {
   kind: 'text'
   text: string
+  /** Degrees, clockwise, about the centre of its box (−180..180). Absent means 0; 0 is never stored. x, y and the size are those of the box before it turns. */
+  rotation?: number
   style: NodeStyle
 }
 
@@ -257,6 +294,12 @@ function validBase(node: Record<string, unknown>): boolean {
     (node.name === undefined || typeof node.name === 'string') &&
     (node.author === 'learner' || node.author === 'agent')
   )
+}
+
+/** A node's rotation in degrees: 0 for the kinds that do not turn, and for a value that is not a number. */
+export function nodeRotation(node: BoardNode): number {
+  const rotation = (node as { rotation?: unknown }).rotation
+  return node.kind === 'text' && typeof rotation === 'number' && Number.isFinite(rotation) ? rotation : 0
 }
 
 function validKnown(node: BoardNode): boolean {
@@ -383,7 +426,7 @@ export function parseBoard(text: string): BoardDoc {
     }
     const seq = finite(entry.seq) ? entry.seq : 0
     const migrated = v1 ? migrateV1Item(entry, index) : entry
-    let node = { ...migrated, seq } as BoardNode
+    let node = withHug({ ...migrated, seq } as BoardNode)
     if (node.kind === 'ink' && isKnown(node)) {
       // Clamp pressure; an invalid ink node stays foreign data, so a save never destroys it.
       node = { ...node, points: node.points.map(([x, y, p]) => [x, y, Math.min(1, Math.max(0, p))] as InkPoint) }
@@ -411,8 +454,8 @@ const round = (value: number, digits: number): number => {
 const COMMON_KEYS = ['id', 'kind', 'name', 'parent', 'x', 'y', 'z', 'author', 'seq', 'locked'] as const
 const KIND_KEYS: Record<string, readonly string[]> = {
   ink: ['tool', 'color', 'width'],
-  frame: ['style'],
-  text: ['text', 'style'],
+  frame: ['hug', 'style'],
+  text: ['text', 'rotation', 'style'],
   svg: ['style', 'markup'],
   image: ['src', 'style'],
   live: ['mode', 'w', 'h', 'params', 'style', 'code']

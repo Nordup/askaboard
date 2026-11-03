@@ -51,8 +51,12 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--status-bad`, `--status-idle-ring`, `--status-live-ring`,
   `--status-live-pulse`, `--status-error-ring`, `--status-warn-ring`,
   `--status-bad-ring`, `--status-play`, `--status-play-ring`
-- Canvas tools: `--selection-fill`, `--lasso-fill`, `--eraser-ring`,
-  `--eraser-halo`, `--swatch-edge`
+- Canvas tools: `--selection-fill`, `--selection-border`, `--lasso-fill`,
+  `--eraser-ring`, `--eraser-halo`, `--swatch-edge`, `--handle-rotate-size`,
+  `--handle-rotate-reach`, `--handle-rotate-stem`,
+  `--handle-rotate-stem-width`
+- The hand on the board: `--ls-hand` in `board/content.css`, the font
+  'Learning Hand' with the UI font as its fallback
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
   `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`;
   preview_scene marks: `--snapshot-view` (the learner's view, 2 px

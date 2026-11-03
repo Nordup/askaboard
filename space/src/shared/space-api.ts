@@ -156,7 +156,7 @@ export interface ChangedItem {
   seq: number
 }
 
-export type ItemChange = 'added' | 'restored' | 'moved' | 'resized' | 'edited' | 'changed' | 'unchanged'
+export type ItemChange = 'added' | 'restored' | 'moved' | 'resized' | 'turned' | 'edited' | 'changed' | 'unchanged'
 
 /** An ink group: strokes clustered by distance and time, addressed as "g3". */
 export interface InkGroupSummary {

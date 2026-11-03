@@ -170,6 +170,8 @@ export interface ChangeDescription {
 const CONTENT_KEYS = new Set(['text', 'markup', 'src', 'code', 'mode', 'params'])
 /** The fields that hold an item's place. */
 const PLACE_KEYS = new Set(['x', 'y', 'parent', 'z'])
+/** The field that holds how an item turns: a change to it (with its place or not) is a turn. */
+const TURN_KEY = 'rotation'
 
 const same = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
 
@@ -190,8 +192,9 @@ export function describeChange(node: BoardNode, prior: PriorState): ChangeDescri
   if (differ.some((key) => CONTENT_KEYS.has(key))) return { change: 'edited' }
   const styleBefore = (before.style ?? {}) as Record<string, unknown>
   const styleNow = (now.style ?? {}) as Record<string, unknown>
-  const sized = ['width', 'height'].some((key) => !same(styleBefore[key], styleNow[key]))
+  const sized = ['width', 'height', 'fontSize'].some((key) => !same(styleBefore[key], styleNow[key]))
   if (differ.includes('points') || differ.includes('w') || differ.includes('h') || sized) return { change: 'resized' }
+  if (differ.includes(TURN_KEY) && differ.every((key) => key === TURN_KEY || PLACE_KEYS.has(key))) return { change: 'turned' }
   if (differ.every((key) => PLACE_KEYS.has(key)) && differ.some((key) => key !== 'z')) {
     if (differ.includes('parent')) return { change: 'moved' }
     const dx = Math.round(Number(now.x) - Number(before.x))

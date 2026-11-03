@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N] [--then-recent <folder>]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--mouse] [--fast | --hz N] [--then-recent <folder>]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -35,11 +35,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { findAppPage } from './app-page.mjs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
-  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--fast | --hz N]
+  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--mouse] [--fast | --hz N]
                                                  strokes in board coordinates: [[[x,y,p],...],...];
                                                  pans the board first so every point is on screen;
                                                  --tool eraser drags the eraser along the strokes;
                                                  --fast sends each stroke in one burst (no pen-speed delays);
+                                                 --mouse sends a mouse pointer, so the board ignores p;
                                                  --hz sends N samples per second, as a pen does, with no wait for each answer;
                                                  --then-recent opens that recent folder right after the last pen-up
   draw --strokes '<json>'
@@ -174,7 +175,7 @@ function parseStrokes(text) {
   return strokes
 }
 
-async function draw(cdp, strokes, tool, pan, fast = false, hz = 0) {
+async function draw(cdp, strokes, tool, pan, fast = false, hz = 0, pointerType = 'pen') {
   await requireDevHook(cdp, { board: true })
   await evaluate(cdp, `window.__spaceDev.setTool(${JSON.stringify(tool)})`)
   // Input only reaches the board where the canvas is on screen: pan to the strokes first.
@@ -204,7 +205,7 @@ async function draw(cdp, strokes, tool, pan, fast = false, hz = 0) {
       button: type === 'mouseMoved' && buttons === 0 ? 'none' : 'left',
       buttons,
       clickCount: type === 'mouseMoved' ? 0 : 1,
-      pointerType: 'pen',
+      pointerType,
       force: Math.min(1, Math.max(0, p))
     })
   if (fast) {
@@ -424,6 +425,9 @@ async function main() {
   const noPanIndex = args.indexOf('--no-pan')
   const noPan = noPanIndex !== -1
   if (noPan) args.splice(noPanIndex, 1)
+  const mouseIndex = args.indexOf('--mouse')
+  const mouse = mouseIndex !== -1
+  if (mouse) args.splice(mouseIndex, 1)
   const shiftIndex = args.indexOf('--shift')
   const modifiers = shiftIndex !== -1 ? 8 : 0
   if (shiftIndex !== -1) args.splice(shiftIndex, 1)
@@ -442,7 +446,7 @@ async function main() {
     const strokes = inline ? parseStrokes(inline) : rest[0] ? readStrokes(rest[0]) : null
     if (!strokes) throw new Failure('draw needs a strokes file, "-" for stdin, or --strokes.')
     run = async (cdp) => {
-      await draw(cdp, strokes, tool, !noPan, fast, hz)
+      await draw(cdp, strokes, tool, !noPan, fast, hz, mouse ? 'mouse' : 'pen')
       if (thenRecent) {
         await evaluate(cdp, `window.__spaceDev.sidebar.openRecent(${JSON.stringify(thenRecent)})`)
         await sleep(300)

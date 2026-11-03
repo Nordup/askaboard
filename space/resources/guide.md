@@ -9,7 +9,7 @@
 - Every item has a stable id. list_items returns ids, kinds, names and world bounds as "x,y w×h".
 - Ink groups: strokes come in groups g1, g2, …. A group holds the strokes of one parent (the top level or one frame) and one author; each ink object of a scene is a group of its own. A group keeps its id while the learner adds to it, merged groups keep the older id, and ids are not reused. A group id works wherever an item id does: board.node("g3") in a scene, the part of list_items and get_screenshot, and the id of get_item.
 - Top-level items sit at their x, y on the board. <!-- html -->Children of a flex frame are placed by the flex layout. Children of a free frame sit<!-- /html: Children of a frame sit --> at their x, y inside the frame.
-- All writing on the board happens in scenes (write_scene, preview_scene, play_scene; topic "scene"): drawing, typeset text, <!-- html -->HTML material, <!-- /html -->pictures, copies, edits, moves and deletions are all steps of a scene's program.<!-- html -->
+- All writing on the board happens in scenes (write_scene, preview_scene, play_scene; topic "scene"): drawing, text, <!-- html -->HTML material, <!-- /html -->pictures, copies, edits, moves and deletions are all steps of a scene's program.<!-- html -->
 
 ## HTML material
 <!-- topic: html -->
@@ -64,7 +64,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: tokens -->
 <!-- summary: The colour and font tokens of the dark board, and the colour names that scenes accept. -->
 
-- The board is dark. These tokens work in any style value: var(--ls-card), var(--ls-card-2) (backgrounds), var(--ls-text), var(--ls-muted) (text), var(--ls-accent) (blue), var(--ls-good) (green), var(--ls-bad) (pink-red), var(--ls-warn) (yellow), var(--ls-border), var(--ls-bg) (the board's background), var(--ls-font), var(--ls-mono).
+- The board is dark. These tokens work in any style value: var(--ls-card), var(--ls-card-2) (backgrounds), var(--ls-text), var(--ls-muted) (text), var(--ls-accent) (blue), var(--ls-good) (green), var(--ls-bad) (pink-red), var(--ls-warn) (yellow), var(--ls-border), var(--ls-bg) (the board's background), var(--ls-hand) (the board's handwriting, the font of all words; maths keeps its own), var(--ls-mono).
 - Scene colour options take names: accent, good, bad, warn, text, muted, card, card-2, border and bg (the tokens; bg is the board's own background, to cover what lies behind a shape), and white, yellow, blue, green, pink, red, orange, purple and teal. A token such as var(--ls-good) or any literal CSS colour works too.
 
 ## Placement
@@ -90,7 +90,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: view -->
 <!-- summary: camera() in a scene: its options, board.view, and when camera moves are skipped. -->
 
-- `camera({fit, to, zoom, pad}, s)` glides the learner's view: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre: an object or [x, y]) and/or zoom. Default 1 s. Given as a function (to: () => ball), the view follows it until the next camera().
+- `camera({fit, to, zoom, pad}, s)` glides the learner's view: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre: an object or [x, y]) and/or zoom (screen points per board point; the learner's normal view is 0.85). Default 1 s. Given as a function (to: () => ball), the view follows it until the next camera().
 - board.view is the learner's view {x, y, width, height} now (after this scene's camera moves).
 - board.view.covered (when present) lists the parts of the view that the app's script panel and tool palette cover while scenes play; the learner cannot see material there.
 - After the learner pans or zooms during a scene, its later camera moves are skipped.
@@ -134,9 +134,9 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - `line(x1, y1, x2, y2, o)`, `arrow(x1, y1, x2, y2, o)` (o.head: head length).
 - `circle(cx, cy, r, o)`, `ellipse(cx, cy, rx, ry, o)`, `rect(x, y, w, h, o)` (o.radius: corner radius), `polygon(points, o)` (o.closed: false for an open polyline), `path(d, o)` (any SVG path "d").
 - `plot(fn, o)`: the curve y = fn(x), with o.x: [min, max] (default [-4, 4]); or fn(t) → [x, y] with o.t: [t0, t1]. o.at: the board point of (0, 0); o.unit: board points per unit (default 50, or [ux, uy]); o.y: [min, max] clips; o.samples (default 240). Maths y goes up.
-- `write(text, o)`: handwriting, as ink. o.at: top-left, or o.center; o.size: cap height (default 28); o.slant (default 0.12). Latin with accents, Cyrillic, Greek, digits, punctuation (… — “ ” « »), arrows (→ ⇒ ⇔ ↺) and maths signs (∀ ∃ ∈ ⊆ ∪ ∧ ¬ ℝ ℕ ✓ …); any other character is drawn as a pen line from the board font; "^2", "^{10}", "_1" or ² ₁ for small raised and lowered text.
+- `write(text, o)`: handwriting drawn stroke by stroke, as ink. o.at: top-left, or o.center; o.size: cap height (default 28); o.slant (default 0.12). Latin with accents, Cyrillic, Greek, digits, punctuation (… — “ ” « »), arrows (→ ⇒ ⇔ ↺) and maths signs (∀ ∃ ∈ ⊆ ∪ ∧ ¬ ℝ ℕ ✓ …); any other character is drawn as a pen line from a plain font; "^2", "^{10}", "_1" or ² ₁ for small raised and lowered text.
 - `tex(latex, o)`: typeset maths (KaTeX), as a text item. o.at (top-left) or o.center; o.size (default 30); o.color.
-- `text(str, o)`: typeset text, as a text item, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
+- `text(str, o)`: handwritten text that appears whole, as a text item, with **bold**, *italic* and $math$ (topic "math"). o.at or o.center; o.size (default 22).
 - `label(target, text, o)`: text placed next to target, clear of the scene's objects, the board's items and the view's edge. target: an object, a point [x, y], or a segment [[x1, y1], [x2, y2]]. o.at: a point on an object ([x, y], or a share 0..1 along its outline), or a share along the segment (default 0.5). o.side: "auto" (default), "center", above, below, left, right, above-left, above-right, below-left, below-right. o.gap (default 10). The label is handwritten; o.tex: true typesets it as maths, o.text: true as text. Other options as write or tex. It follows its target as the target moves or changes.
 - `around(target, o)`: a hand-drawn ink mark around an object, a point [x, y] or a board rect {x, y, width, height}, such as a part of a picture. o.shape: "circle" (default), "box" or "underline"; o.pad (default 8 points plus 8% of the target's larger side; 20 points around a point).<!-- code-items -->
 - `world(src, o)`: anything you build with code: plain three.js that sits on the board with no frame. It links to the board through `.point(name)`, `.value(name)` and `.part(name)`. Read topic "scene-world" before your first world.<!-- /code-items -->
@@ -178,7 +178,7 @@ await tween(stage.k, 3, 2)   // the curve drawn by the earlier call gets shorter
 - Errors: a program error leaves the stage as it was before the program. An error returns at once, also from a function that runs in parallel or that moves an object. A failure at a moment that write_scene did not evaluate comes in the next tool result. A program that waits on something that never happens fails with an error. A program has no time limit: one that never ends runs until play_scene `cancel`, and its call then returns "Cancelled" with nothing drawn.
 - play_scene actions: start (a draft, by name); status; pause; resume; next (jump to the next step and play on); stop (jump to the end state); clear_queue (drop the waiting scenes, their items and their programs); cancel (end programs that are still running; stop and clear_queue do too); replay (a scene that has played, or from a step: its items show as they were then and play forward); cut (the playing scene, after a step or now: the rest is not drawn, and the board and the stage keep its state at the cut); reset (a new, empty stage). start, cut and clear_queue are each one undo step for the learner.
 
-`console.log(…)` goes to the result's log. <!-- code-items -->Text and worlds keep<!-- /code-items: Text keeps --> no rotation, and existing frames and text keep their size and angle on the board: they rotate and scale only while the scene plays.<!-- code-items -->
+`console.log(…)` goes to the result's log. <!-- code-items -->Text and worlds that a scene makes end<!-- /code-items: Text that a scene makes ends --> upright, and existing frames and text keep their size and angle on the board (the learner can turn a text): they rotate and scale only while the scene plays.<!-- code-items -->
 
 ## Scene files and libraries
 <!-- topic: scene-files -->

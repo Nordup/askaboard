@@ -103,6 +103,7 @@ const VERBS: Array<[NewsItem['change'], string]> = [
   ['restored', 'restored'],
   ['moved', 'moved'],
   ['resized', 'resized'],
+  ['turned', 'turned'],
   ['edited', 'edited'],
   ['changed', 'changed'],
   ['deleted', 'deleted']

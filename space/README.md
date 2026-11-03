@@ -6,7 +6,7 @@ agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner. Its one AI call is optional: a speech API reads
 scene lines aloud with the learner's own key (T34).
 
-**Status (2026-11-02):** the main product of this repository (since 2026-10-24). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
+**Status (2026-11-03):** the main product of this repository (since 2026-10-24). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
 - [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
 - [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
@@ -33,7 +33,11 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
   board when another program changes it on disk. If a save fails at close,
   the board goes to a recovery file and a dialog offers to try again.
 - **Ink with pressure.** Pen, highlighter, stroke eraser, lasso select,
-  undo and redo, pan and zoom.
+  undo and redo, pan and zoom. A mouse or trackpad stroke gets its width from
+  its speed (B57). 100% is camera zoom 0.85 (B61).
+- **One hand for all words.** Typed text and agent text are in the
+  'Learning Hand' font, made from the strokes of `write()`
+  (`scripts/lab/make-hand-webfont.mjs`). Text items rotate and scale.
 - **Editable document.** A board holds ink, frames, text with math, SVG and
   images. The learner can select, move and edit all of them.
 - **Agents see and edit the board over MCP.** Every agent write is one undo
@@ -46,7 +50,7 @@ Do not run test suites. Check a change with `npm run build`. The rules are in
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
 - **Live scenes.** An agent writes a JavaScript program (`write_scene`) that
-  draws ink, handwriting, shapes, typeset text and worlds and says how
+  draws ink, handwriting, shapes, handwritten text, typeset maths and worlds and says how
   they unfold in time; the board plays it, and the result stays as ordinary
   items. Programs on a board share one sandbox (the stage), queue back to
   back, can pause at steps, and pause when the learner starts drawing. A
@@ -157,7 +161,7 @@ to 20 s for that window and its dev hook to load.
 
 | Command | Effect |
 | --- | --- |
-| `draw <file.json \| -> [--tool pen\|highlighter\|eraser] [--no-pan]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes |
+| `draw <file.json \| -> [--tool pen\|highlighter\|eraser] [--no-pan] [--mouse]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes. `--mouse` sends a mouse pointer in place of a pen |
 | `key <combo>` | Sends a key, for example `Meta+z` |
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels |
 | `type "<text>"` | Types into the focused field |

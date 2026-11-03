@@ -2,6 +2,7 @@ import { copiedLinks } from '@shared/world-links'
 import { isContent, isFrame, isInk, isInkHost, isKnown, newItemId, parentKey, ROOT, type NodeStyle } from '@shared/board-format'
 import { inkBounds, inkLocalBounds, regionContains, strokeHitByCircle } from './geometry'
 import type { NodeOverride } from './playback'
+import { placedBox } from './rotation'
 import type { BoardNode, ContentNode, InkNode, LayoutBox, Point, Region } from './types'
 
 /**
@@ -410,15 +411,16 @@ export function copySubtrees(
   return { nodes: copiedLinks(out, idMap), roots: roots.map((id) => idMap.get(id) as string), idMap }
 }
 
-/** The union of the layout boxes of some ids. */
+/** The union of where some ids are on the board. */
 export function boundsOf(ids: Iterable<string>, layout: ReadonlyMap<string, LayoutBox>): Region | null {
   let x = Infinity
   let y = Infinity
   let right = -Infinity
   let bottom = -Infinity
   for (const id of ids) {
-    const box = layout.get(id)
-    if (!box) continue
+    const found = layout.get(id)
+    if (!found) continue
+    const box = placedBox(found)
     x = Math.min(x, box.x)
     y = Math.min(y, box.y)
     right = Math.max(right, box.x + box.width)

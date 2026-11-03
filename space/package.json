@@ -29,9 +29,12 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "clipper-lib": "^6.4.2",
     "electron": "^45.0.0",
     "electron-vite": "^6.0.0",
+    "opentype.js": "^2.0.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "wawoff2": "^2.0.1"
   }
 }
