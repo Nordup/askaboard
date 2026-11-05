@@ -219,6 +219,11 @@ const NOTCH_ZOOM = 1.15
  * than the gap between the notches of a spin, so their glides join into one motion instead of a stop at each notch.
  */
 const NOTCH_GLIDE_MS = 80
+/**
+ * A camera glide (animateTo) also steps on a timer at most this far apart (B68), as player.ts WAKE_MS does for scene
+ * events (B62): a window with no display frames (hidden, or covered on GNOME Wayland) still reaches the target on time.
+ */
+const GLIDE_WAKE_MS = 250
 
 /**
  * The notches in a ⌘ / Ctrl wheel event, signed (+ zooms in), or 0 for a continuous event.
@@ -2156,17 +2161,41 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const from = cameraRef.current
         let last = performance.now()
         let elapsed = 0
-        const step = (): void => {
-          if (glideRef.current !== token) return
+        let done = false
+        let timer: ReturnType<typeof setTimeout> | null = null
+        // One step for the display frame and the timer (B68): the camera is a function of the time, so each tick is idempotent.
+        const step = (): boolean => {
+          if (done || glideRef.current !== token) {
+            done = true
+            if (timer !== null) clearTimeout(timer)
+            timer = null
+            return false
+          }
           const now = performance.now()
           if (!held?.()) elapsed += now - last
           last = now
           const t = Math.min(1, elapsed / Math.max(1, ms))
           const aim = follow?.() ?? null
           applyCamera(glideCamera(from, aim ? { ...target, center: aim } : target, t))
-          if (t < 1 || aim) requestAnimationFrame(step)
+          done = t >= 1 && !aim
+          if (done && timer !== null) {
+            clearTimeout(timer)
+            timer = null
+          }
+          return !done
         }
-        requestAnimationFrame(step)
+        const frame = (): void => {
+          if (step()) requestAnimationFrame(frame)
+        }
+        const wake = (): void => {
+          timer = null
+          if (!step()) return
+          // A follow after the glide's end, or a held glide, wakes only at the wake period.
+          const left = held?.() || elapsed >= ms ? GLIDE_WAKE_MS : Math.max(1, ms - elapsed)
+          timer = setTimeout(wake, Math.min(left, GLIDE_WAKE_MS))
+        }
+        requestAnimationFrame(frame)
+        timer = setTimeout(wake, Math.min(Math.max(1, ms), GLIDE_WAKE_MS))
       },
       boardToClient: (point) => {
         const host = hostRef.current
