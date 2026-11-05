@@ -1016,26 +1016,61 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     [applyCamera]
   )
 
+  /**
+   * The host's size in CSS px becomes the viewport (B66). The first real size also fits the
+   * board to its content. Only a host with no size gets the 1 px floor, and it does not fit.
+   */
+  const syncViewport = useCallback(
+    (width: number, height: number): Point => {
+      const next: Point = [Math.max(1, width), Math.max(1, height)]
+      const [w, h] = viewportRef.current
+      const changed = next[0] !== w || next[1] !== h
+      if (changed) {
+        viewportRef.current = next
+        // The state only draws the overlays; a read can come during another component's render (App's state updaters).
+        queueMicrotask(() => setViewport(viewportRef.current))
+        applyContentTransform()
+      }
+      const fitNow = needsFitRef.current && width >= 2 && height >= 2
+      if (fitNow) {
+        needsFitRef.current = false
+        measure()
+        fit()
+      }
+      if (changed || fitNow) requestPaint({ committed: true, active: true })
+      return viewportRef.current
+    },
+    [applyContentTransform, fit, measure, requestPaint]
+  )
+
+  /**
+   * The viewport measured now from layout. Layout runs without frames, so this is right also
+   * when a covered window gets no frames and the ResizeObserver does not run (D6, B62).
+   */
+  const viewportNow = useCallback((): Point => {
+    const host = hostRef.current
+    if (!host) return viewportRef.current
+    const rect = host.getBoundingClientRect()
+    return syncViewport(rect.width, rect.height)
+  }, [syncViewport])
+
+  // The size at mount, before an agent can read the board: never the placeholder.
+  useLayoutEffect(() => {
+    viewportNow()
+  }, [viewportNow])
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
       if (!rect) return
-      const next: Point = [Math.max(1, rect.width), Math.max(1, rect.height)]
-      viewportRef.current = next
-      setViewport(next)
-      applyContentTransform()
-      if (needsFitRef.current) {
-        needsFitRef.current = false
-        measure()
-        fit()
-      }
+      syncViewport(rect.width, rect.height)
       requestPaint({ committed: true, active: true })
     })
     observer.observe(host)
     return () => observer.disconnect()
-  }, [applyContentTransform, fit, measure, requestPaint])
+  }, [syncViewport, requestPaint])
 
   // ---------- Nodes ----------
 
@@ -2075,21 +2110,27 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useImperativeHandle(
     ref,
     () => ({
-      zoomStep,
+      zoomStep: (step, source) => {
+        viewportNow()
+        zoomStep(step, source)
+      },
       zoomTo: (zoom) => {
-        const [vw, vh] = viewportRef.current
-        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], viewportRef.current, zoom))
+        const [vw, vh] = viewportNow()
+        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], [vw, vh], zoom))
       },
       zoomBy: (factor) => {
-        const [vw, vh] = viewportRef.current
-        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], viewportRef.current, cameraRef.current.zoom * factor))
+        const [vw, vh] = viewportNow()
+        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], [vw, vh], cameraRef.current.zoom * factor))
       },
-      fit,
+      fit: () => {
+        viewportNow()
+        fit()
+      },
       liveState: () => ({
         nodes: nodesRef.current,
         nextSeq: nextSeqRef.current,
         camera: cameraRef.current,
-        viewport: viewportRef.current,
+        viewport: viewportNow(),
         selectedIds: selectedIdsRef.current,
         bounds: (id) => {
           const box = placedOf(id)
@@ -2131,7 +2172,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const host = hostRef.current
         if (!host) return null
         const rect = host.getBoundingClientRect()
-        const screen = boardToScreen(point, viewportRef.current, cameraRef.current)
+        const screen = boardToScreen(point, syncViewport(rect.width, rect.height), cameraRef.current)
         return [rect.left + screen[0], rect.top + screen[1]]
       },
       clientRect: () => {
@@ -2139,7 +2180,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
       },
       reveal: (rect) => {
-        const [vw, vh] = viewportRef.current
+        const [vw, vh] = viewportNow()
         const current = cameraRef.current
         const margin = 80 / current.zoom
         const halfW = vw / 2 / current.zoom
@@ -2232,7 +2273,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, syncViewport, viewportNow, zoomStep]
   )
   useEffect(
     () => () => {

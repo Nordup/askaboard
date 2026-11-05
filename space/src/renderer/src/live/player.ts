@@ -4,7 +4,7 @@ import { followedWorlds, renamedFollows, type NodeFollows } from '@shared/world-
 import { SCENE_EASES, type SceneStatus } from '@shared/live-scene'
 import type { SceneEvent } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
-import { clampZoom } from '../board/geometry'
+import { aimCamera } from '../board/geometry'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackTip } from '../board/playback'
 import type { Point } from '../board/types'
 import { sceneColor, withOpacity } from './colors'
@@ -1554,7 +1554,8 @@ export class ScenePlayer {
           // A move to a point of a world goes on following it until the scene ends.
           const link = move.follows
           const follow = typeof link?.world === 'string' ? (): Point | null => (this.scenes.includes(scene) ? (board.worldPoint(link.world as string, link.point) ?? move.center) : null) : undefined
-          board.animateTo({ center: move.center, zoom: clampZoom(move.zoom) }, Math.max(1, move.dur * 1000), () => this.held(scene), follow)
+          // The zoom fits the learner's window as it is now, from the camera as it is now (B67).
+          board.animateTo(aimCamera(move, state.viewport, state.camera), Math.max(1, move.dur * 1000), () => this.held(scene), follow)
         }
         scene.lastT = t
       }

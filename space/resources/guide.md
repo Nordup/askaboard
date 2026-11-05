@@ -90,7 +90,7 @@ html(markup, o) in a scene (topic "scene") turns a small HTML subset into board 
 <!-- topic: view -->
 <!-- summary: camera() in a scene: its options, board.view, and when camera moves are skipped. -->
 
-- `camera({fit, to, zoom, pad}, s)` glides the learner's view: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre: an object or [x, y]) and/or zoom (CSS pixels per board point; the learner's normal view is 0.85). Default 1 s. Given as a function (to: () => ball), the view follows it until the next camera().
+- `camera({fit, to, zoom, pad}, s)` glides the learner's view: fit (an object or [x, y, w, h], with pad, default 40) and/or to (a centre: an object or [x, y]) and/or zoom (CSS pixels per board point; the learner's normal view is 0.85). Default 1 s. Given as a function (to: () => ball), the view follows it until the next camera(). With fit, the learner sees that region in the window as it is when the scene plays, also after a resize; preview_scene's frames show the same view.
 - board.view is the learner's view {x, y, width, height} now (after this scene's camera moves).
 - board.view.covered (when present) lists the parts of the view that the app's script panel and tool palette cover while scenes play; the learner cannot see material there.
 - After the learner pans or zooms during a scene, its later camera moves are skipped.
