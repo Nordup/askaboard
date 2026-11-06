@@ -28,12 +28,13 @@ import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { SearchPanel } from './components/SearchPanel'
+import { KeysPanel } from './components/KeysPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast } from './components/Toast'
 import { BoardControls } from './components/BoardControls'
 import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
-import type { CommandContext } from './board/commands'
+import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
@@ -1155,6 +1156,20 @@ export function App() {
     }
   }, [agentContext])
 
+  // ---------- The keys panel (?) ----------
+
+  const [keysOpen, setKeysOpen] = useState(false)
+  const closeKeys = useCallback(() => setKeysOpen(false), [])
+  useEffect(() => {
+    const down = (event: KeyboardEvent): void => {
+      if (event.key !== KEYS_PANEL_KEY || event.metaKey || event.ctrlKey || event.altKey || event.repeat || isEditableTarget(event.target)) return
+      event.preventDefault()
+      setKeysOpen(true)
+    }
+    window.addEventListener('keydown', down)
+    return () => window.removeEventListener('keydown', down)
+  }, [])
+
   // ---------- Tool keys (tools.ts TOOLS), Q for the lock ----------
 
   useEffect(() => {
@@ -1285,6 +1300,7 @@ export function App() {
                 onChanges={onChanges}
                 onSelectionChange={setSelection}
                 onSelectionStyle={setSelectionStyle}
+                onError={showError}
                 onContextMenu={([x, y]) => {
                   const context = boardRef.current?.commandContext()
                   setBoardMenu(context && hasBoardMenu(context) ? { x, y, board: open.key, context } : null)
@@ -1306,7 +1322,7 @@ export function App() {
                 }}
                 onZoomIn={() => boardRef.current?.zoomStep('in', 'menu')}
                 onZoomOut={() => boardRef.current?.zoomStep('out', 'menu')}
-                onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}
+                onZoom={(command) => (command === 'reset' ? boardRef.current?.zoomTo(HOME_ZOOM) : boardRef.current?.zoomToFit(command === 'fit' ? 'board' : 'selection'))}
                 onCommand={(command) => boardRef.current?.runCommand(command)}
                 commandContext={() => boardRef.current?.commandContext() ?? null}
                 onUndo={() => boardRef.current?.undo()}
@@ -1328,6 +1344,7 @@ export function App() {
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
       </main>
+      {keysOpen && <KeysPanel onClose={closeKeys} />}
       {searchOpen && folder && (
         <SearchPanel
           boards={boards}

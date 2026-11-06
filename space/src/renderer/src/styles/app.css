@@ -561,6 +561,16 @@ button:focus-visible {
   margin: auto;
 }
 
+/* The keys panel (?): layout only (centred in the window both ways, a fixed width, as tall as its rows); the content is shared .menu parts. */
+.menu.keys-panel {
+  inset: 0;
+  width: min(var(--keys-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
+  height: fit-content;
+  max-height: calc(100vh - 2 * var(--search-panel-margin-y));
+  margin: auto;
+  outline: none;
+}
+
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
 .menu.perf-pop {
   position: absolute;
@@ -1270,6 +1280,8 @@ button:focus-visible {
  *                          --radius-xl, --border-strong, --shadow-card, rows of --panel-row-height; the selection is
  *                          the one fill (hover moves it); the instance sets the panel's height
  *   .menu__field/__input   the panel's search field at the top: a 17 px icon, 15 px text, a hairline under it
+ *                          (a panel without a field starts with a .menu__title, padded as the field)
+ *   .menu__columns         sections side by side (each a heading and its rows); they wrap below each other in a narrow window
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
@@ -1445,6 +1457,19 @@ button:focus-visible {
 /* The pointer moves the selection, so a hovered row has no fill of its own: the selected row is the one fill. */
 .menu--panel .menu__item:not(.menu__item--current):hover:not(:disabled) {
   background: none;
+}
+
+/* A panel's title in place of a field: its text in the rows' column. */
+.menu--panel > .menu__title {
+  flex-shrink: 0;
+  padding: var(--space-4) calc(var(--menu-pad) + var(--space-2)) var(--space-1);
+}
+
+.menu__columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  column-gap: var(--space-4);
+  align-content: start;
 }
 
 /* The field's icon lines up with the rows' icons (the list padding + the row padding). */

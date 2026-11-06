@@ -1,10 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
-import { isMac, shortcut } from '../platform'
 import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
-import { commandRow, type BoardCommand, type CommandContext } from '../board/commands'
+import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
+import { Menu } from './Menu'
 
 /**
  * What the style pill shows: its fields, with the values of the tool or of the selection (a missing value
@@ -40,7 +40,8 @@ interface BoardControlsProps {
   commandContext(): CommandContext | null
   onZoomIn(): void
   onZoomOut(): void
-  onResetZoom(): void
+  /** A row of the zoom menu: 100%, fit the board, fit the selection. */
+  onZoom(command: ZoomCommand): void
   onUndo(): void
   onRedo(): void
 }
@@ -49,7 +50,7 @@ const PEN_ICONS: Record<PenKind, LucideIcon> = { pen: PenLine, marker: Highlight
 
 const ICON = { size: 17, strokeWidth: 1.75 } as const
 
-/** The More menu opens this far above the style pill (CSS px), as the style pill sits above the tool pill. */
+/** The More menu and the zoom menu open this far above their pill (CSS px), as the style pill sits above the tool pill. */
 const MENU_GAP = 8
 
 type Rect = { left: number; top: number; right: number; bottom: number }
@@ -119,21 +120,19 @@ export function BoardControls(props: BoardControlsProps) {
     <div className="board-controls" ref={rootRef}>
       <div className="board-controls__start">
         <div className="pill-bar" role="toolbar" aria-label="Zoom">
-          <button className="tool" title={`Zoom out — ${shortcut('-')}`} aria-label="Zoom out" onClick={props.onZoomOut}>
+          <button className="tool" title={`Zoom out — ${KEYS.zoomOut}`} aria-label="Zoom out" onClick={props.onZoomOut}>
             <Minus {...ICON} />
           </button>
-          <button className="zoom-label" title={`Reset zoom to 100% — ${shortcut('0')}`} onClick={props.onResetZoom}>
-            {Math.round(zoom * 100)}%
-          </button>
-          <button className="tool" title={`Zoom in — ${shortcut('+')}`} aria-label="Zoom in" onClick={props.onZoomIn}>
+          <ZoomMenu zoom={zoom} onZoom={props.onZoom} commandContext={props.commandContext} />
+          <button className="tool" title={`Zoom in — ${KEYS.zoomIn}`} aria-label="Zoom in" onClick={props.onZoomIn}>
             <Plus {...ICON} />
           </button>
         </div>
         <div className="pill-bar" role="toolbar" aria-label="History">
-          <button className="tool" title={`Undo — ${shortcut('Z')}`} aria-label="Undo" onClick={props.onUndo}>
+          <button className="tool" title={`Undo — ${KEYS.undo}`} aria-label="Undo" onClick={props.onUndo}>
             <Undo2 {...ICON} />
           </button>
-          <button className="tool" title={`Redo — ${shortcut(isMac ? '⇧Z' : 'Shift+Z')}`} aria-label="Redo" onClick={props.onRedo}>
+          <button className="tool" title={`Redo — ${KEYS.redo}`} aria-label="Redo" onClick={props.onRedo}>
             <Redo2 {...ICON} />
           </button>
         </div>
@@ -312,6 +311,41 @@ function SelectionCommands(props: { divider: boolean; editable: boolean; compact
         <Ellipsis {...ICON} />
       </button>
       {menu && <BoardMenu x={menu.x} y={menu.y} above context={menu.context} onCommand={onCommand} onClose={close} toggle={moreRef.current} />}
+    </>
+  )
+}
+
+/** The zoom pill's %: a click opens the zoom menu above the pill (Zoom to selection only with a selection). */
+function ZoomMenu(props: { zoom: number; onZoom(command: ZoomCommand): void; commandContext(): CommandContext | null }) {
+  const { onZoom, commandContext } = props
+  const labelRef = useRef<HTMLButtonElement>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; selection: boolean } | null>(null)
+  const close = useCallback(() => setMenu(null), [])
+  const toggleMenu = (): void => {
+    const button = labelRef.current
+    if (menu || !button) {
+      setMenu(null)
+      return
+    }
+    // Above the pill, with its left edge at the pill's.
+    const pill = (button.closest('.pill-bar') ?? button).getBoundingClientRect()
+    setMenu({ x: pill.left, y: pill.top - MENU_GAP, selection: commandContext()?.selection ?? false })
+  }
+  return (
+    <>
+      <button ref={labelRef} className="zoom-label" title="Zoom" aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
+        {Math.round(props.zoom * 100)}%
+      </button>
+      {menu && (
+        <Menu
+          x={menu.x}
+          y={menu.y}
+          above
+          entries={ZOOM_COMMANDS.filter((row) => row.id !== 'selection' || menu.selection).map((row) => ({ label: row.label, hint: row.keys, onSelect: () => onZoom(row.id) }))}
+          onClose={close}
+          toggle={labelRef.current}
+        />
+      )}
     </>
   )
 }

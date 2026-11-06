@@ -228,7 +228,7 @@ to 20 s for that window and its dev hook to load.
 | Command | Effect |
 | --- | --- |
 | `draw <file.json \| -> [--tool pen\|marker\|eraser\|current] [--no-pan] [--mouse]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes. `--mouse` sends a mouse pointer in place of a pen |
-| `key <combo>` | Sends a key, for example `Meta+z` |
+| `key <combo>` | Sends a key, for example `Meta+z` or `Shift+?`. `Meta+c`, `x`, `v`, `a` and `z` also run their edit command, as macOS does, so `Meta+v` raises the page's paste event with the system clipboard |
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels. `click --right` presses the right button (the board menu); `drag --alt` holds Option / Alt (duplicate and move); `--shift` adds Shift |
 | `type "<text>"` | Types into the focused field |
 | `node-rect <id>` | A node's window rect, from the layout cache and the DOM |

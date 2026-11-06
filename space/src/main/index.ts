@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type FailedSave, type MenuCommand, type Snapshot } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
@@ -294,6 +294,9 @@ async function openInitialFolder(): Promise<void> {
   }
 }
 
+/** The most text a board copy puts on the system clipboard (characters). */
+const MAX_CLIPBOARD_TEXT = 10 * 1024 * 1024
+
 /** The message comes from the board page itself, not from a frame in it or another window. */
 function fromBoardPage(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame
@@ -352,6 +355,20 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.devCloseAnswer, (_event, button: unknown) => {
     if (remoteDebugPort !== null && typeof button === 'number') answerCloseDialog?.(button)
+  })
+  // The system clipboard, for the board page only (no world frame reads it). A board copy writes plain text.
+  ipcMain.on(IPC.writeClipboardText, (event, text: unknown) => {
+    if (!fromBoardPage(event) || typeof text !== 'string' || text.length > MAX_CLIPBOARD_TEXT) return
+    clipboard.writeText(text).catch((error: unknown) => console.error(`clipboard write failed: ${error instanceof Error ? error.message : String(error)}`))
+  })
+  ipcMain.handle(IPC.clipboardHasContent, async (event) => {
+    if (!fromBoardPage(event)) return false
+    if (await clipboard.has('image/png')) return true
+    return (await clipboard.readText()).trim() !== ''
+  })
+  // A menu's Paste: the page gets the paste event that Edit > Paste and ⌘V give it (board/Board.tsx handles it).
+  ipcMain.on(IPC.pasteClipboard, (event) => {
+    if (fromBoardPage(event)) event.sender.paste()
   })
   ipcMain.on(IPC.worldLog, (event, level: unknown, text: unknown) => {
     if (fromBoardPage(event) && typeof level === 'string' && typeof text === 'string') agentServer.worldLog(level, text)

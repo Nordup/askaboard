@@ -1,6 +1,7 @@
 /**
  * The board commands of the right-click menu and of the style pill's More menu:
- * one list feeds both, so the two menus cannot differ.
+ * one list feeds both, so the two menus cannot differ. The keys panel (?) lists
+ * them too, with the history, view and zoom keys below.
  */
 
 import { isMac, shortcut } from '../platform'
@@ -14,7 +15,7 @@ export interface CommandContext {
   selection: boolean
   /** Some selected item is not locked. */
   editable: boolean
-  /** The board clipboard holds items. */
+  /** A paste has something: board items, or text or an image on the system clipboard (clipboard.ts canPaste). */
   clipboard: boolean
   /** The board shows at least one item. */
   items: boolean
@@ -29,7 +30,9 @@ interface CommandDef {
   runs(context: CommandContext): boolean
 }
 
-const shift = (key: string): string => shortcut(isMac ? `⇧${key}` : `Shift+${key}`)
+/** Shift and a key, without the command key: macOS "⇧1", other platforms "Shift+1". */
+const shiftKey = (key: string): string => (isMac ? `⇧${key}` : `Shift+${key}`)
+const shift = (key: string): string => shortcut(shiftKey(key))
 
 /** The commands in menu order, in groups with a line between them. */
 const COMMAND_GROUPS: readonly (readonly CommandDef[])[] = [
@@ -63,3 +66,28 @@ export function commandRow(id: BoardCommand): CommandRow {
   const def = COMMAND_GROUPS.flat().find((command) => command.id === id) as CommandDef
   return { id, label: def.label, keys: def.keys }
 }
+
+/** Every board command, in menu groups: the keys panel lists them all. */
+export function allCommandGroups(): CommandRow[][] {
+  return COMMAND_GROUPS.map((group) => group.map(({ id, label, keys }) => ({ id, label, keys })))
+}
+
+/** The keys of the undo pill and the zoom pill's buttons, for their tooltips and the keys panel. */
+export const KEYS = {
+  undo: shortcut('Z'),
+  redo: shift('Z'),
+  zoomIn: shortcut('+'),
+  zoomOut: shortcut('-')
+} as const
+
+export type ZoomCommand = 'reset' | 'fit' | 'selection'
+
+/** The zoom menu (a click on the zoom pill's %), in its order. Zoom to selection needs a selection. */
+export const ZOOM_COMMANDS: readonly { id: ZoomCommand; label: string; keys: string }[] = [
+  { id: 'reset', label: 'Zoom to 100%', keys: shortcut('0') },
+  { id: 'fit', label: 'Zoom to fit', keys: shiftKey('1') },
+  { id: 'selection', label: 'Zoom to selection', keys: shiftKey('2') }
+]
+
+/** The keys panel's key: Shift and / on most layouts. */
+export const KEYS_PANEL_KEY = '?'

@@ -216,7 +216,15 @@ solid, dashed, dotted)) and `.zoom-label`.
   Delete | Bring to front, Send to back; on the empty board Paste and
   Select all.
 - Tooltips name the key: "Select — V or 1", "Undo — ⌘Z".
-- The zoom % is only here, not in the top bar.
+- The zoom % is only here, not in the top bar. A click on it opens the
+  shared `Menu` 8 px above the zoom pill: Zoom to 100% (⌘0), Zoom to fit
+  (⇧1), Zoom to selection (⇧2, only with a selection). Both fits glide and
+  never zoom in past 100%.
+- The keys panel (`?`, `KeysPanel.tsx`): a `.menu--panel` over a
+  `.backdrop`, centred, `--keys-panel-width` (720 px). A `.menu__title`,
+  then `.menu__columns` (Tools, Edit, View): `.menu__heading` and
+  `.menu__row` rows, keys in `.menu__meta--mono`. The rows come from
+  `TOOLS` and `board/commands.ts`. Escape, `?` or a press outside closes it.
 
 ## Icon buttons and status dots
 

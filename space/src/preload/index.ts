@@ -84,6 +84,9 @@ const api: SpaceApi = {
   connectAgentClient: (id, action) => ipcRenderer.invoke(IPC.connectAgentClient, id, action),
 
   importAsset: (src) => ipcRenderer.invoke(IPC.importAsset, src),
+  writeClipboardText: (text) => ipcRenderer.send(IPC.writeClipboardText, text),
+  clipboardHasContent: () => ipcRenderer.invoke(IPC.clipboardHasContent),
+  pasteClipboard: () => ipcRenderer.send(IPC.pasteClipboard),
   onSnapshotRequest: (listener) => listen(IPC.snapshotRequest, listener),
   snapshotReady: (reply) => ipcRenderer.send(IPC.snapshotReady, reply),
   snapshotListening: () => ipcRenderer.send(IPC.snapshotListening),

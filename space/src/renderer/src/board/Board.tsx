@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, isPainted, isShape, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision, type ShapeNode } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, isPainted, isShape, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type ImageNode, type LiveNode, type NodeStyle, type Removal, type Revision, type ShapeNode } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import { isMac } from '../platform'
 import { FONTS, MARKER_SCALE, shapeTool, type DrawStyle, type ToolId, type ToolState } from '../tools'
 import type { BoardCommand, CommandContext } from './commands'
-import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
+import { boardKeyAction, canPaste, pasteContent, readNodeClipboard, refreshSystemClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
 import { ContentLayer, measureContent, type ContentContext } from './content'
 import {
   boardToScreen,
@@ -91,6 +91,8 @@ export interface BoardHandle {
   zoomStep(step: ZoomStep, source: 'menu' | 'key'): void
   /** Show all nodes. */
   fit(): void
+  /** Glide to show the whole board (⇧1) or the selection (⇧2), as fit() frames the board. */
+  zoomToFit(what: 'board' | 'selection'): void
   /** The live board, with edits that are not saved yet. For the agent bridge. */
   liveState(): LiveBoardState
   /** Briefly outline a board region, so the learner sees what an agent looked at. */
@@ -212,6 +214,8 @@ export interface BoardProps {
   onSelectionStyle?(style: SelectionStyle | null): void
   /** A right-click (or Control-click on macOS) on the board, at window CSS pixels, after it chose the selection: open the board menu there. */
   onContextMenu?(at: Point): void
+  /** A learner action failed (a pasted image could not be saved): show the message. */
+  onError?(message: string): void
   ref?: Ref<BoardHandle>
 }
 
@@ -220,6 +224,22 @@ export interface BoardProps {
  * so a tablet draws at once while Select is the default. Later presses keep the chosen tool.
  */
 let penSeen = false
+/** Pasted text with a line longer than this many characters gets a wrap width of PASTE_WRAP_EM times its font size. */
+const PASTE_WRAP_CHARS = 60
+const PASTE_WRAP_EM = 30
+/** A pasted image is at most this share of the view wide (its own pixel width when that is less). */
+const PASTE_IMAGE_SHARE = 0.6
+
+/** A file as a data: URL (for importAsset). */
+function readDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error ?? new Error('The image could not be read.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 /** Stroke eraser radius in screen pixels. */
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
@@ -464,7 +484,7 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
 }
 
-export function Board({ doc, history, initialCamera, tool, style, selectMode, lock = false, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, onContextMenu, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, style, selectMode, lock = false, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, onContextMenu, onError, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const penRef = useRef<HTMLDivElement>(null)
@@ -579,6 +599,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
   onToolChangeRef.current = onToolChange
   const onContextMenuRef = useRef(onContextMenu)
   onContextMenuRef.current = onContextMenu
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+  /** The board is mounted: a pasted image that was saved after it closed is dropped. */
+  const mountedRef = useRef(false)
   const onSelectionChangeRef = useRef(onSelectionChange)
   onSelectionChangeRef.current = onSelectionChange
   useEffect(() => {
@@ -1051,16 +1075,78 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     [requestPaint]
   )
 
-  const fit = useCallback(() => {
+  /**
+   * The camera that shows a board region whole: it fills at most 80% of the view's width and 70% of its height
+   * (the bottom controls), and never zooms in past 100%. No region (an empty board): the home view.
+   */
+  const fitCamera = useCallback((region: Region | null): Camera => {
     const [vw, vh] = viewportRef.current
-    const content = boundsOf(layoutRef.current.keys(), layoutRef.current)
-    if (!content) {
-      applyCamera({ center: [0, 0], zoom: HOME_ZOOM })
-      return
-    }
-    const zoom = clampZoom(Math.min(HOME_ZOOM, (vw * 0.8) / Math.max(1, content.width), (vh * 0.7) / Math.max(1, content.height)))
-    applyCamera({ center: [content.x + content.width / 2, content.y + content.height / 2], zoom })
-  }, [applyCamera])
+    if (!region) return { center: [0, 0], zoom: HOME_ZOOM }
+    const zoom = clampZoom(Math.min(HOME_ZOOM, (vw * 0.8) / Math.max(1, region.width), (vh * 0.7) / Math.max(1, region.height)))
+    return { center: [region.x + region.width / 2, region.y + region.height / 2], zoom }
+  }, [])
+
+  const fit = useCallback(() => {
+    applyCamera(fitCamera(boundsOf(layoutRef.current.keys(), layoutRef.current)))
+  }, [applyCamera, fitCamera])
+
+  /** BoardHandle.animateTo: the camera glide. */
+  const glideTo = useCallback(
+    (target: Camera, ms = 420, held?: () => boolean, follow?: () => Point | null) => {
+      const token = ++glideRef.current
+      const from = cameraRef.current
+      let last = performance.now()
+      let elapsed = 0
+      let done = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      // One step for the display frame and the timer (B68): the camera is a function of the time, so each tick is idempotent.
+      const step = (): boolean => {
+        if (done || glideRef.current !== token) {
+          done = true
+          if (timer !== null) clearTimeout(timer)
+          timer = null
+          return false
+        }
+        const now = performance.now()
+        if (!held?.()) elapsed += now - last
+        last = now
+        const t = Math.min(1, elapsed / Math.max(1, ms))
+        const aim = follow?.() ?? null
+        applyCamera(glideCamera(from, aim ? { ...target, center: aim } : target, t))
+        done = t >= 1 && !aim
+        if (done && timer !== null) {
+          clearTimeout(timer)
+          timer = null
+        }
+        return !done
+      }
+      const frame = (): void => {
+        if (step()) requestAnimationFrame(frame)
+      }
+      const wake = (): void => {
+        timer = null
+        if (!step()) return
+        // A follow after the glide's end, or a held glide, wakes only at the wake period.
+        const left = held?.() || elapsed >= ms ? GLIDE_WAKE_MS : Math.max(1, ms - elapsed)
+        timer = setTimeout(wake, Math.min(left, GLIDE_WAKE_MS))
+      }
+      requestAnimationFrame(frame)
+      timer = setTimeout(wake, Math.min(Math.max(1, ms), GLIDE_WAKE_MS))
+    },
+    [applyCamera]
+  )
+
+  /** Glide to show the board, or the selection (nothing without one), framed as fit() frames the board. */
+  const zoomToFit = useCallback(
+    (what: 'board' | 'selection') => {
+      const ids = what === 'board' ? layoutRef.current.keys() : selectedIdsRef.current
+      const region = boundsOf(ids, layoutRef.current)
+      if (what === 'selection' && !region) return
+      learnerViewAtRef.current = Date.now()
+      glideTo(fitCamera(region))
+    },
+    [fitCamera, glideTo]
+  )
 
   const lastStepRef = useRef<{ step: ZoomStep; source: 'menu' | 'key'; at: number } | null>(null)
   const zoomStep = useCallback(
@@ -2350,46 +2436,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
       },
       worldPoints: () => worldPointsRef.current,
       pinMark: (id, by) => void pinMark(id, by),
-      animateTo: (target, ms = 420, held, follow) => {
-        const token = ++glideRef.current
-        const from = cameraRef.current
-        let last = performance.now()
-        let elapsed = 0
-        let done = false
-        let timer: ReturnType<typeof setTimeout> | null = null
-        // One step for the display frame and the timer (B68): the camera is a function of the time, so each tick is idempotent.
-        const step = (): boolean => {
-          if (done || glideRef.current !== token) {
-            done = true
-            if (timer !== null) clearTimeout(timer)
-            timer = null
-            return false
-          }
-          const now = performance.now()
-          if (!held?.()) elapsed += now - last
-          last = now
-          const t = Math.min(1, elapsed / Math.max(1, ms))
-          const aim = follow?.() ?? null
-          applyCamera(glideCamera(from, aim ? { ...target, center: aim } : target, t))
-          done = t >= 1 && !aim
-          if (done && timer !== null) {
-            clearTimeout(timer)
-            timer = null
-          }
-          return !done
-        }
-        const frame = (): void => {
-          if (step()) requestAnimationFrame(frame)
-        }
-        const wake = (): void => {
-          timer = null
-          if (!step()) return
-          // A follow after the glide's end, or a held glide, wakes only at the wake period.
-          const left = held?.() || elapsed >= ms ? GLIDE_WAKE_MS : Math.max(1, ms - elapsed)
-          timer = setTimeout(wake, Math.min(left, GLIDE_WAKE_MS))
-        }
-        requestAnimationFrame(frame)
-        timer = setTimeout(wake, Math.min(Math.max(1, ms), GLIDE_WAKE_MS))
+      animateTo: glideTo,
+      zoomToFit: (what) => {
+        viewportNow()
+        zoomToFit(what)
       },
       boardToClient: (point) => {
         const host = hostRef.current
@@ -2430,7 +2480,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
         return {
           selection: selected.length > 0,
           editable: selectionStyle(selected)?.editable ?? false,
-          clipboard: hasNodeClipboard(),
+          clipboard: canPaste(),
           items: (indexRef.current.children.get(ROOT) ?? []).some(shown)
         }
       },
@@ -2514,7 +2564,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyPlaybackToDom, applyStyle, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, redo, requestMeasure, requestPaint, setSelectedIds, shown, syncViewport, undo, viewportNow, zoomStep]
+    [applyCamera, applyPlaybackToDom, applyStyle, commitEditing, commitOver, documentNodes, emit, fit, glideTo, homeless, measure, paintInks, placedMap, placedOf, redo, requestMeasure, requestPaint, setSelectedIds, shown, syncViewport, undo, viewportNow, zoomStep, zoomToFit]
   )
   useEffect(
     () => () => {
@@ -2560,34 +2610,151 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     } else if (action === 'front' || action === 'back') {
       replaceNodes(reordered(ids, action))
     } else if (action === 'paste') {
-      const clip = readNodeClipboard()
-      if (!clip.roots.length) return
-      // Fresh ids again, so a second paste does not collide.
-      const idMap = new Map(clip.nodes.map((node) => [node.id, newItemId(node.kind === 'ink' ? 's' : 'n')]))
-      const roots = new Set(clip.roots)
-      const rootNodes = clip.nodes.filter((node) => roots.has(node.id) && isKnown(node)) as (BoardNode & { x: number; y: number })[]
-      const anchor = pasteAnchorRef.current ?? cameraRef.current.center
-      // The roots' world top-left: ink points may sit far from the node's x, y (v1 ink has x = y = 0), and an arrow may point up and left of it.
-      const left = (node: BoardNode & { x: number; y: number }): Point => {
-        const local = isPainted(node) ? paintedLocalBounds(node) : null
-        return [node.x + (local?.x ?? 0), node.y + (local?.y ?? 0)]
-      }
-      const minX = Math.min(...rootNodes.map((node) => left(node)[0]))
-      const minY = Math.min(...rootNodes.map((node) => left(node)[1]))
-      let z = zAbove(index.children.get(ROOT) ?? [])
-      const nodes = clip.nodes.map((node) => {
-        const copy = { ...withoutScene(node), id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
-        if (typeof node.parent === 'string' && idMap.has(node.parent)) copy.parent = idMap.get(node.parent)
-        if (roots.has(node.id) && isKnown(node)) {
-          return { ...copy, x: node.x - minX + anchor[0], y: node.y - minY + anchor[1], z: z++ } as BoardNode
-        }
-        return copy as BoardNode
-      })
-      commitNodes([...nodesRef.current, ...(copiedLinks(nodes, idMap))])
-      setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
-      pasteAnchorRef.current = null
+      // A menu's Paste: main raises the page's paste event, as ⌘V and Edit > Paste do (pasteEvent).
+      window.space.pasteClipboard()
     }
   }
+
+  /** Where a paste lands: the last board press (or the right-click of the menu's Paste), else the view centre. */
+  const pasteAnchor = (): Point => pasteAnchorRef.current ?? cameraRef.current.center
+
+  /** Paste the board clipboard's items at the paste point: fresh ids, one undo step, the copies selected. */
+  const pasteItems = (): void => {
+    const clip = readNodeClipboard()
+    if (!clip.roots.length) return
+    const index = indexRef.current
+    // Fresh ids again, so a second paste does not collide.
+    const idMap = new Map(clip.nodes.map((node) => [node.id, newItemId(node.kind === 'ink' ? 's' : 'n')]))
+    const roots = new Set(clip.roots)
+    const rootNodes = clip.nodes.filter((node) => roots.has(node.id) && isKnown(node)) as (BoardNode & { x: number; y: number })[]
+    const anchor = pasteAnchor()
+    // The roots' world top-left: ink points may sit far from the node's x, y (v1 ink has x = y = 0), and an arrow may point up and left of it.
+    const left = (node: BoardNode & { x: number; y: number }): Point => {
+      const local = isPainted(node) ? paintedLocalBounds(node) : null
+      return [node.x + (local?.x ?? 0), node.y + (local?.y ?? 0)]
+    }
+    const minX = Math.min(...rootNodes.map((node) => left(node)[0]))
+    const minY = Math.min(...rootNodes.map((node) => left(node)[1]))
+    let z = zAbove(index.children.get(ROOT) ?? [])
+    const nodes = clip.nodes.map((node) => {
+      const copy = { ...withoutScene(node), id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
+      if (typeof node.parent === 'string' && idMap.has(node.parent)) copy.parent = idMap.get(node.parent)
+      if (roots.has(node.id) && isKnown(node)) {
+        return { ...copy, x: node.x - minX + anchor[0], y: node.y - minY + anchor[1], z: z++ } as BoardNode
+      }
+      return copy as BoardNode
+    })
+    commitNodes([...nodesRef.current, ...(copiedLinks(nodes, idMap))])
+    setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
+  }
+
+  /** Paste text from another app: a learner text item in the Text tool's style, its top-left at the paste point. */
+  const pasteText = (text: string): void => {
+    const anchor = pasteAnchor()
+    const { color, size, font, align } = styleRef.current
+    const fontFamily = FONTS.find((option) => option.id === font)?.value ?? FONTS[0].value
+    // Typed text has no wrap width; a long line of pasted text wraps at about 60 characters instead.
+    const longest = Math.max(...text.split('\n').map((line) => line.length))
+    const style: NodeStyle = { color, fontSize: `${size}px`, fontFamily, textAlign: align }
+    if (longest > PASTE_WRAP_CHARS) style.width = `${Math.round(size * PASTE_WRAP_EM)}px`
+    const node: TextNode = {
+      id: newItemId('n'),
+      kind: 'text',
+      x: Math.round(anchor[0] * 10) / 10,
+      y: Math.round(anchor[1] * 10) / 10,
+      z: zAbove(indexRef.current.children.get(ROOT) ?? []),
+      author: 'learner',
+      seq: 0,
+      text,
+      style
+    }
+    commitNodes([...nodesRef.current, node])
+    setSelectedIds([node.id])
+  }
+
+  /**
+   * Paste an image from another app: main saves it into the folder's assets/ (importAsset: image types and a
+   * size limit), then it lands centred on the paste point, at most PASTE_IMAGE_SHARE of the view wide.
+   */
+  const pasteImage = async (file: File): Promise<void> => {
+    const anchor = pasteAnchor()
+    const [size, src] = await Promise.all([
+      createImageBitmap(file).then(
+        (bitmap) => {
+          const natural: Point = [bitmap.width, bitmap.height]
+          bitmap.close()
+          return natural
+        },
+        () => null
+      ),
+      readDataUrl(file).then((url) => window.space.importAsset(url))
+    ])
+    // The board closed or changed while the image was saved.
+    if (!mountedRef.current) return
+    let style: NodeStyle = {}
+    let x = anchor[0]
+    let y = anchor[1]
+    if (size && size[0] > 0 && size[1] > 0) {
+      const width = Math.min(size[0], (viewportRef.current[0] * PASTE_IMAGE_SHARE) / cameraRef.current.zoom)
+      const height = (width * size[1]) / size[0]
+      style = { width: `${Math.round(width)}px` }
+      x -= width / 2
+      y -= height / 2
+    }
+    const node: ImageNode = {
+      id: newItemId('n'),
+      kind: 'image',
+      x: Math.round(x * 10) / 10,
+      y: Math.round(y * 10) / 10,
+      z: zAbove(indexRef.current.children.get(ROOT) ?? []),
+      author: 'learner',
+      seq: 0,
+      src,
+      style
+    }
+    commitNodes([...nodesRef.current, node])
+    setSelectedIds([node.id])
+  }
+
+  /** The one way a paste comes in: ⌘V, Edit > Paste and a menu's Paste all raise the page's paste event. */
+  const pasteEvent = (event: ClipboardEvent): void => {
+    refreshSystemClipboard()
+    // A text field or the text editor pastes its own way (plain typing).
+    if (isEditableTarget(event.target) || isEditableTarget(document.activeElement) || editingRef.current || !event.clipboardData) return
+    const content = pasteContent(event.clipboardData)
+    if (!content) return
+    event.preventDefault()
+    if (openDrag()) cancelDrag()
+    if (content.kind === 'items') pasteItems()
+    else if (content.kind === 'text') pasteText(content.text)
+    else
+      void pasteImage(content.file).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(error)
+        onErrorRef.current?.(`Couldn't paste the image. ${message}`)
+      })
+    pasteAnchorRef.current = null
+  }
+  const pasteEventRef = useRef(pasteEvent)
+  pasteEventRef.current = pasteEvent
+
+  useEffect(() => {
+    const paste = (event: ClipboardEvent): void => pasteEventRef.current(event)
+    // Another app may copy while the window is in the background: the menus' Paste reads this.
+    const focus = (): void => refreshSystemClipboard()
+    mountedRef.current = true
+    refreshSystemClipboard()
+    window.addEventListener('paste', paste)
+    window.addEventListener('focus', focus)
+    window.addEventListener('copy', focus)
+    window.addEventListener('cut', focus)
+    return () => {
+      mountedRef.current = false
+      window.removeEventListener('paste', paste)
+      window.removeEventListener('focus', focus)
+      window.removeEventListener('copy', focus)
+      window.removeEventListener('cut', focus)
+    }
+  }, [])
 
   const applyActionRef = useRef(applyAction)
   applyActionRef.current = applyAction
@@ -2658,6 +2825,12 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
       return
     }
     if (dragRef.current) return
+    // ⇧1 and ⇧2 by the key's place: Shift makes another character of the digit.
+    if (!modified && !event.altKey && event.shiftKey && (event.code === 'Digit1' || event.code === 'Digit2')) {
+      event.preventDefault()
+      if (!event.repeat) zoomToFit(event.code === 'Digit1' ? 'board' : 'selection')
+      return
+    }
     const arrows: Record<string, Point> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
     if (!modified && !event.altKey && arrows[event.key] && selectedIdsRef.current.length) {
       event.preventDefault()
@@ -2673,7 +2846,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
         return
       }
     }
-    const action = boardKeyAction(event, { hasSelection: selectedIdsRef.current.length > 0, hasClipboard: hasNodeClipboard() })
+    const action = boardKeyAction(event, { hasSelection: selectedIdsRef.current.length > 0 })
     if (action) {
       event.preventDefault()
       applyAction(action)

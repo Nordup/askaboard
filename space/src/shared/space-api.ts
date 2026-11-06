@@ -701,6 +701,12 @@ export interface SpaceApi {
    * path is checked. Resolves the folder-relative path.
    */
   importAsset(src: string): Promise<string>
+  /** Board window only: put plain text on the system clipboard (empty text clears it): a board copy. */
+  writeClipboardText(text: string): void
+  /** Board window only: the system clipboard holds text or an image (a board menu shows Paste). */
+  clipboardHasContent(): Promise<boolean>
+  /** Board window only: paste as Edit > Paste does, so the page gets a paste event with the system clipboard (a board menu's Paste). */
+  pasteClipboard(): void
   /** Snapshot window only: draw requests from the main process. */
   onSnapshotRequest(listener: (request: SnapshotRequest) => void): Unsubscribe
   snapshotReady(reply: SnapshotReply): void
@@ -780,6 +786,9 @@ export const IPC = {
   getAgentClients: 'space:get-agent-clients',
   connectAgentClient: 'space:connect-agent-client',
   importAsset: 'space:import-asset',
+  writeClipboardText: 'space:write-clipboard-text',
+  clipboardHasContent: 'space:clipboard-has-content',
+  pasteClipboard: 'space:paste-clipboard',
   snapshotRequest: 'space:snapshot-request',
   snapshotReady: 'space:snapshot-ready',
   snapshotListening: 'space:snapshot-listening',

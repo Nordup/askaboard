@@ -192,6 +192,7 @@
   --search-panel-margin-y: 32px; /* the least space between the panel and the window's top and bottom */
   --panel-field-height: 46px; /* a modal panel's field (.menu--panel .menu__field) */
   --panel-row-height: 32px; /* a modal panel's rows (.menu--panel .menu__item) */
+  --keys-panel-width: 720px; /* the keys panel (?): three columns; at most the window width − 2 × --search-panel-margin-x */
 
   /* Motion */
   --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */

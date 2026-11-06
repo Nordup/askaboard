@@ -8,7 +8,7 @@
  *
  *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|marker|eraser|current] [--no-pan] [--mouse] [--fast | --hz N] [--then-recent <folder>]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
- *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
+ *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z, Shift+? (the keys panel); Meta+v pastes as ⌘V does
  *   node scripts/drive.mjs click <x> <y> [--shift] [--alt] [--ctrl] [--right]  window CSS pixels; --right is the right button
  *   node scripts/drive.mjs dblclick <x> <y>
  *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--alt] [--steps N]   mouse drag; --alt holds Option / Alt
@@ -47,7 +47,8 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  --hz sends N samples per second, as a pen does, with no wait for each answer;
                                                  --then-recent opens that recent folder right after the last pen-up
   draw --strokes '<json>'
-  key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
+  key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z, Shift+?;
+                                                 Meta+c/x/v/a/z also run the edit command, so Meta+v raises the paste event
   click <x> <y> [--shift] [--alt] [--ctrl] [--right]
                                                  window CSS pixels; --right presses the right button (the board menu)
   dblclick <x> <y>
@@ -277,7 +278,9 @@ const NAMED_KEYS = {
   '+': ['Equal', 187, '+'],
   '-': ['Minus', 189, '-'],
   ']': ['BracketRight', 221, ']'],
-  '[': ['BracketLeft', 219, '[']
+  '[': ['BracketLeft', 219, '['],
+  '/': ['Slash', 191, '/'],
+  '?': ['Slash', 191, '?']
 }
 const MODIFIERS = { Alt: 1, Control: 2, Ctrl: 2, Meta: 4, Cmd: 4, Shift: 8 }
 

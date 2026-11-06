@@ -35,7 +35,7 @@ export interface MenuActions {
 /**
  * The app menu. View > Zoom In / Zoom Out / Actual Size zoom the canvas, not
  * the page (there are no zoom roles); View > Interface Size zooms the page (interface-size.ts). The Edit roles make text editing work in inputs;
- * the canvas handles ⌘Z / ⌘C / ⌘V itself when no input has focus.
+ * the canvas handles ⌘Z / ⌘C itself when no input has focus, and pastes on the page's paste event (Edit > Paste and ⌘V).
  */
 const SETUP_ITEM = 'setup-folder'
 const SEARCH_ITEM = 'search-boards'
