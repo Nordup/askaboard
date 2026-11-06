@@ -149,7 +149,7 @@ export interface ShellState {
   homeDir: string
 }
 
-export type MenuCommand = 'open-folder' | 'new-board' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance' | 'open-settings'
+export type MenuCommand = 'open-folder' | 'new-board' | 'back' | 'forward' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance' | 'open-settings'
 
 // ---------- Settings panel (main/settings.ts) ----------
 
@@ -700,6 +700,8 @@ export interface SpaceApi {
   getCamera(path: string): Promise<Camera | null>
   setCamera(root: string, path: string, camera: Camera): void
   setLastBoard(root: string, path: string | null): void
+  /** View > Back and Forward are enabled as the title row's buttons are (the renderer owns the board history, U11). */
+  setHistoryMenu(back: boolean, forward: boolean): void
   /** The board at path opened (its id from the file, or null): its scene stories, and the id it must have (main/scene-store.ts). */
   openSceneRecords(path: string, id: string | null): Promise<BoardStories>
   /** The open board's scene stories after a new record line. */
@@ -805,6 +807,7 @@ export const IPC = {
   getCamera: 'space:get-camera',
   setCamera: 'space:set-camera',
   setLastBoard: 'space:set-last-board',
+  setHistoryMenu: 'space:set-history-menu',
   filesChanged: 'space:files-changed',
   boardsChanged: 'space:boards-changed',
   boardChanged: 'space:board-changed',

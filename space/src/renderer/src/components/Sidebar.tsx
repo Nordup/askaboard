@@ -6,13 +6,15 @@ import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
 import { RenameInput } from './RenameInput'
 import { SetupMenu } from './SetupMenu'
-import { SidebarToggle } from './SidebarToggle'
-import { openFolderLabel, revealLabel, savedOnLabel, shortcut } from '../platform'
+import { TitleLead, type BoardNav } from './TitleLead'
+import { openFolderLabel, revealLabel, shortcut } from '../platform'
 
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
   hidden: boolean
   onToggleSidebar(): void
+  /** Back and Forward, in the strip with the sidebar button. */
+  boardNav: BoardNav
   folderName: string | null
   folderRoot: string | null
   /** The learner's home folder, so the folder menu shows the path as `~/…`. */
@@ -150,7 +152,7 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside className="sidebar" hidden={hidden}>
       <div className="sidebar__strip">
-        <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
+        <TitleLead sidebarHidden={false} onToggleSidebar={props.onToggleSidebar} nav={props.boardNav} />
       </div>
 
       {folderRoot && (
@@ -275,19 +277,8 @@ export function Sidebar(props: SidebarProps) {
           }}
         >
           <Folder className="folder-row__icon" {...ROW_ICON} />
-          {folderRoot ? (
-            <>
-              <span className="folder-row__text">
-                <span className="folder-row__name">{folderName}</span>
-                <span className="folder-row__sub">{savedOnLabel}</span>
-              </span>
-              <ChevronsUpDown className="folder-row__chevron" {...ICON} />
-            </>
-          ) : (
-            <span className="folder-row__text">
-              <span className="folder-row__name">Open a folder</span>
-            </span>
-          )}
+          <span className="folder-row__name">{folderRoot ? folderName : 'Open a folder'}</span>
+          {folderRoot && <ChevronsUpDown className="folder-row__chevron" {...ICON} />}
         </button>
       </footer>
 

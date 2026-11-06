@@ -238,7 +238,11 @@ solid, dashed, dotted)) and `.zoom-label`.
 `.icon-button` is the one square icon button (`--icon-button-size`, 24 px,
 tertiary, primary on hover); `.icon-button--strong` starts in secondary (a
 panel header's controls); `.icon-button--title` is a title-row button
-(`--title-button-size`, 28 px, `--radius-md`, 16 px icon). `.status-dot` is 7 px; `.status-dot--small` is
+(`--title-button-size`, 28 px, `--radius-md`, 16 px icon). A disabled icon
+button (the `disabled` attribute; Back with no board before) is
+`--text-tertiary` at `--disabled-opacity` (0.5), with no hover fill. It
+keeps its tooltip: the shared tooltip shows on a disabled control as on
+any other, so the name and the key stay findable. `.status-dot` is 7 px; `.status-dot--small` is
 6 px (a panel header). The halo is `--status-dot-ring` wide (2 px; 3 px in an
 item pill).
 
@@ -254,6 +258,14 @@ Everything in it shares one centre line at 22 px.
   ("Show sidebar"), at the same x. A click on it never moves it. A
   keyboard toggle keeps the focus on the button in its new home
   (`App.tsx`).
+- **Back and Forward** (decision U11) follow the sidebar button, 4 px
+  apart: lucide `ChevronLeft` and `ChevronRight`, `.icon-button--title`,
+  tooltips "Back ⌘[" and "Forward ⌘]" (`KEYS.back`, `KEYS.forward` in
+  `board/commands.ts`), disabled when there is nowhere to go. The three
+  buttons are one group, the title lead (`.title-lead`,
+  `components/TitleLead.tsx`): the strip shows it while the sidebar
+  shows, the top bar while it is hidden. One component in both places,
+  so the three keep the same x in both states.
 - The rest of the strip is empty: no app name, no other icons. New board's
   row starts 4 px (`--space-1`) under the strip.
 
@@ -317,7 +329,9 @@ internal data (a path, an id). One shared tooltip instead
   (`--tooltip-gap`), above it when there is no room, 8 px inside the
   window (`--tooltip-margin`). `pointer-events: none`, in a portal.
 - Words: sentence case; shortcuts from `platform.ts` `shortcut()`
-  ("Hide sidebar ⌘B", "New board ⌘N", "Undo ⌘Z").
+  ("Hide sidebar ⌘B", "New board ⌘N", "Undo ⌘Z", "Back ⌘[").
+- A disabled control keeps its tooltip (Back and Forward with nowhere to
+  go): it still names the control and its key.
 
 ## Approved screens (reference)
 
@@ -330,17 +344,17 @@ internal data (a path, an id). One shared tooltip instead
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
 - **Sidebar** (left-panel plan, decisions U6 and U9, 2026-11-06). Top to
-  bottom: a 44 px strip (drag region) with only the sidebar button, its
-  left edge at `--chrome-reserve` (lucide `PanelLeft`,
-  `.icon-button--title`, `SidebarToggle.tsx`; see "Title row"), 4 px above
-  the rows; the rows New board (`SquarePen`,
+  bottom: a 44 px strip (drag region) with only the title lead (the
+  sidebar button, lucide `PanelLeft`, `SidebarToggle.tsx`; Back and
+  Forward; `TitleLead.tsx`, see "Title row"), its left edge at
+  `--chrome-reserve`, 4 px above the rows; the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
   and the guide-override note; the heading "Boards" and the boards list;
   the footer (top hairline; padding 4 px at the top, 8 px at the left,
-  right and bottom): `.folder-row` (`--folder-row-height`, 40 px) with
-  `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
-  `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
+  right and bottom): `.folder-row` (`--folder-row-height`, 32 px), one
+  line: `Folder`, the folder name, and `ChevronsUpDown` (U11: no "Saved
+  on this Mac" line). Rows are `--sidebar-row-height` (30 px), radius
   `--radius-md`. The footer opens the folder menu above it
   (`.menu.folder-menu`, the sidebar's width): the path as one quiet
   `.menu__path` line (`~` for home; longer than 32 characters:
@@ -350,8 +364,9 @@ internal data (a path, an id). One shared tooltip instead
   15; above 15, the first 10 and "Show N more", and "Show less" when
   expanded.
 - **Sidebar hidden** (⌘B, View > Hide Sidebar; main owns the setting). One
-  column, at once. The top bar then starts with the sidebar button and a
-  New board button (`.topbar__lead`, 4 px apart): at 92 px on macOS in a
+  column, at once. The top bar then starts with the title lead (the
+  sidebar button, Back, Forward) and a New board button (4 px apart, in
+  the one `.title-lead` group): at 92 px on macOS in a
   window, at 12 px in full screen and off macOS (`--chrome-reserve` on
   `.shell`, set by `data-window-buttons`; see "Title row"), the same x as
   the button in the strip with the sidebar shown. Then the board

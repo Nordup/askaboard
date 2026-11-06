@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
@@ -37,9 +37,11 @@ import { BoardControls } from './components/BoardControls'
 import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
 import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
 import { TopBar, type SaveStatus } from './components/TopBar'
+import type { BoardNav } from './components/TitleLead'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
+import { OpenHistory } from './lib/open-history'
 import { isMac } from './platform'
 import { markFocus, returnFocus, type FocusMark } from './lib/focus'
 import { setStories } from './live/stories'
@@ -146,6 +148,13 @@ export function App() {
   const openTokenRef = useRef(0)
   const openingRef = useRef(false)
   const preferredBoardRef = useRef<string | null>(null)
+  /** Back and Forward (U11): the one history of the boards this window showed. openBoard visits; changeBoard and folder changes keep it true. */
+  const [openHistory] = useState(() => new OpenHistory())
+  /** A change of openHistory renders the buttons and the menu again. */
+  const [, setHistoryVersion] = useState(0)
+  const historyChanged = useCallback((changed: boolean): void => {
+    if (changed) setHistoryVersion((version) => version + 1)
+  }, [])
   /** The folder the renderer shows: reads and new boards belong to it. */
   const rootRef = useRef<string | null>(null)
 
@@ -376,6 +385,7 @@ export function App() {
             setOpen(null)
             setBoardError({ path, message: errorMessage(error) })
             space.setLastBoard(root, path)
+            historyChanged(openHistory.visit(path))
             return
           }
           if (entry) {
@@ -416,6 +426,7 @@ export function App() {
         setOpen({ root, path, key: ++keyRef.current, doc: entry.doc, history: entry.history, camera })
         trimBoards(path)
         space.setLastBoard(root, path)
+        historyChanged(openHistory.visit(path))
         if (recovered) {
           scheduleSave(root, path, entry.doc)
           setToast({ text: `Your unsaved work on “${boardName(path)}” is back`, kind: 'info' })
@@ -424,7 +435,7 @@ export function App() {
         if (token === openTokenRef.current) openingRef.current = false
       }
     },
-    [flushCamera, flushSave, leaveBoard, scheduleSave]
+    [flushCamera, flushSave, historyChanged, leaveBoard, openHistory, scheduleSave]
   )
 
   const onChanges = useCallback(({ removed, revisions, by }: { removed: Removal[]; revisions: Revision[]; by: Author }) => {
@@ -452,6 +463,7 @@ export function App() {
     const leaving = rootRef.current
     rootRef.current = next.folder?.root ?? null
     cacheRef.current.clear()
+    if (leaving !== (next.folder?.root ?? null)) historyChanged(openHistory.clear())
     openTokenRef.current++
     openingRef.current = false
     setOpen(null)
@@ -467,7 +479,7 @@ export function App() {
     setSnapshot(next)
     // Main read the snapshot's list early: a newer list it sent before the folder changed here was dropped. Ask once, by the same rule.
     if (list && list.root !== leaving) void space.getBoards().then(takeBoards, (error: unknown) => console.error(`boards list: ${errorMessage(error)}`))
-  }, [leaveBoard, takeBoards])
+  }, [historyChanged, leaveBoard, openHistory, takeBoards])
 
   // Open a board automatically: the last one, else the first one.
   useEffect(() => {
@@ -573,6 +585,7 @@ export function App() {
           if (entry) cacheRef.current.set(target, entry)
           if (seq !== undefined) learnerSeqRef.current.set(saveKey(root, target), seq)
           moveTracker(from, target)
+          historyChanged(openHistory.rename(from, target))
           // Edits made while the file moved are saved under the new path.
           const pending = pendingRef.current.get(saveKey(root, from))
           if (pending) {
@@ -588,6 +601,7 @@ export function App() {
         } else {
           dropTracker(from)
           dropPending(from)
+          historyChanged(openHistory.remove(from))
           if (cameraRef.current?.path === from) cameraRef.current = null
           if (openRef.current?.path === from) {
             openTokenRef.current++
@@ -610,7 +624,7 @@ export function App() {
         saveSoon()
       }
     },
-    [flushCamera, saveSoon, takeBoards, writePending]
+    [flushCamera, historyChanged, openHistory, saveSoon, takeBoards, writePending]
   )
 
   const createBoard = useCallback(async () => {
@@ -736,6 +750,7 @@ export function App() {
   const onBoardChangeRef = useRef<(path: string, deleted: boolean) => Promise<void>>(async () => undefined)
   onBoardChangeRef.current = async (path, deleted) => {
     const current = openRef.current
+    if (deleted) historyChanged(openHistory.remove(path))
     if (current?.path !== path) {
       if (deleted) dropPending(path)
       else if (isPending(path)) {
@@ -942,9 +957,10 @@ export function App() {
         if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
       }),
       space.onMenuCommand((command) => {
-        // ⌘N, ⌘O and the setup item close the search panel first; the zoom keys do not reach the board under it.
-        if (searchOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
-        if (settingsOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsOpen(false))
+        // ⌘N, ⌘O, ⌘[, ⌘] and the setup item close the search panel first; the zoom keys do not reach the board under it.
+        const opensBoard = command === 'new-board' || command === 'back' || command === 'forward'
+        if (searchOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
+        if (settingsOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsOpen(false))
         if (command === 'open-settings') {
           flushSync(() => setSearchOpen(false))
           setSettingsOpen(true)
@@ -952,6 +968,7 @@ export function App() {
         else if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
         else if (command === 'open-folder') void openFolderDialogRef.current()
         else if (command === 'new-board') void createBoardRef.current()
+        else if (command === 'back' || command === 'forward') goHistoryRef.current(command === 'back' ? -1 : 1)
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
         else if (searchOpenRef.current && command.startsWith('zoom-')) return
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
@@ -1035,6 +1052,35 @@ export function App() {
 
   const openBoardRef = useRef(openBoard)
   openBoardRef.current = openBoard
+
+  // ---------- Back and Forward (U11) ----------
+
+  /** Where Back (-1) and Forward (+1) go: only to boards of the list, never to the shown one (the mounted board, or the one whose error shows). */
+  const historyStep = (direction: -1 | 1, list: BoardListEntry[], shown: string | null): { index: number; path: string } | null => {
+    const paths = new Set(list.map((board) => board.path))
+    return openHistory.step(direction, (path) => paths.has(path), shown)
+  }
+  const shownPath = open?.path ?? boardError?.path ?? null
+  // Read in each render: a history change renders (historyVersion), as a new list or another shown board does.
+  const canBack = !!folder && historyStep(-1, boards, shownPath) !== null
+  const canForward = !!folder && historyStep(1, boards, shownPath) !== null
+  const shownPathRef = useRef(shownPath)
+  shownPathRef.current = shownPath
+  /** The buttons, ⌘[ / ⌘] and View > Back / Forward: move the place, then open that board (its visit adds nothing). */
+  const goHistory = (direction: -1 | 1): void => {
+    const target = historyStep(direction, boardsRef.current, shownPathRef.current)
+    if (!target) return
+    openHistory.go(target.index)
+    historyChanged(true)
+    void openBoardRef.current(target.path)
+  }
+  const goHistoryRef = useRef(goHistory)
+  goHistoryRef.current = goHistory
+  const goBack = useCallback(() => goHistoryRef.current(-1), [])
+  const goForward = useCallback(() => goHistoryRef.current(1), [])
+  // The View menu's Back and Forward are enabled as the buttons are.
+  useEffect(() => space.setHistoryMenu(canBack, canForward), [canBack, canForward])
+  const boardNav = useMemo<BoardNav>(() => ({ canBack, canForward, onBack: goBack, onForward: goForward }), [canBack, canForward, goBack, goForward])
   const changeBoardRef = useRef(changeBoard)
   changeBoardRef.current = changeBoard
   const sidebarRef = useRef({ renameBoard, deleteBoard, openRecent })
@@ -1276,6 +1322,7 @@ export function App() {
       <Sidebar
         hidden={sidebarHidden}
         onToggleSidebar={toggleSidebar}
+        boardNav={boardNav}
         folderName={folder?.name ?? null}
         folderRoot={folder?.root ?? null}
         homeDir={shellStart.homeDir}
@@ -1308,6 +1355,7 @@ export function App() {
         <TopBar
           sidebarHidden={sidebarHidden}
           onToggleSidebar={toggleSidebar}
+          boardNav={boardNav}
           onCreateBoard={folder ? () => void createBoard() : null}
           folderName={folder?.name ?? null}
           boardName={open ? boardName(open.path) : null}

@@ -72,12 +72,14 @@ export function allCommandGroups(): CommandRow[][] {
   return COMMAND_GROUPS.map((group) => group.map(({ id, label, keys }) => ({ id, label, keys })))
 }
 
-/** The keys of the undo pill and the zoom pill's buttons, for their tooltips and the keys panel. */
+/** The keys of the undo pill, the zoom pill's buttons and Back / Forward (title row), for their tooltips and the keys panel. */
 export const KEYS = {
   undo: shortcut('Z'),
   redo: shift('Z'),
   zoomIn: shortcut('+'),
-  zoomOut: shortcut('-')
+  zoomOut: shortcut('-'),
+  back: shortcut('['),
+  forward: shortcut(']')
 } as const
 
 export type ZoomCommand = 'reset' | 'fit' | 'selection'

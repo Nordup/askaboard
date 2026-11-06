@@ -89,8 +89,8 @@ button:focus-visible {
 
 /*
  * The top strip, in every state where the sidebar shows, level with the top bar (one 44 px title row, one centre line
- * with the window buttons). The sidebar button's left edge is at --chrome-reserve, the same x as in the top bar's lead
- * with the sidebar hidden: a click on it never moves it. The rest of the strip is empty; 4 px above the first row.
+ * with the window buttons). It holds the title lead (.title-lead: the sidebar button, Back, Forward) from --chrome-reserve,
+ * the same x as in the top bar with the sidebar hidden: a click on the sidebar button never moves it. 4 px above the first row.
  */
 .sidebar__strip {
   display: flex;
@@ -104,6 +104,14 @@ button:focus-visible {
 
 .sidebar__strip button {
   -webkit-app-region: no-drag;
+}
+
+/* The title lead (components/TitleLead.tsx): one group in the strip and in the top bar, so its buttons keep their x. */
+.title-lead {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--title-button-gap);
 }
 
 /* New board, Search boards, Set up for learning: sidebar rows above the boards. */
@@ -158,7 +166,7 @@ button:focus-visible {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* The folder row: the folder name over where it is saved; a click opens the folder menu above it. */
+/* The folder row: one line, the folder icon, its name and the chevrons; a click opens the folder menu above it. */
 .folder-row {
   display: flex;
   align-items: center;
@@ -181,26 +189,12 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-.folder-row__text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.25;
-}
-
 .folder-row__name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-base);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.folder-row__sub {
-  overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -223,9 +217,16 @@ button:focus-visible {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.icon-button:hover {
+.icon-button:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* Nothing to do now (Back with no board before): tertiary and faded, no hover fill. The shared tooltip still names it. */
+.icon-button:disabled {
+  color: var(--text-tertiary);
+  opacity: var(--disabled-opacity);
+  cursor: default;
 }
 
 /* A panel's header controls: secondary text colour, primary on hover. */
@@ -306,17 +307,13 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* With the sidebar hidden: the sidebar button and New board from --chrome-reserve (as in the strip), then the board name. */
+/* With the sidebar hidden: the title lead and New board from --chrome-reserve (as in the strip), then the board name. */
 .shell[data-sidebar-hidden] .topbar {
   padding-left: var(--chrome-reserve);
 }
 
 /* The title's own gap (8 px) and this margin put the board name 12 px after the last button. */
-.topbar__lead {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: var(--title-button-gap);
+.topbar .title-lead {
   margin-right: calc(var(--space-3) - var(--space-2));
 }
 
@@ -1793,7 +1790,7 @@ button:focus-visible {
 }
 
 .btn-sm:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .btn-sm--quiet {

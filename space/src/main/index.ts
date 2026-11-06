@@ -10,7 +10,7 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
+import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setHistoryMenu, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
 import { registerSettings, settingsChanged } from './settings'
 import { automaticSize, interfaceFactor, stepSize, windowButtonPosition, windowButtonsEnd, type InterfaceSize } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
@@ -516,6 +516,9 @@ function registerIpc(): void {
     if (!Array.isArray(sceneIds) || !sceneIds.every((id) => typeof id === 'string')) throw new Error('Scene ids are required.')
     await agentServer.rebuildScenes(sceneIds as string[])
   })
+  ipcMain.on(IPC.setHistoryMenu, (event, back: unknown, forward: unknown) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) setHistoryMenu(back === true, forward === true)
+  })
   ipcMain.on(IPC.setLastBoard, (_event, root: unknown, path: unknown) => {
     if (typeof root !== 'string' || !sessions.has(root)) return
     store.setLastBoard(root, typeof path === 'string' ? path : null)
@@ -739,6 +742,8 @@ function buildMenu(): void {
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
+    back: () => sendMenuCommand('back'),
+    forward: () => sendMenuCommand('forward'),
     searchBoards: () => sendMenuCommand('search-boards'),
     setupFolder: () => sendMenuCommand('setup-folder'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),

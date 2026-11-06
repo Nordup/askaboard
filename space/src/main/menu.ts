@@ -5,6 +5,9 @@ import { INTERFACE_SIZES, percent, type InterfaceSize } from './interface-size'
 export interface MenuActions {
   openFolder(): void
   newBoard(): void
+  /** View > Back / Forward (⌘[ / ⌘]): the renderer moves through its board history (U11). */
+  back(): void
+  forward(): void
   /** File > Search Boards… (⌘K): the renderer opens the search panel, or closes it when it is open. */
   searchBoards(): void
   /** File > Set Up Folder for Learning…: the renderer shows the setup preview. */
@@ -48,6 +51,21 @@ const paceItem = (pace: string): string => `pace:${pace}`
 /** Two items, one visible at a time: a menu item's label does not change after the menu is built on macOS. */
 const HIDE_SIDEBAR_ITEM = 'hide-sidebar'
 const SHOW_SIDEBAR_ITEM = 'show-sidebar'
+const BACK_ITEM = 'back'
+const FORWARD_ITEM = 'forward'
+/** What the renderer last said of Back and Forward: a menu built again (Interface Size) starts from it. */
+const history = { back: false, forward: false }
+
+/** View > Back and Forward are enabled as the title row's buttons are (the renderer sends each change). */
+export function setHistoryMenu(back: boolean, forward: boolean): void {
+  history.back = back
+  history.forward = forward
+  const menu = Menu.getApplicationMenu()
+  const backEntry = menu?.getMenuItemById(BACK_ITEM)
+  const forwardEntry = menu?.getMenuItemById(FORWARD_ITEM)
+  if (backEntry) backEntry.enabled = back
+  if (forwardEntry) forwardEntry.enabled = forward
+}
 
 /** Folder-only menu items are enabled while a learning folder is open. */
 export function setFolderOpen(open: boolean): void {
@@ -153,6 +171,10 @@ export function installMenu(actions: MenuActions): void {
         // Linux and Windows show the hint only (registerAccelerator: false).
         { id: HIDE_SIDEBAR_ITEM, label: 'Hide Sidebar', visible: !actions.sidebarHidden, ...sidebarKey, click: () => actions.toggleSidebar() },
         { id: SHOW_SIDEBAR_ITEM, label: 'Show Sidebar', visible: actions.sidebarHidden, ...sidebarKey, click: () => actions.toggleSidebar() },
+        { type: 'separator' },
+        // ⌘[ and ⌘] have no text-field behaviour, so the menu may take them first; ⌘⇧[ and ⌘⇧] (send to back, bring to front) are other keys.
+        { id: BACK_ITEM, label: 'Back', accelerator: 'CmdOrCtrl+[', enabled: history.back, click: () => actions.back() },
+        { id: FORWARD_ITEM, label: 'Forward', accelerator: 'CmdOrCtrl+]', enabled: history.forward, click: () => actions.forward() },
         { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => actions.zoom('in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => actions.zoom('out') },

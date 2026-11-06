@@ -5,15 +5,16 @@ import { AgentPill } from './AgentPill'
 import { PerfPill } from './PerfPill'
 import { RenameInput } from './RenameInput'
 import { ScenePill } from './ScenePill'
-import { SidebarToggle } from './SidebarToggle'
+import { TitleLead, type BoardNav } from './TitleLead'
 import { shortcut } from '../platform'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 interface TopBarProps {
-  /** With the sidebar hidden, the top bar starts with the sidebar button and New board (the sidebar's strip holds the button otherwise). */
+  /** With the sidebar hidden, the top bar starts with the title lead (sidebar button, Back, Forward) and New board; the sidebar's strip holds the lead otherwise. */
   sidebarHidden: boolean
   onToggleSidebar(): void
+  boardNav: BoardNav
   /** New board; null without a folder. */
   onCreateBoard: (() => void) | null
   folderName: string | null
@@ -39,14 +40,13 @@ export function TopBar(props: TopBarProps) {
     <header className="topbar">
       <div className="topbar__title">
         {sidebarHidden && (
-          <span className="topbar__lead">
-            <SidebarToggle hidden onToggle={props.onToggleSidebar} />
+          <TitleLead sidebarHidden onToggleSidebar={props.onToggleSidebar} nav={props.boardNav}>
             {props.onCreateBoard && (
               <button className="icon-button icon-button--strong icon-button--title" {...tip('New board', shortcut('N'))} aria-label="New board" onClick={props.onCreateBoard}>
                 <SquarePen size={16} strokeWidth={1.75} />
               </button>
             )}
-          </span>
+          </TitleLead>
         )}
         {boardName && props.renaming ? (
           <RenameInput key={boardName} initial={boardName} className="board-row__input topbar__rename" onCommit={props.onRename} onCancel={props.onCancelRename} />

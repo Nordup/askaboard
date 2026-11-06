@@ -21,6 +21,8 @@ function sections(): { heading: string; rows: KeyRow[] }[] {
     { label: 'Zoom out', keys: KEYS.zoomOut },
     ...ZOOM_COMMANDS,
     { label: 'Pan', keys: 'Space + drag' },
+    { label: 'Back', keys: KEYS.back },
+    { label: 'Forward', keys: KEYS.forward },
     { label: 'Deselect, or back to Select', keys: 'Esc' },
     { label: 'Keyboard shortcuts', keys: KEYS_PANEL_KEY }
   ]
