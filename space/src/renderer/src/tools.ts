@@ -70,14 +70,14 @@ export interface InkColor {
 }
 
 /**
- * Ink colours: the colours agents draw with most on learners' boards (2026-11-06 count: text, the accent
- * blue, lavender, yellow, green), so the learner's ink matches the agent's. Keep them in sync with the
- * --ink-* tokens.
+ * Ink colours: the board's own palette (live/colors.ts names and the --ls-* tokens), the same
+ * colours scenes draw with, so the learner's ink and the agent's drawing match. Keep them in sync
+ * with the --ink-* tokens.
  */
 export const INK_COLORS: readonly InkColor[] = [
   { id: 'white', label: 'White', value: '#ececef' },
   { id: 'blue', label: 'Blue', value: '#6e8bff' },
-  { id: 'lavender', label: 'Lavender', value: '#b29bdd' },
+  { id: 'purple', label: 'Purple', value: '#b58cff' },
   { id: 'yellow', label: 'Yellow', value: '#f5d76e' },
   { id: 'green', label: 'Green', value: '#5fd38d' },
   { id: 'pink', label: 'Pink', value: '#ff6b8b' }

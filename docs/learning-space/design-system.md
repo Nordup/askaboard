@@ -75,7 +75,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   The frame marker colour in `SnapshotView.tsx` encodes the request id; it
   is data, not a design colour.
 - Ink colours: `--ink-white`, `--ink-yellow`, `--ink-blue`, `--ink-green`,
-  `--ink-pink`, `--ink-orange`, `--ink-lavender`
+  `--ink-pink`, `--ink-orange`, `--ink-purple`
 - Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
   `--leading-current` (the reading view's lines)
 - Space: `--space-half` (2px, stacked lines of one text block), `--space-1` …
@@ -323,7 +323,7 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
   fill, width, line; arrow: colour, width, line, heads; line: colour,
   width, line. For a selection it ends with Duplicate, Delete (only when an
   item may change) and More; when the whole pill would be wider than the
-  canvas less 24 px, it shows More alone. The style pill is 36 px (28 px swatches with a 15 px dot, 26 px options); a chosen colour has the grey circle of every chosen option, no ring. The colours are the ones agents draw with most (white, the accent blue, lavender, yellow, green, pink; `tools.ts INK_COLORS`). It sits 8 px above the tool pill,
+  canvas less 24 px, it shows More alone. The style pill is 36 px (28 px swatches with a 15 px dot, 26 px options); a chosen colour has the grey circle of every chosen option, no ring. The colours are the ones agents draw with most (white, the accent blue, purple, yellow, green, pink: the board palette of `live/colors.ts`; `tools.ts INK_COLORS`). It sits 8 px above the tool pill,
   centred on it, and shifts to stay 12 px inside the canvas.
 - Width (Fine, Medium, Bold) is one step for every kind: a shape draws it
   at 1.5, 2.5 or 4 board points, the pen at 2, 3.5 or 6. Text sizes: S 18,
