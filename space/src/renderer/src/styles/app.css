@@ -973,8 +973,13 @@ button:focus-visible {
   transform: scale(1.12);
 }
 
+.swatch:hover {
+  background: var(--bg-hover);
+}
+
+/* The chosen colour: the grey circle every chosen option has (no ring). */
 .swatch[aria-pressed='true'] {
-  box-shadow: 0 0 0 1.5px var(--bg-elevated), 0 0 0 3px var(--swatch);
+  background: var(--bg-active);
 }
 
 .option {

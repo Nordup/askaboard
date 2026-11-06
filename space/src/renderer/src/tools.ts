@@ -69,14 +69,18 @@ export interface InkColor {
   value: string
 }
 
-/** Ink colours tuned for the dark canvas. Keep them in sync with the --ink-* tokens. */
+/**
+ * Ink colours: the colours agents draw with most on learners' boards (2026-11-06 count: text, the accent
+ * blue, lavender, yellow, green), so the learner's ink matches the agent's. Keep them in sync with the
+ * --ink-* tokens.
+ */
 export const INK_COLORS: readonly InkColor[] = [
   { id: 'white', label: 'White', value: '#ececef' },
+  { id: 'blue', label: 'Blue', value: '#6e8bff' },
+  { id: 'lavender', label: 'Lavender', value: '#b29bdd' },
   { id: 'yellow', label: 'Yellow', value: '#f5d76e' },
-  { id: 'blue', label: 'Blue', value: '#6ea8ff' },
   { id: 'green', label: 'Green', value: '#5fd38d' },
-  { id: 'pink', label: 'Pink', value: '#ff6b8b' },
-  { id: 'orange', label: 'Orange', value: '#ff9f45' }
+  { id: 'pink', label: 'Pink', value: '#ff6b8b' }
 ]
 
 export type WidthStep = 'fine' | 'medium' | 'bold'

@@ -86,7 +86,8 @@
   /* Ink colours, tuned for the dark canvas */
   --ink-white: #ececef;
   --ink-yellow: #f5d76e;
-  --ink-blue: #6ea8ff;
+  --ink-blue: #6e8bff; /* the agents' accent blue */
+  --ink-lavender: #b29bdd;
   --ink-green: #5fd38d;
   --ink-pink: #ff6b8b;
   --ink-orange: #ff9f45;
@@ -155,11 +156,11 @@
   --corner-icon-size: 14px;
   --corner-divider-height: 14px; /* the line between zoom and undo */
   --corner-divider-gap: 4px;
-  --style-pill-height: 32px; /* the style pill */
-  --swatch-size: 24px; /* a colour swatch's hit area */
-  --swatch-dot: 13px; /* the colour dot inside it */
-  --option-size: 22px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
-  --option-icon-size: 14px; /* an option's lucide icon */
+  --style-pill-height: 36px; /* the style pill */
+  --swatch-size: 28px; /* a colour swatch's hit area */
+  --swatch-dot: 15px; /* the colour dot inside it */
+  --option-size: 26px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
+  --option-icon-size: 15px; /* an option's lucide icon */
   --option-text-pad: 9px; /* the side padding of a text option (S, M, L, XL) */
   --option-bar-width: 12px; /* the bar of a width or line option */
   --option-fill-size: 12px; /* the square of a fill option (none, light, solid) */
