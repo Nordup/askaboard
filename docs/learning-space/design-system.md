@@ -194,10 +194,19 @@ pressed: `--bg-active`, `--text-primary`; `.option--text` for a word,
   `tools.ts TOOLS`) centred on the canvas. The row is a grid `1fr auto 1fr`
   with a 12 px gap and margin, so on a narrow canvas the tool pill moves
   right and stays 12 px after the undo pill.
-- The style pill shows only when the tool or the selection has style
-  fields (`board/style.ts`): colours, then width, then pen or marker, with
-  dividers between groups. It sits 8 px above the tool pill, centred on it,
-  and shifts to stay 12 px inside the canvas.
+- The style pill shows for a tool with style fields, or for a selection
+  with the Select tool (`board/style.ts`): colours, width, pen or marker,
+  text size (S M L XL, `.option--text`), font (Hand, Plain, Code,
+  `.option--text`), align (three icons), with dividers between groups. For a
+  selection it ends with Duplicate, Delete (only when an item may change)
+  and More. It sits 8 px above the tool pill, centred on it, and shifts to
+  stay 12 px inside the canvas.
+- The board menu (`BoardMenu.tsx`, the shared `Menu`): one command list
+  (`board/commands.ts`) feeds the right-click menu (at the pointer) and the
+  More menu (8 px above the style pill). Rows have key hints; a command
+  that cannot run is left out, never greyed: Cut, Copy, Paste, Duplicate,
+  Delete | Bring to front, Send to back; on the empty board Paste and
+  Select all.
 - Tooltips name the key: "Select — V or 1", "Undo — ⌘Z".
 - The zoom % is only here, not in the top bar.
 

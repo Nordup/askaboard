@@ -1,22 +1,28 @@
-import { useLayoutEffect, useRef, type CSSProperties } from 'react'
-import { Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Undo2, type LucideIcon } from 'lucide-react'
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
 import { isMac, shortcut } from '../platform'
-import { INK_COLORS, LassoIcon, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
+import { FONTS, INK_COLORS, LassoIcon, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
+import { commandRow, type BoardCommand, type CommandContext } from '../board/commands'
+import { BoardMenu } from './BoardMenu'
 
-/** What the style pill shows: its fields, with the values of the tool or of the selection (a missing value matches no option). */
+/**
+ * What the style pill shows: its fields, with the values of the tool or of the selection (a missing value
+ * matches no option), and for a selection the commands after them.
+ */
 interface StylePillState {
   fields: readonly StyleField[]
   values: StylePatch
+  /** A selection: Duplicate, Delete (when an item may change) and More end the pill. */
+  selection?: { editable: boolean }
 }
 
-/** The style pill for a tool that draws with a style, or for the Select tool's selection; null when neither has fields. */
+/** The style pill for a tool that draws with a style, or for the Select tool's selection; null when neither has one. */
 function stylePillOf(tools: ToolState, selection: SelectionStyle | null): StylePillState | null {
   const tool = TOOLS.find((each) => each.id === tools.tool)
   if (tool?.style.length) return { fields: tool.style, values: tools.style }
   if (tools.tool !== 'select' || !selection) return null
-  const fields = styleFields(selection.kinds)
-  return fields.length ? { fields, values: selection.style } : null
+  return { fields: styleFields(selection.kinds), values: selection.style, selection: { editable: selection.editable } }
 }
 
 interface BoardControlsProps {
@@ -28,6 +34,10 @@ interface BoardControlsProps {
   onChooseTool(tool: ToolState['tool']): void
   onToggleLock(): void
   onStyle(patch: StylePatch): void
+  /** Run a board command on the selection (board/commands.ts). */
+  onCommand(command: BoardCommand): void
+  /** What the commands depend on now, for the More menu. */
+  commandContext(): CommandContext | null
   onZoomIn(): void
   onZoomOut(): void
   onResetZoom(): void
@@ -38,6 +48,9 @@ interface BoardControlsProps {
 const PEN_ICONS: Record<PenKind, LucideIcon> = { pen: PenLine, marker: Highlighter }
 
 const ICON = { size: 17, strokeWidth: 1.75 } as const
+
+/** The More menu opens this far above the style pill (CSS px), as the style pill sits above the tool pill. */
+const MENU_GAP = 8
 
 type Rect = { left: number; top: number; right: number; bottom: number }
 
@@ -62,7 +75,7 @@ export function BoardControls(props: BoardControlsProps) {
   const style = stylePillOf(tools, props.selection)
   const rootRef = useRef<HTMLDivElement>(null)
   const styleRef = useRef<HTMLDivElement>(null)
-  const styleKey = style?.fields.join(' ') ?? ''
+  const styleKey = style ? `${style.fields.join(' ')} ${style.selection ? `commands ${style.selection.editable}` : ''}` : ''
 
   // The style pill is centred on the tool pill; one measured shift keeps it a margin inside the canvas.
   useLayoutEffect(() => {
@@ -115,6 +128,9 @@ export function BoardControls(props: BoardControlsProps) {
         {style && (
           <div className="pill-bar board-controls__style" ref={styleRef} role="toolbar" aria-label="Style">
             <StyleOptions state={style} onStyle={props.onStyle} />
+            {style.selection && (
+              <SelectionCommands divider={style.fields.length > 0} editable={style.selection.editable} onCommand={props.onCommand} commandContext={props.commandContext} />
+            )}
           </div>
         )}
         <div className="pill-bar board-controls__tools" role="toolbar" aria-label="Tools">
@@ -186,6 +202,24 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
         <span className="option__bar" style={{ height: Math.max(1.5, width.px / 2) }} />
       </button>
     ))
+  } else if (field === 'size') {
+    options = TEXT_SIZES.map((size) => (
+      <button key={size.id} className="option option--text" title={`${size.label} text`} aria-label={`${size.label} text`} aria-pressed={values.size === size.px} onClick={() => onStyle({ size: size.px })}>
+        {size.id}
+      </button>
+    ))
+  } else if (field === 'font') {
+    options = FONTS.map((font) => (
+      <button key={font.id} className="option option--text" title={`${font.label} font`} aria-label={`${font.label} font`} aria-pressed={values.font === font.id} onClick={() => onStyle({ font: font.id })}>
+        {font.label}
+      </button>
+    ))
+  } else if (field === 'align') {
+    options = TEXT_ALIGNS.map(({ id, label, Icon }) => (
+      <button key={id} className="option" title={label} aria-label={label} aria-pressed={values.align === id} onClick={() => onStyle({ align: id })}>
+        <Icon {...ICON} />
+      </button>
+    ))
   } else {
     options = PEN_KINDS.map((kind) => {
       const Icon = PEN_ICONS[kind.id]
@@ -200,6 +234,44 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
     <>
       {divider && <span className="pill-bar__divider" />}
       {options}
+    </>
+  )
+}
+
+/** The end of the style pill for a selection: Duplicate, Delete and More, a menu of every board command (the right-click menu's list). */
+function SelectionCommands(props: { divider: boolean; editable: boolean; onCommand(command: BoardCommand): void; commandContext(): CommandContext | null }) {
+  const { onCommand, commandContext } = props
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; context: CommandContext } | null>(null)
+  const close = useCallback(() => setMenu(null), [])
+  const duplicate = commandRow('duplicate')
+  const remove = commandRow('delete')
+  const toggleMenu = (): void => {
+    const button = moreRef.current
+    const context = commandContext()
+    if (menu || !button || !context) {
+      setMenu(null)
+      return
+    }
+    // Above the pill, with its left edge at the button.
+    const top = (button.closest('.pill-bar') ?? button).getBoundingClientRect().top
+    setMenu({ x: button.getBoundingClientRect().left, y: top - MENU_GAP, context })
+  }
+  return (
+    <>
+      {props.divider && <span className="pill-bar__divider" />}
+      <button className="option" title={`${duplicate.label} — ${duplicate.keys}`} aria-label={duplicate.label} onClick={() => onCommand('duplicate')}>
+        <CopyPlus {...ICON} />
+      </button>
+      {props.editable && (
+        <button className="option" title={`${remove.label} — ${remove.keys}`} aria-label={remove.label} onClick={() => onCommand('delete')}>
+          <Trash2 {...ICON} />
+        </button>
+      )}
+      <button ref={moreRef} className="option" title="More" aria-label="More" aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
+        <Ellipsis {...ICON} />
+      </button>
+      {menu && <BoardMenu x={menu.x} y={menu.y} above context={menu.context} onCommand={onCommand} onClose={close} toggle={moreRef.current} />}
     </>
   )
 }

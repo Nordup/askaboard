@@ -18,11 +18,11 @@ export function hasNodeClipboard(): boolean {
   return internalClipboard.roots.length > 0
 }
 
-export type BoardKeyAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'duplicate' | 'delete' | 'selectAll'
+export type BoardKeyAction = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'duplicate' | 'delete' | 'selectAll' | 'front' | 'back'
 
 /** Map a key event to a board action. The caller rejects editable targets first. */
 export function boardKeyAction(
-  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
+  event: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
   options: { hasSelection: boolean; hasClipboard: boolean }
 ): BoardKeyAction | null {
   const key = event.key.toLowerCase()
@@ -35,6 +35,9 @@ export function boardKeyAction(
   if (modified && key === 'v') return options.hasClipboard ? 'paste' : null
   if (modified && key === 'd') return options.hasSelection ? 'duplicate' : null
   if (modified && key === 'a') return 'selectAll'
+  // By the key's place: Shift turns ] and [ into other characters on most layouts.
+  if (modified && event.shiftKey && event.code === 'BracketRight') return options.hasSelection ? 'front' : null
+  if (modified && event.shiftKey && event.code === 'BracketLeft') return options.hasSelection ? 'back' : null
   if (!modified && (event.key === 'Delete' || event.key === 'Backspace') && options.hasSelection) return 'delete'
   return null
 }

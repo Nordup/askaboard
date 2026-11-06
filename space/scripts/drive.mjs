@@ -9,9 +9,9 @@
  *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|marker|eraser|current] [--no-pan] [--mouse] [--fast | --hz N] [--then-recent <folder>]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
- *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
+ *   node scripts/drive.mjs click <x> <y> [--shift] [--alt] [--ctrl] [--right]  window CSS pixels; --right is the right button
  *   node scripts/drive.mjs dblclick <x> <y>
- *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--steps N]   mouse drag
+ *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--alt] [--steps N]   mouse drag; --alt holds Option / Alt
  *   node scripts/drive.mjs type "<text>"        insert text into the focused field
  *   node scripts/drive.mjs wheel <x> <y> <dx> <dy> [--ctrl]   a wheel / trackpad scroll; --ctrl is a pinch
  *   node scripts/drive.mjs node-rect <id>       a node's window rect (JSON), from the layout cache and the DOM
@@ -47,9 +47,11 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  --then-recent opens that recent folder right after the last pen-up
   draw --strokes '<json>'
   key <combo>                                    v, Delete, Escape, Meta+z, Shift+Meta+z
-  click <x> <y> [--shift]                        window CSS pixels
+  click <x> <y> [--shift] [--alt] [--ctrl] [--right]
+                                                 window CSS pixels; --right presses the right button (the board menu)
   dblclick <x> <y>
-  drag <x1> <y1> <x2> <y2> [--shift] [--steps N] mouse drag in window CSS pixels
+  drag <x1> <y1> <x2> <y2> [--shift] [--alt] [--steps N]
+                                                 mouse drag in window CSS pixels; --alt holds Option / Alt (duplicate and move)
   type "<text>"                                  insert text into the focused field
   wheel <x> <y> <dx> <dy> [--ctrl]               a wheel at window CSS pixels; --ctrl sends a trackpad pinch
   node-rect <id>                                 {x, y, width, height, cx, cy, dom} in window CSS pixels
@@ -271,7 +273,9 @@ const NAMED_KEYS = {
   ArrowDown: ['ArrowDown', 40],
   '=': ['Equal', 187, '='],
   '+': ['Equal', 187, '+'],
-  '-': ['Minus', 189, '-']
+  '-': ['Minus', 189, '-'],
+  ']': ['BracketRight', 221, ']'],
+  '[': ['BracketLeft', 219, '[']
 }
 const MODIFIERS = { Alt: 1, Control: 2, Ctrl: 2, Meta: 4, Cmd: 4, Shift: 8 }
 
@@ -334,12 +338,14 @@ async function pressKey(cdp, combo) {
   console.log(JSON.stringify({ key: combo }))
 }
 
-async function click(cdp, x, y, modifiers = 0) {
+async function click(cdp, x, y, modifiers = 0, button = 'left') {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0, modifiers })
+  const pressed = button === 'right' ? 2 : 1
   for (const type of ['mousePressed', 'mouseReleased']) {
-    await cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers })
+    await cdp.send('Input.dispatchMouseEvent', { type, x, y, button, buttons: type === 'mousePressed' ? pressed : 0, clickCount: 1, modifiers })
   }
-  console.log(JSON.stringify({ click: [x, y] }))
+  await sleep(50)
+  console.log(JSON.stringify({ click: [x, y], button }))
 }
 
 async function dblclick(cdp, x, y) {
@@ -431,12 +437,17 @@ async function main() {
   const mouseIndex = args.indexOf('--mouse')
   const mouse = mouseIndex !== -1
   if (mouse) args.splice(mouseIndex, 1)
-  const shiftIndex = args.indexOf('--shift')
-  const modifiers = shiftIndex !== -1 ? 8 : 0
-  if (shiftIndex !== -1) args.splice(shiftIndex, 1)
-  const ctrlIndex = args.indexOf('--ctrl')
-  const ctrl = ctrlIndex !== -1
-  if (ctrl) args.splice(ctrlIndex, 1)
+  const flag = (name) => {
+    const index = args.indexOf(name)
+    if (index !== -1) args.splice(index, 1)
+    return index !== -1
+  }
+  const shift = flag('--shift')
+  const alt = flag('--alt')
+  const ctrl = flag('--ctrl')
+  const right = flag('--right')
+  // CDP modifier bits: Alt 1, Control 2, Shift 8.
+  const modifiers = (shift ? 8 : 0) | (alt ? 1 : 0)
   const [command, ...rest] = args
   if (!command || command === 'help' || command === '--help') {
     console.log(USAGE)
@@ -463,7 +474,7 @@ async function main() {
   } else if (command === 'click') {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('click needs <x> <y> in window CSS pixels.')
-    run = (cdp) => click(cdp, x, y, modifiers)
+    run = (cdp) => click(cdp, x, y, modifiers | (ctrl ? 2 : 0), right ? 'right' : 'left')
   } else if (command === 'dblclick') {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('dblclick needs <x> <y> in window CSS pixels.')

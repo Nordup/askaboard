@@ -2,7 +2,9 @@ import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, u
 import { flushSync } from 'react-dom'
 import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
-import { MARKER_SCALE, type DrawStyle, type ToolId } from '../tools'
+import { isMac } from '../platform'
+import { FONTS, MARKER_SCALE, type DrawStyle, type ToolId, type ToolState } from '../tools'
+import type { BoardCommand, CommandContext } from './commands'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
 import { ContentLayer, measureContent, type ContentContext } from './content'
 import {
@@ -55,6 +57,7 @@ import {
   selectTarget,
   topLevelOf,
   zAbove,
+  zOf,
   type LayoutMap,
   type SceneIndex,
   type Shown
@@ -110,6 +113,10 @@ export interface BoardHandle {
   pinMark(id: string, by: Author): void
   /** Restyle the selection with a style pill choice: one undo step (style.ts restyle). */
   applyStyle(patch: StylePatch): void
+  /** Run a command of the right-click menu or the style pill (commands.ts), as its key does. */
+  runCommand(command: BoardCommand): void
+  /** What the commands depend on now: a menu shows only those that can run. */
+  commandContext(): CommandContext
   /** Undo the learner's last step, as ⌘Z does. */
   undo(): void
   /** Redo, as ⇧⌘Z does. */
@@ -187,6 +194,8 @@ export interface BoardProps {
   tool: ToolId
   /** The style new ink and text take. */
   style: DrawStyle
+  /** What a drag on an empty board does with the Select tool: a rectangle or a lasso picks items. */
+  selectMode: ToolState['selectMode']
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
   /** The board changes the tool: a text edit ends by key, Escape with nothing selected, the first pen press. */
@@ -201,6 +210,8 @@ export interface BoardProps {
   onSelectionChange?(ids: readonly string[]): void
   /** The style of the selection changed (style.ts selectionStyle): the style pill shows it. Null: nothing selected takes a style. */
   onSelectionStyle?(style: SelectionStyle | null): void
+  /** A right-click (or Control-click on macOS) on the board, at window CSS pixels, after it chose the selection: open the board menu there. */
+  onContextMenu?(at: Point): void
   ref?: Ref<BoardHandle>
 }
 
@@ -257,10 +268,7 @@ const MIN_SIZE = 8
 const MIN_FONT_SIZE = 6
 /** Shift snaps a rotation to this many degrees. */
 const ROTATE_SNAP = 15
-/** Font size of a new text node (board points). */
-const NEW_TEXT_SIZE = 20
-
-type DragKind = 'pan' | 'lasso' | 'move' | 'ink' | 'erase' | 'resize' | 'none'
+type DragKind = 'pan' | 'lasso' | 'box' | 'move' | 'ink' | 'erase' | 'resize' | 'none'
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | 'rotate'
 
 /** The selection handle a pointer event is on (every part of a handle carries data-handle), or undefined. */
@@ -280,10 +288,12 @@ interface DragState {
   startCamera: Camera
   startSelectedIds: string[]
   changed: boolean
-  /** Lasso only: every pointer sample, in board coordinates. */
+  /** Lasso: every pointer sample, in board coordinates. Box: the start, in board coordinates. */
   lasso: Point[]
   /** Move: the ids that move. */
   moveIds?: Set<string>
+  /** Move with Option / Alt: the copies that move, which the document gets only when the drag commits. */
+  added?: BoardNode[]
   /** Move and resize: how far the pointer is from the start, in board points. */
   delta?: Point
   /** Resize: Shift keeps the aspect ratio; on the rotate handle, it snaps. */
@@ -292,7 +302,7 @@ interface DragState {
   erased?: Set<string>
   /** Move: the clicked node, to select alone when the press was a click. */
   clicked?: string
-  /** Lasso with Shift: add to the selection. */
+  /** Lasso or box with Shift: add to the selection. */
   additive?: boolean
   /**
    * Resize: the node, the handle and the start box. A text also has the place of the press, its font size at the start, and
@@ -315,10 +325,20 @@ const cssPoint = (event: { clientX: number; clientY: number }, rect: DOMRect): P
 const sampleScreenDistance = 0.5
 /** Selection box padding, in screen pixels. The padded box is the move handle. */
 const SELECTION_PAD = 6
-/** A lasso path smaller than this (screen pixels) is a tap. */
+/** A lasso path or a box smaller than this (screen pixels) is a tap. */
 const TAP_SIZE = 6
 
 const px = (value: number): string => `${Math.round(value * 10) / 10}px`
+
+/** The rectangle of a box drag from `a` to `b`, as the polygon the lasso's pick takes. */
+const boxPolygon = ([x0, y0]: Point, [x1, y1]: Point): Point[] => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+/** A press that opens the board menu: the right button, or Control with the left button on macOS. Not the pen's eraser end. */
+function isMenuPress(event: React.PointerEvent): boolean {
+  const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
+  if (penEraser) return false
+  return event.button === 2 || (isMac && event.button === 0 && event.ctrlKey && event.pointerType === 'mouse')
+}
 
 function pressureOf(pointerType: string, pressure: number): number {
   if (pointerType !== 'pen') return 0.5
@@ -440,7 +460,7 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
 }
 
-export function Board({ doc, history, initialCamera, tool, style, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, style, selectMode, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, onContextMenu, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const penRef = useRef<HTMLDivElement>(null)
@@ -551,6 +571,8 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
   onChangesRef.current = onChanges
   const onToolChangeRef = useRef(onToolChange)
   onToolChangeRef.current = onToolChange
+  const onContextMenuRef = useRef(onContextMenu)
+  onContextMenuRef.current = onContextMenu
   const onSelectionChangeRef = useRef(onSelectionChange)
   onSelectionChangeRef.current = onSelectionChange
   useEffect(() => {
@@ -1151,7 +1173,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
   const dragView = useCallback(
     (drag: DragState): BoardNode[] => {
       if (!drag.changed) return drag.startNodes
-      if (drag.kind === 'move' && drag.moveIds) return moveNodes(drag.startNodes, drag.moveIds, drag.delta ?? [0, 0])
+      if (drag.kind === 'move' && drag.moveIds) return moveNodes(drag.added ? [...drag.startNodes, ...drag.added] : drag.startNodes, drag.moveIds, drag.delta ?? [0, 0])
       if (drag.kind === 'resize') return resizeTo(drag)
       if (drag.kind === 'erase' && drag.erased) return drag.startNodes.filter((node) => !drag.erased?.has(node.id))
       return drag.startNodes
@@ -1427,20 +1449,22 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     setSelectedIds(value.trim() ? [editing.id] : [])
   }, [commitNodes, onCorner, setNodes, setSelectedIds])
 
-  /** Create a text node at a board point and edit it. Not in history until it has text. */
+  /** Create a text node at a board point, in the tool's text style, and edit it. Not in history until it has text. */
   const createText = useCallback(
     (point: Point) => {
       const snapshot = nodesRef.current
+      const { color, size, font, align } = styleRef.current
+      const fontFamily = FONTS.find((option) => option.id === font)?.value ?? FONTS[0].value
       const node: TextNode = {
         id: newItemId('n'),
         kind: 'text',
         x: Math.round(point[0] * 10) / 10,
-        y: Math.round((point[1] - NEW_TEXT_SIZE * 0.7) * 10) / 10,
+        y: Math.round((point[1] - size * 0.7) * 10) / 10,
         z: zAbove(indexRef.current.children.get(ROOT) ?? []),
         author: 'learner',
         seq: 0,
         text: '',
-        style: { color: styleRef.current.color, fontSize: `${NEW_TEXT_SIZE}px`, fontFamily: 'var(--ls-hand)' }
+        style: { color, fontSize: `${size}px`, fontFamily, textAlign: align }
       }
       setNodes([...snapshot, node])
       editingRef.current = { id: node.id, snapshot, initial: '' }
@@ -1555,12 +1579,60 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     cursor.style.transform = `translate(${screen[0] - ERASE_RADIUS}px, ${screen[1] - ERASE_RADIUS}px)`
   }
 
+  /**
+   * Copies of these items with their subtrees, each in its own parent, on top of its siblings and
+   * `offset` away (a copy in a flow stays in the flow). Duplicate and the Option-drag both copy with it.
+   */
+  const duplicatesOf = (ids: Iterable<string>, offset: Point): { nodes: BoardNode[]; roots: string[] } => {
+    const index = indexRef.current
+    const copied = copySubtrees(ids, index, layoutRef.current, { detach: false })
+    const roots = new Set(copied.roots)
+    const zNext = new Map<string, number>()
+    const nodes = copied.nodes.map((node) => {
+      if (!roots.has(node.id) || !isKnown(node)) return node
+      const key = parentKey(node, index.byId)
+      const z = zNext.get(key) ?? zAbove(index.children.get(key) ?? [])
+      zNext.set(key, z + 1)
+      const flowed = isFlowed(node, index.byId)
+      return { ...node, z, ...(flowed ? {} : { x: node.x + offset[0], y: node.y + offset[1] }) } as BoardNode
+    })
+    return { nodes, roots: copied.roots }
+  }
+
+  /**
+   * A right-click: the item under the pointer becomes the selection unless it is in it already;
+   * the empty board clears it (but not inside the selection's box). Then the board menu opens
+   * there, and its Paste lands there. The menu belongs to the Select tool, so the press picks it.
+   */
+  const menuPress = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const host = hostRef.current
+    // During a drag the other button is no menu.
+    if (!host || dragRef.current) return
+    event.preventDefault()
+    glideRef.current++
+    if (document.activeElement instanceof HTMLElement && document.activeElement !== host) document.activeElement.blur()
+    if (editingRef.current) commitEditing()
+    const screen = cssPoint(event, host.getBoundingClientRect())
+    const point = screenToBoard(screen, viewportRef.current, cameraRef.current)
+    pasteAnchorRef.current = point
+    if (tool !== 'select') onToolChangeRef.current?.('select')
+    const hit = hitAt(point)
+    const target = hit ? selectTarget(hit, selectionScope(), indexRef.current.byId) : null
+    if (target) {
+      if (!selectedIdsRef.current.includes(target.id)) setSelectedIds([target.id])
+    } else if (!inSelectionBox(screen)) setSelectedIds([])
+    onContextMenuRef.current?.([event.clientX, event.clientY])
+  }
+
   /** The board's own handling of a press. */
   const boardPress = (event: React.PointerEvent<HTMLDivElement>): void => {
     // A press on the board (outside the entered item's frame) leaves the item.
     if (enteredLive()) enterLive(null)
+    if (isMenuPress(event)) {
+      menuPress(event)
+      return
+    }
     const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
-    if (event.button === 2 && !penEraser) return
     const host = hostRef.current
     if (!host) return
     glideRef.current++
@@ -1588,6 +1660,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     let clicked: string | undefined
     let resize: DragState['resize']
     let additive = false
+    let added: BoardNode[] | undefined
 
     if (shouldPan) kind = 'pan'
     else if (penEraser || pressTool === 'eraser') kind = 'erase'
@@ -1624,8 +1697,15 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
           kind = 'move'
           moveIds = movableIds(selected)
         } else {
-          kind = 'lasso'
+          kind = selectMode
           additive = event.shiftKey
+        }
+        // Option / Alt: the drag moves copies made at the press, and the originals stay (one undo step).
+        if (kind === 'move' && event.altKey && moveIds?.size) {
+          const copies = duplicatesOf(moveIds, [0, 0])
+          added = copies.nodes
+          moveIds = new Set(copies.roots)
+          clicked = undefined
         }
       }
     } else if (pressTool === 'pen') kind = 'ink'
@@ -1648,6 +1728,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
       changed: false,
       lasso: [startBoard],
       moveIds,
+      added,
       clicked,
       additive,
       resize
@@ -1677,7 +1758,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     } else if (kind === 'erase') {
       moveEraserCursor(screen)
       eraseAt(screen)
-    } else if (kind === 'lasso') {
+    } else if (kind === 'lasso' || kind === 'box') {
       setLassoPoints([startBoard])
     }
   }
@@ -1750,9 +1831,12 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
       const boardDelta: Point = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
       const moved = Math.hypot(screen[0] - drag.start[0], screen[1] - drag.start[1]) >= 2
       if (!drag.changed && !moved) return
+      const first = !drag.changed
       drag.changed = true
       drag.delta = boardDelta
       setNodes(dragView(drag))
+      // The copies of an Option-drag are the selection once they move.
+      if (first && drag.added) setSelectedIds([...drag.moveIds])
     } else if (drag.kind === 'resize') {
       drag.delta = [(screen[0] - drag.start[0]) / zoom, (screen[1] - drag.start[1]) / zoom]
       drag.keepAspect = event.shiftKey
@@ -1767,6 +1851,9 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
         drag.lasso.push(screenToBoard(sampleScreen, viewportRef.current, cameraRef.current))
       }
       setLassoPoints([...drag.lasso])
+    } else if (drag.kind === 'box') {
+      drag.points.push(screen)
+      setLassoPoints(boxPolygon(drag.lasso[0], screenToBoard(screen, viewportRef.current, cameraRef.current)))
     }
     event.preventDefault()
   }
@@ -1851,34 +1938,46 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     lasso: (drag, screen) => {
       drag.points.push(screen)
       drag.lasso.push(screenToBoard(screen, viewportRef.current, cameraRef.current))
-      const xs = drag.points.map((point) => point[0])
-      const ys = drag.points.map((point) => point[1])
-      const isTap = Math.max(...xs) - Math.min(...xs) < TAP_SIZE && Math.max(...ys) - Math.min(...ys) < TAP_SIZE
-      if (isTap) {
-        // A tap on empty canvas clears the selection (a tap on a node selected it on press).
-        if (!drag.additive) setSelectedIds([])
-      } else {
-        const polygon = drag.lasso
-        const index = indexRef.current
-        const layout = layoutRef.current
-        const picked: string[] = []
-        // Top-level content by box, ink anywhere by length; ink inside a picked frame moves with it.
-        for (const node of index.children.get(ROOT) ?? []) {
-          if (!isContent(node) || !shown(node)) continue
-          const box = layout.get(node.id)
-          if (box && regionInsidePolygon(box, polygon)) picked.push(node.id)
-        }
-        for (const node of inkPaintOrder(index)) {
-          if (!shown(node)) continue
-          const box = layout.get(node.id)
-          const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
-          if (strokeInsidePolygon(node, offset, polygon)) picked.push(node.id)
-        }
-        const ids = outermost(picked, index.byId)
-        setSelectedIds(drag.additive ? [...drag.startSelectedIds, ...ids] : ids)
-      }
-      setLassoPoints(null)
+      finishPick(drag, drag.lasso)
+    },
+    box: (drag, screen) => {
+      drag.points.push(screen)
+      finishPick(drag, boxPolygon(drag.lasso[0], screenToBoard(screen, viewportRef.current, cameraRef.current)))
     }
+  }
+
+  /** The items a lasso or a box holds: top-level content by its box, ink anywhere by its length (ink inside a picked frame moves with it). */
+  const pickInPolygon = (polygon: readonly Point[]): string[] => {
+    const index = indexRef.current
+    const layout = layoutRef.current
+    const picked: string[] = []
+    for (const node of index.children.get(ROOT) ?? []) {
+      if (!isContent(node) || !shown(node)) continue
+      const box = layout.get(node.id)
+      if (box && regionInsidePolygon(box, polygon)) picked.push(node.id)
+    }
+    for (const node of inkPaintOrder(index)) {
+      if (!shown(node)) continue
+      const box = layout.get(node.id)
+      const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
+      if (strokeInsidePolygon(node, offset, polygon)) picked.push(node.id)
+    }
+    return outermost(picked, index.byId)
+  }
+
+  /** The end of a lasso or a box: a tap on the empty board clears the selection; else the selection is what the polygon holds (with Shift, it adds). */
+  const finishPick = (drag: DragState, polygon: readonly Point[]): void => {
+    const xs = drag.points.map((point) => point[0])
+    const ys = drag.points.map((point) => point[1])
+    const isTap = Math.max(...xs) - Math.min(...xs) < TAP_SIZE && Math.max(...ys) - Math.min(...ys) < TAP_SIZE
+    if (!isTap) {
+      const ids = pickInPolygon(polygon)
+      setSelectedIds(drag.additive ? [...drag.startSelectedIds, ...ids] : ids)
+    } else if (!drag.additive) {
+      // A tap on a node selected it on press.
+      setSelectedIds([])
+    }
+    setLassoPoints(null)
   }
 
   /** End the open drag, whatever its kind. */
@@ -1912,7 +2011,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     dragRef.current = null
     activeRef.current = null
     if (drag.kind === 'move' || drag.kind === 'erase' || drag.kind === 'resize') setNodes(drag.startNodes)
-    if (drag.kind === 'move' || drag.kind === 'lasso' || drag.kind === 'resize') setSelectedIds(drag.startSelectedIds)
+    if (drag.kind === 'move' || drag.kind === 'lasso' || drag.kind === 'box' || drag.kind === 'resize') setSelectedIds(drag.startSelectedIds)
     if (drag.kind === 'pan') {
       applyCamera(drag.startCamera)
       setPanning(false)
@@ -1932,7 +2031,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
     if (event.target instanceof HTMLTextAreaElement) return
     const host = hostRef.current
     const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
-    const worlds = host && event.button === 0 && !spaceRef.current && !penEraser && tool !== 'eraser' && tool !== 'hand' && !holdRef.current && !streamRef.current ? pressWorlds() : []
+    const worlds = host && event.button === 0 && !isMenuPress(event) && !spaceRef.current && !penEraser && tool !== 'eraser' && tool !== 'hand' && !holdRef.current && !streamRef.current ? pressWorlds() : []
     if (!host || !worlds.length) {
       boardPress(event)
       return
@@ -2114,9 +2213,25 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
         const next = node && restyle(node, patch)
         if (next && next !== node) changes.set(id, next)
       }
-      replaceNodes(changes)
+      // A turned text in a new size keeps its first corner, as an edit keeps it (commitEditing): it shows,
+      // measures, and moves, all in the one step.
+      const turned = [...changes.keys()].filter((id) => byId.get(id)?.kind === 'text' && restLayoutRef.current.get(id)?.rotation)
+      if (!turned.length || openDrag() || editingRef.current) {
+        replaceNodes(changes)
+        return
+      }
+      const snapshot = nodesRef.current
+      const boxes = new Map(turned.map((id) => [id, restLayoutRef.current.get(id) as LayoutBox]))
+      let next = snapshot.map((node) => changes.get(node.id) ?? node)
+      const shown = next
+      flushSync(() => setNodes(shown))
+      for (const [id, box] of boxes) {
+        const after = restLayoutRef.current.get(id)
+        if (after) next = onCorner(next, id, box, [after.width, after.height])
+      }
+      commitNodes(next, snapshot)
     },
-    [replaceNodes]
+    [commitNodes, onCorner, openDrag, replaceNodes, setNodes]
   )
 
   // ---------- Handle ----------
@@ -2238,6 +2353,17 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
         flashTimerRef.current = setTimeout(() => setFlashRect(null), FLASH_MS)
       },
       applyStyle,
+      runCommand: (command) => applyActionRef.current(command),
+      commandContext: () => {
+        const byId = indexRef.current.byId
+        const selected = selectedIdsRef.current.flatMap((id) => byId.get(id) ?? [])
+        return {
+          selection: selected.length > 0,
+          editable: selectionStyle(selected)?.editable ?? false,
+          clipboard: hasNodeClipboard(),
+          items: (indexRef.current.children.get(ROOT) ?? []).some(shown)
+        }
+      },
       undo: () => {
         if (editingRef.current) commitEditing()
         undo()
@@ -2318,7 +2444,7 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyPlaybackToDom, applyStyle, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, redo, requestMeasure, requestPaint, setSelectedIds, syncViewport, undo, viewportNow, zoomStep]
+    [applyCamera, applyPlaybackToDom, applyStyle, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, redo, requestMeasure, requestPaint, setSelectedIds, shown, syncViewport, undo, viewportNow, zoomStep]
   )
   useEffect(
     () => () => {
@@ -2356,22 +2482,13 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
       commitNodes(removeNodes(nodesRef.current, ids, index))
       setSelectedIds([])
     } else if (action === 'duplicate') {
-      const copied = copySubtrees(ids, index, layout, { detach: false })
-      const roots = new Set(copied.roots)
-      // Each copy goes on top of its siblings; free copies shift a little.
-      const zNext = new Map<string, number>()
-      const nodes = copied.nodes.map((node) => {
-        if (!roots.has(node.id) || !isKnown(node)) return node
-        const key = parentKey(node, index.byId)
-        const z = zNext.get(key) ?? zAbove(index.children.get(key) ?? [])
-        zNext.set(key, z + 1)
-        const flowed = isFlowed(node, index.byId)
-        return { ...node, z, ...(flowed ? {} : { x: node.x + DUPLICATE_OFFSET, y: node.y + DUPLICATE_OFFSET }) } as BoardNode
-      })
-      if (copied.roots.length) {
-        commitNodes([...nodesRef.current, ...nodes])
-        setSelectedIds(copied.roots)
+      const copies = duplicatesOf(ids, [DUPLICATE_OFFSET, DUPLICATE_OFFSET])
+      if (copies.roots.length) {
+        commitNodes([...nodesRef.current, ...copies.nodes])
+        setSelectedIds(copies.roots)
       }
+    } else if (action === 'front' || action === 'back') {
+      replaceNodes(reordered(ids, action))
     } else if (action === 'paste') {
       const clip = readNodeClipboard()
       if (!clip.roots.length) return
@@ -2400,6 +2517,36 @@ export function Board({ doc, history, initialCamera, tool, style, onDocChange, o
       setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
       pasteAnchorRef.current = null
     }
+  }
+
+  const applyActionRef = useRef(applyAction)
+  applyActionRef.current = applyAction
+
+  /**
+   * The items at the top or the bottom of their siblings, in the order they had: the changed nodes by id.
+   * Locked items stay, and so does an item in a flow (its order is its place in the flow).
+   */
+  const reordered = (ids: readonly string[], to: 'front' | 'back'): Map<string, BoardNode> => {
+    const index = indexRef.current
+    const groups = new Map<string, Set<string>>()
+    for (const id of outermost(ids, index.byId)) {
+      const node = index.byId.get(id)
+      if (!node || !isKnown(node) || node.locked || isFlowed(node, index.byId)) continue
+      const key = parentKey(node, index.byId)
+      groups.set(key, (groups.get(key) ?? new Set()).add(id))
+    }
+    const changes = new Map<string, BoardNode>()
+    for (const [key, moving] of groups) {
+      // In paint order (buildIndex sorts siblings by z).
+      const siblings = index.children.get(key) ?? []
+      const ordered = siblings.filter((node) => moving.has(node.id))
+      const others = siblings.filter((node) => !moving.has(node.id))
+      const end = to === 'front' ? siblings.slice(siblings.length - ordered.length) : siblings.slice(0, ordered.length)
+      if (!others.length || end.every((node) => moving.has(node.id))) continue
+      const base = to === 'front' ? zAbove(others) : Math.floor(Math.min(...others.map(zOf))) - ordered.length
+      ordered.forEach((node, i) => changes.set(node.id, { ...node, z: base + i } as BoardNode))
+    }
+    return changes
   }
 
   const nudge = (dx: number, dy: number): void => {

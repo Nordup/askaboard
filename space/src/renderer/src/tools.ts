@@ -5,12 +5,12 @@
  * tooltips: a tool exists in all three or in none.
  */
 
-import { Eraser, Hand, Lasso, MousePointer2, PenLine, Type, type LucideIcon } from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight, Eraser, Hand, Lasso, MousePointer2, PenLine, Type, type LucideIcon } from 'lucide-react'
 
 export type ToolId = 'select' | 'hand' | 'rect' | 'ellipse' | 'arrow' | 'line' | 'pen' | 'text' | 'eraser'
 
 /** The fields of DrawStyle that a tool or an item kind uses: the style pill shows these. */
-export type StyleField = 'color' | 'width' | 'pen'
+export type StyleField = 'color' | 'width' | 'pen' | 'size' | 'font' | 'align'
 
 export interface ToolDef {
   id: ToolId
@@ -29,7 +29,7 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'select', label: 'Select', key: 'V', digit: '1', Icon: MousePointer2, style: [] },
   { id: 'hand', label: 'Hand', key: 'H', Icon: Hand, style: [] },
   { id: 'pen', label: 'Pen', key: 'P', digit: '6', Icon: PenLine, style: ['color', 'width', 'pen'] },
-  { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color'] },
+  { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color', 'size', 'font', 'align'] },
   { id: 'eraser', label: 'Eraser', key: 'E', digit: '0', Icon: Eraser, style: [] }
 ]
 
@@ -89,6 +89,39 @@ export const PEN_KINDS: readonly { id: PenKind; label: string }[] = [
 /** A marker stroke is this many times wider than a pen stroke. It is saved as InkNode.tool 'highlighter'. */
 export const MARKER_SCALE = 4
 
+export interface TextSize {
+  id: string
+  label: string
+  /** The font size in board points. It is written into the board file as `style.fontSize: "<px>px"`. */
+  px: number
+}
+
+/** Text sizes: Excalidraw's 16, 20, 28 and 36 px. New text was 20 px before the style pill, so M is the default. */
+export const TEXT_SIZES: readonly TextSize[] = [
+  { id: 'S', label: 'Small', px: 16 },
+  { id: 'M', label: 'Medium', px: 20 },
+  { id: 'L', label: 'Large', px: 28 },
+  { id: 'XL', label: 'Extra large', px: 36 }
+]
+
+export type FontId = 'hand' | 'plain' | 'code'
+
+/** Text fonts: the board's own font tokens (board/content.css), written into the board file as `style.fontFamily`. */
+export const FONTS: readonly { id: FontId; label: string; value: string }[] = [
+  { id: 'hand', label: 'Hand', value: 'var(--ls-hand)' },
+  { id: 'plain', label: 'Plain', value: 'var(--ls-font)' },
+  { id: 'code', label: 'Code', value: 'var(--ls-mono)' }
+]
+
+export type TextAlign = 'left' | 'center' | 'right'
+
+/** Text alignment, written into the board file as `style.textAlign`. */
+export const TEXT_ALIGNS: readonly { id: TextAlign; label: string; Icon: LucideIcon }[] = [
+  { id: 'left', label: 'Align left', Icon: AlignLeft },
+  { id: 'center', label: 'Align centre', Icon: AlignCenter },
+  { id: 'right', label: 'Align right', Icon: AlignRight }
+]
+
 /** The one style that every tool draws with; each tool uses some of its fields (ToolDef.style). */
 export interface DrawStyle {
   /** A hex colour from INK_COLORS (any colour string on an item). */
@@ -96,6 +129,10 @@ export interface DrawStyle {
   /** The nominal pen width in board points (STROKE_WIDTHS). */
   width: number
   pen: PenKind
+  /** The text size in board points (TEXT_SIZES). */
+  size: number
+  font: FontId
+  align: TextAlign
 }
 
 export interface ToolState {
@@ -111,7 +148,7 @@ export const INITIAL_TOOLS: ToolState = {
   tool: 'select',
   selectMode: 'box',
   lock: false,
-  style: { color: INK_COLORS[0].value, width: STROKE_WIDTHS[1].px, pen: 'pen' }
+  style: { color: INK_COLORS[0].value, width: STROKE_WIDTHS[1].px, pen: 'pen', size: TEXT_SIZES[1].px, font: 'hand', align: 'left' }
 }
 
 /** Choose a tool: a press on Select while it is active switches between the box and the lasso. */

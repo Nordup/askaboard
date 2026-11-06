@@ -937,7 +937,8 @@ button:focus-visible {
   background: var(--bg-hover);
 }
 
-.option[aria-pressed='true'] {
+.option[aria-pressed='true'],
+.option[aria-expanded='true'] {
   background: var(--bg-active);
   color: var(--text-primary);
 }

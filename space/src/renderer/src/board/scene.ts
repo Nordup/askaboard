@@ -18,7 +18,7 @@ export interface SceneIndex {
   children: Map<string, BoardNode[]>
 }
 
-const zOf = (node: BoardNode): number => (typeof node.z === 'number' && Number.isFinite(node.z) ? node.z : 0)
+export const zOf = (node: BoardNode): number => (typeof node.z === 'number' && Number.isFinite(node.z) ? node.z : 0)
 
 export function buildIndex(nodes: readonly BoardNode[]): SceneIndex {
   const byId = new Map<string, BoardNode>()

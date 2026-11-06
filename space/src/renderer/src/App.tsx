@@ -32,6 +32,8 @@ import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast } from './components/Toast'
 import { BoardControls } from './components/BoardControls'
+import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
+import type { CommandContext } from './board/commands'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
@@ -120,6 +122,9 @@ export function App() {
   const [tools, setTools] = useState<ToolState>(INITIAL_TOOLS)
   /** The selection's style, for the style pill (Board onSelectionStyle). */
   const [selectionStyle, setSelectionStyle] = useState<SelectionStyle | null>(null)
+  /** The right-click menu: where it opened, on which mounted board, and what its commands could do then. */
+  const [boardMenu, setBoardMenu] = useState<{ x: number; y: number; board: number; context: CommandContext } | null>(null)
+  const closeBoardMenu = useCallback(() => setBoardMenu(null), [])
   const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
   const [guideOverrides, setGuideOverrides] = useState<GuideOverrides | null>(null)
   const [agentActivity, setAgentActivity] = useState<AgentActivity & { at: number } | null>(null)
@@ -1035,7 +1040,9 @@ export function App() {
               kind: node.kind,
               author: typeof node.author === 'string' ? node.author : null,
               parent: typeof node.parent === 'string' ? node.parent : null,
+              z: typeof node.z === 'number' ? node.z : null,
               ...(node.kind === 'text' ? { text: node.text } : {}),
+              ...(node.kind === 'text' ? (({ fontSize, fontFamily, textAlign }: Record<string, string | undefined>) => ({ fontSize, fontFamily, textAlign }))((node as { style?: Record<string, string> }).style ?? {}) : {}),
               ...(node.kind === 'ink' || node.kind === 'text' ? { color: node.kind === 'ink' ? node.color : (node as { style?: Record<string, string> }).style?.color } : {}),
               bounds: bounds ? { x: r1(bounds.x), y: r1(bounds.y), width: r1(bounds.width), height: r1(bounds.height) } : null
             }
@@ -1270,12 +1277,17 @@ export function App() {
                 initialCamera={open.camera}
                 tool={tools.tool}
                 style={tools.style}
+                selectMode={tools.selectMode}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
                 onToolChange={(tool) => setTools((current) => ({ ...current, tool }))}
                 onChanges={onChanges}
                 onSelectionChange={setSelection}
                 onSelectionStyle={setSelectionStyle}
+                onContextMenu={([x, y]) => {
+                  const context = boardRef.current?.commandContext()
+                  setBoardMenu(context && hasBoardMenu(context) ? { x, y, board: open.key, context } : null)
+                }}
               />
             )}
             {canvasContent}
@@ -1294,8 +1306,20 @@ export function App() {
                 onZoomIn={() => boardRef.current?.zoomStep('in', 'menu')}
                 onZoomOut={() => boardRef.current?.zoomStep('out', 'menu')}
                 onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}
+                onCommand={(command) => boardRef.current?.runCommand(command)}
+                commandContext={() => boardRef.current?.commandContext() ?? null}
                 onUndo={() => boardRef.current?.undo()}
                 onRedo={() => boardRef.current?.redo()}
+              />
+            )}
+            {open && boardMenu?.board === open.key && (
+              <BoardMenu
+                key={`${boardMenu.x} ${boardMenu.y}`}
+                x={boardMenu.x}
+                y={boardMenu.y}
+                context={boardMenu.context}
+                onCommand={(command) => boardRef.current?.runCommand(command)}
+                onClose={closeBoardMenu}
               />
             )}
             {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}
