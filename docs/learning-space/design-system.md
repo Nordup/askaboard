@@ -84,7 +84,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   the title row (see "Title row"): `--window-buttons-end`,
   `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
   `--title-button-gap`, `--title-icon-size`;
-  `--sidebar-row-height`, `--sidebar-footer-height`,
+  `--sidebar-row-height`, `--folder-row-height`,
   `--topbar-rename-width`,
   `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
@@ -163,8 +163,12 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 
 ## Pills
 
-The top bar's status pills share `.pill` in `app.css` (the comment block
-above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
+The top bar's status items (agent, scene, performance; still called pills in
+code) share `.pill` in `app.css` (the comment block above `.pill--static`).
+They have no border and no capsule (decision U9), as the zoom percent:
+`--pill-height` (26 px), padding 0 `--space-2`, `--radius-sm`, `--bg-hover`
+on hover, `--bg-active` while the popover is open. The popover opens under
+the item, right-aligned. The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 (`--live`, `--warn`, `--bad`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
 `.pill--selected` (the pill speaks of a selected item: `--text-primary`),
@@ -172,7 +176,7 @@ a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 `.pill__action` (the one small icon button, 12 px lucide icon),
 `.pill__toggle` (a plain button around the dot and text of a static pill;
 the pill hovers with it) and `.pill--flash` (the pill lights up once).
-`.pill--item` is a static pill on a board item, not in the top bar (the `--item-pill-*` tokens). A new pill uses these parts; a
+A new pill uses these parts; a
 missing part goes into the same block.
 
 ## Icon buttons and status dots
@@ -186,8 +190,21 @@ item pill).
 
 ## Title row
 
-The 44 px row across the top of the window: the sidebar strip and the top
-bar. Everything in it shares one centre line at 22 px.
+The 44 px row across the top of the window: the sidebar strip (macOS
+window only) and the top bar. Everything in it shares one centre line at
+22 px.
+
+- **One rule places the sidebar button** (`App.tsx`, decision U9): the
+  sidebar strip exists only beside the macOS window buttons
+  (`data-window-buttons`: macOS, not full screen). There, with the sidebar
+  shown, the button is at the strip's right end. Everywhere else (sidebar
+  hidden, full screen, Linux, Windows) the button leads the top bar
+  (`.topbar--lead`), "Hide sidebar" or "Show sidebar". A keyboard toggle
+  keeps the focus on the button in its new place.
+- Without the strip, the sidebar starts at the top: New board's row is
+  centred on the 22 px line (`.sidebar--no-strip`, top padding
+  (`--topbar-height` − `--sidebar-row-height`) / 2). With the strip, New
+  board starts 8 px (`--space-2`) under it.
 
 - The macOS window buttons: three 14 px circles at a 23 px pitch, x 16 to
   76 window px (`--window-buttons-end`), centre 22 px at 100 %. Measured
@@ -212,12 +229,16 @@ bar. Everything in it shares one centre line at 22 px.
 - 16 px from the window buttons' right edge to the first button
   (`--window-buttons-gap`), so it starts at 92 px in a macOS window.
 - 12 px edge inset in full screen, on Linux and on Windows
-  (`--title-row-inset`). `.shell` sets `--chrome-reserve` to one of the
-  two.
+  (`--title-row-inset`), from the top bar's left edge (the sidebar's right
+  edge while it shows). `.shell` sets `--chrome-reserve` to one of the
+  two; `.topbar--lead` uses it.
 - 12 px (`--space-3`) from the last button to the board name.
-- Sidebar open: the sidebar button sits at the right end of the strip,
-  its icon's right edge in the column of the rows' hints and times.
-- The pills on the right keep their own spacing (`.topbar__right`).
+- In the strip, the sidebar button's icon has its right edge in the
+  column of the rows' hints and times.
+- No save mark in normal work: only a failed save shows, "Not saved" in
+  `--ink-pink` with an alert icon, 12 px after the board name
+  (`.save-status`, an `aria-live` region that is empty otherwise).
+- The status items on the right keep their own spacing (`.topbar__right`).
 
 ## Tooltips
 
@@ -259,14 +280,16 @@ internal data (a path, an id). One shared tooltip instead
 - **Setup flyout.** A quiet sidebar row "Set up for learning" with an accent
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
-- **Sidebar** (left-panel plan, decisions U6, 2026-11-06). Top to bottom: a
-  44 px strip (drag region) with the sidebar button at its right end
-  (lucide `PanelLeft`, `.icon-button--title`, `SidebarToggle.tsx`; see
-  "Title row"); the rows New board (`SquarePen`,
+- **Sidebar** (left-panel plan, decisions U6 and U9, 2026-11-06). Top to
+  bottom: in a macOS window only, a 44 px strip (drag region) with the
+  sidebar button at its right end (lucide `PanelLeft`,
+  `.icon-button--title`, `SidebarToggle.tsx`; see "Title row"), 8 px above
+  the rows; the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
   and the guide-override note; the heading "Boards" and the boards list;
-  the footer (`--sidebar-footer-height`, top hairline): `.folder-row` with
+  the footer (top hairline, 8 px padding on all four sides): `.folder-row`
+  (`--folder-row-height`, 44 px) with
   `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
   `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
   `--radius-md`. The footer opens the folder menu above it
@@ -281,7 +304,9 @@ internal data (a path, an id). One shared tooltip instead
   column, at once. The top bar then starts with the sidebar button and a
   New board button (`.topbar__lead`, 4 px apart): at 92 px on macOS in a
   window, at 12 px in full screen and off macOS (`--chrome-reserve` on
-  `.shell`, set by `data-window-buttons`; see "Title row"). Then the board
+  `.shell`, set by `data-window-buttons`; see "Title row"). In full screen
+  and off macOS the sidebar button stays there with the sidebar shown,
+  without New board. Then the board
   name, 12 px after the buttons; a new board's rename
   field shows in the top bar (`.topbar__rename`).
 - **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and

@@ -63,6 +63,8 @@ const remoteDebugPort = (() => {
   }
   return port
 })()
+/** Dev hook (with SPACE_REMOTE_DEBUG): the renderer lays out as in full screen, with no real full screen (no new macOS Space). */
+const fakeFullScreen = remoteDebugPort !== null && process.env.SPACE_FAKE_FULL_SCREEN === '1'
 if (remoteDebugPort !== null) {
   app.commandLine.appendSwitch('remote-debugging-port', String(remoteDebugPort))
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
@@ -359,7 +361,7 @@ function registerIpc(): void {
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const buttonsEnd = win && win === liveMainWindow() ? windowButtonsEnd(interfaceFactor(store.getInterfaceSize(), win)) : null
-    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, windowButtonsEnd: buttonsEnd, homeDir: homedir() }
+    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: fakeFullScreen || (win?.isFullScreen() ?? false), windowButtonsEnd: buttonsEnd, homeDir: homedir() }
   })
   ipcMain.on(IPC.setSidebarHidden, (event, hidden: unknown) => {
     if (event.sender === mainWindow?.webContents && typeof hidden === 'boolean') setSidebarHidden(hidden)

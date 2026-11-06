@@ -1,5 +1,5 @@
 import { tip } from './Tooltip'
-import { AlertCircle, Check, SquarePen } from 'lucide-react'
+import { AlertCircle, SquarePen } from 'lucide-react'
 import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
 import { PerfPill } from './PerfPill'
@@ -11,8 +11,10 @@ import { shortcut } from '../platform'
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 interface TopBarProps {
-  /** With the sidebar hidden, the top bar starts with the sidebar button and New board. */
+  /** With the sidebar hidden, the top bar's lead also holds New board, and the sidebar button reads "Show sidebar". */
   sidebarHidden: boolean
+  /** The top bar starts with the sidebar button (no sidebar strip holds it: App.tsx, the title row's rule). */
+  sidebarButton: boolean
   onToggleSidebar(): void
   /** New board; null without a folder. */
   onCreateBoard: (() => void) | null
@@ -22,6 +24,7 @@ interface TopBarProps {
   renaming: boolean
   onRename(name: string): void
   onCancelRename(): void
+  /** Only a failed save shows ("Not saved"); null when no board is open. */
   saveStatus: SaveStatus | null
   /** The zoom as a share of the home zoom (HOME_ZOOM), where 1 is 100%. Null when no board is open. */
   zoom: number | null
@@ -35,22 +38,15 @@ interface TopBarProps {
   showPerformance: boolean
 }
 
-const SAVE_LABEL: Record<SaveStatus, string> = {
-  saved: 'Saved',
-  saving: 'Saving…',
-  unsaved: 'Edited',
-  error: 'Not saved'
-}
-
 export function TopBar(props: TopBarProps) {
   const { sidebarHidden, folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance } = props
   return (
-    <header className="topbar">
+    <header className={props.sidebarButton ? 'topbar topbar--lead' : 'topbar'}>
       <div className="topbar__title">
-        {sidebarHidden && (
+        {props.sidebarButton && (
           <span className="topbar__lead">
-            <SidebarToggle hidden onToggle={props.onToggleSidebar} />
-            {props.onCreateBoard && (
+            <SidebarToggle hidden={sidebarHidden} onToggle={props.onToggleSidebar} />
+            {sidebarHidden && props.onCreateBoard && (
               <button className="icon-button icon-button--strong icon-button--title" {...tip('New board', shortcut('N'))} aria-label="New board" onClick={props.onCreateBoard}>
                 <SquarePen size={16} strokeWidth={1.75} />
               </button>
@@ -65,11 +61,14 @@ export function TopBar(props: TopBarProps) {
           <span className="topbar__folder">{folderName ?? 'Learning Space'}</span>
         )}
         {saveStatus && (
-          <span className={`save-status save-status--${saveStatus}`} aria-live="polite">
-            {saveStatus === 'saved' && <Check size={12} strokeWidth={2} />}
-            {saveStatus === 'error' && <AlertCircle size={12} strokeWidth={2} />}
-            {saveStatus === 'saving' || saveStatus === 'unsaved' ? <span className="save-status__dot" /> : null}
-            {SAVE_LABEL[saveStatus]}
+          // The live region stays while a board is open; it holds words only when a save failed.
+          <span className="save-status" aria-live="polite">
+            {saveStatus === 'error' && (
+              <>
+                <AlertCircle size={12} strokeWidth={2} />
+                Not saved
+              </>
+            )}
           </span>
         )}
       </div>

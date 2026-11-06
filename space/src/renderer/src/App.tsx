@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
@@ -38,6 +38,7 @@ import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
 import { isMac } from './platform'
+import { markFocus, returnFocus, type FocusMark } from './lib/focus'
 import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
 import { perfMeter } from './perf-meter'
@@ -808,6 +809,8 @@ export function App() {
   const [windowButtonsEnd, setWindowButtonsEnd] = useState(shellStart.windowButtonsEnd)
   /** The setting as last asked for, so two quick toggles are two changes before main answers. */
   const sidebarHiddenRef = useRef(shellStart.sidebarHidden)
+  /** The sidebar button had the focus when the setting changed: the focus follows the button to its new place. */
+  const toggleFocusRef = useRef<FocusMark | null>(null)
   /**
    * The one place the setting changes here (the sidebar button, ⌘B, the View menu). Before the sidebar hides, a rename
    * in it commits through its own blur (the field unmounts with no blur of its own). The setup flyout hangs at the
@@ -816,6 +819,7 @@ export function App() {
   const changeSidebarHidden = useCallback((hidden: boolean): boolean => {
     if (hidden === sidebarHiddenRef.current) return false
     const active = document.activeElement
+    toggleFocusRef.current = active instanceof HTMLElement && active.matches('.sidebar-toggle') ? markFocus() : null
     if (hidden && active instanceof HTMLElement && active.closest('.sidebar')) active.blur()
     sidebarHiddenRef.current = hidden
     setSidebarHidden(hidden)
@@ -826,6 +830,17 @@ export function App() {
     const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen), space.onWindowButtons(setWindowButtonsEnd)]
     return () => offs.forEach((off) => off())
   }, [changeSidebarHidden])
+  useLayoutEffect(() => {
+    const mark = toggleFocusRef.current
+    toggleFocusRef.current = null
+    if (mark) returnFocus(mark, document.querySelector<HTMLElement>('.sidebar-toggle'))
+  }, [sidebarHidden])
+  /**
+   * The title row's one rule: the sidebar strip exists only where the macOS window buttons need it (a window, not full
+   * screen). The sidebar button is at the strip's right end while the strip shows; otherwise it leads the top bar.
+   */
+  const windowButtons = isMac && !fullScreen
+  const toggleInStrip = windowButtons && !sidebarHidden
   const toggleSidebar = useCallback(() => {
     if (changeSidebarHidden(!sidebarHiddenRef.current)) space.setSidebarHidden(sidebarHiddenRef.current)
   }, [changeSidebarHidden])
@@ -1229,11 +1244,12 @@ export function App() {
       className="shell"
       data-sidebar-hidden={sidebarHidden || undefined}
       data-fullscreen={fullScreen || undefined}
-      data-window-buttons={(isMac && !fullScreen) || undefined}
+      data-window-buttons={windowButtons || undefined}
       style={windowButtonsEnd === null ? undefined : ({ '--window-buttons-end': `${windowButtonsEnd}px` } as CSSProperties)}
     >
       <Sidebar
         hidden={sidebarHidden}
+        strip={toggleInStrip}
         onToggleSidebar={toggleSidebar}
         folderName={folder?.name ?? null}
         folderRoot={folder?.root ?? null}
@@ -1266,6 +1282,7 @@ export function App() {
       <main className="main">
         <TopBar
           sidebarHidden={sidebarHidden}
+          sidebarButton={!toggleInStrip}
           onToggleSidebar={toggleSidebar}
           onCreateBoard={folder ? () => void createBoard() : null}
           folderName={folder?.name ?? null}

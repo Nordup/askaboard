@@ -169,7 +169,7 @@ export function installMenu(actions: MenuActions): void {
           ]
         },
         { type: 'separator' },
-        { label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
+        { id: 'show-performance', label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
         { type: 'separator' },
         { id: READ_LINES_ITEM, label: 'Read Lines Aloud', type: 'checkbox', checked: actions.readLines, click: (item) => actions.setReadLines(item.checked) },
         { label: 'Voice', submenu: VOICES.map((voice) => ({ id: voiceItem(voice), label: voice, type: 'radio' as const, checked: voice === actions.voice, click: () => actions.setVoice(voice) })) },
