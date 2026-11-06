@@ -1,0 +1,74 @@
+/* The page is a board: the colours, the dot grid and the hand font come from the app (space/src/renderer/src/styles/tokens.css, board/board.css, board/content.css). */
+:root {
+  --bg-canvas: #161618;
+  --canvas-dot: #ffffff;
+  --grid-alpha: 0.07;
+  --grid-size: 24px;
+
+  --card: #1f2230;
+  --card-2: #262a3a;
+  --text: #ececef;
+  --muted: #a0a0a8;
+  --hint: #5d5d66;
+  --accent: #6e8bff;
+  --on-accent: #0f1220;
+  --good: #5fd38d;
+  --bad: #ff6b8b;
+  --warn: #f5d76e;
+  --border: #2e3448;
+  /* The visitor's pen (the app's white ink). */
+  --ink: #ececef;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  --hand: 'Learning Hand', var(--font-ui);
+
+  --gutter: clamp(16px, 4vw, 56px);
+  color-scheme: dark;
+}
+
+/* Below 1.5 device pixels per CSS pixel the regular line is thin and jagged; the heavy cut has the same metrics. */
+@media (max-resolution: 1.49dppx) {
+  :root {
+    --hand: 'Learning Hand Heavy', var(--font-ui);
+  }
+}
+
+@font-face {
+  font-family: 'Learning Hand';
+  src: url('/fonts/hand.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Learning Hand Heavy';
+  src: url('/fonts/hand-heavy.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.hand {
+  font-family: var(--hand);
+}
