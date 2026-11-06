@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for Learning Space (electron-builder.yml signs
+  the app and its helpers with this file). Keep the list minimal.
+  Not needed, so not here: the microphone and the camera (the app records
+  nothing), and library validation (the app loads no native addon; the local
+  voice runs sherpa-onnx as its own child process, src/main/kokoro.ts).
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 (main process, renderers, the scene stage) compiles JavaScript to machine code at run time. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

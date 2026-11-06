@@ -42,6 +42,9 @@ scripts/__pycache__/
 space/node_modules/
 space/out/
 space/dist/
+space/release/
+# electron-builder resources (entitlements); the Xcode rule above ignores build/.
+!space/build/
 
 # Third-party reference material (Paper agent interface), local only
 docs/learning-space/reference/

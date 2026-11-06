@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "build": "npm run typecheck && electron-vite build && node scripts/build-relay.mjs",
     "build:mcpb": "node scripts/build-mcpb.mjs",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "dist:mac": "node scripts/dist-mac.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
@@ -32,6 +33,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "clipper-lib": "^6.4.2",
     "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "opentype.js": "^2.0.0",
     "typescript": "^7.0.2",

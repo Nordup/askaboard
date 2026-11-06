@@ -61,10 +61,10 @@ Where another doc disagrees, the launch plan wins.
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | Launch backend (2026-11-06, P25): the private repo `../learning-space-backend`, live at `https://135-181-38-113.sslip.io` | Done and deployed. `POST /v1/speech` with a $0.50 daily cap per user (strict: a request that would pass the cap does not start), `POST /batch/` forwards usage data to PostHog US. An outside Codex review is fixed |
-| Usage data (P24, a copy of T3 Code; `space/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../../space/README.md`](../../space/README.md), "Usage data". Open: the PostHog dashboard (DAU, WAU, retention) needs the founder's `/mcp` login to PostHog |
+| Usage data (P24, a copy of T3 Code; `space/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../../space/README.md`](../../space/README.md), "Usage data". Dashboard "Learning Space launch" (id 2313367; rebuilt the same day after a mistaken delete) with a weekly email. All events so far are `dev`, which the dashboard hides |
 | Voice for everyone (T39), a local Kokoro voice (T40), a first Settings panel (U8), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. The founder redesigns Settings later |
 | Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
-| App packaging and signing (macOS) | Not started: the launch (D7). Needs the founder's Apple Developer ID, notarization credentials, the build tool and the new name. The release build must set `LEARNING_SPACE_TELEMETRY_CHANNEL=stable` |
+| App packaging and signing (macOS, D7, D10) | Built 2026-11-06: `cd space && npm run dist:mac` makes arm64 and x64 `.dmg` files (about 133 and 140 MB) with telemetry channel `stable`. The arm64 app ran from the `.dmg` in a check: welcome card, a scene on the board, the relay answers. Signed ad-hoc for now: this Mac has no "Developer ID Application" certificate (team CDA73N3FRP). The notarytool profile `learning-space-notary` is not stored yet. Not checked: the x64 app, a real Developer ID signature, notarization, a clean Mac. Waits for the new name and icon |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Deeper editing (shapes inside SVG, style inspector) | Much later |
 

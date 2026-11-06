@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The ad-hoc build only (scripts/dist-mac.mjs, no Developer ID): the release
+  entitlements (entitlements.mac.plist) plus one. Keep the two files the same
+  apart from that one key.
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 (main process, renderers, the scene stage) compiles JavaScript to machine code at run time. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Ad-hoc code has no Team ID, so the hardened runtime refuses to load the ad-hoc
+       Electron Framework ("different Team IDs"). A Developer ID build does not need this. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
