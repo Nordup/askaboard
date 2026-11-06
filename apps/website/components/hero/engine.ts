@@ -20,6 +20,7 @@ import type { InkPoint } from '@/lib/board/hand'
 import { Ink, Pen, write } from '@/lib/board/kit'
 import { drawStroke } from '@/lib/board/paint'
 import { PEN_WIDTH, PenStroke } from '@/lib/pen-stroke'
+import { shellParts, shellSizes, STEP_GAP, stepLine } from '@/lib/shell-steps'
 import { BAR, DESK, PHONE, PHONE_BELOW, type Place, type SpriteDef } from './layout'
 import type { Draw } from './scene'
 import { toolForKey, type ToolId } from './tools'
@@ -64,6 +65,8 @@ interface Item {
   at: XY
   z: number
   onScreen: boolean
+  /** A drawing that said it is finished and still (its Draw returned true): painted only on a layout. */
+  settled?: boolean
 }
 
 type Press =
@@ -159,12 +162,14 @@ export function mountBoard(o: {
   hero: HTMLElement
   /** The board layer (in the host), its items, the draft canvas (fixed over the viewport) and the text tool's field. */
   layer: HTMLElement
+  /** The layer behind the app shell's window: the use case steps' ink (layout.ts `step`). It pans with the board. */
+  back: HTMLElement
   draft: HTMLCanvasElement
   field: HTMLInputElement
   sprites: SpriteDef[]
   onChange(state: HeroState): void
 }): Engine {
-  const { host, hero, layer, draft, field } = o
+  const { host, hero, layer, back, draft, field } = o
   const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const css = getComputedStyle(host)
   const inkColor = css.getPropertyValue('--ink').trim() || hex('accent')
@@ -175,14 +180,15 @@ export function mountBoard(o: {
 
   let z = 0
   const items: Item[] = o.sprites.map((def) => {
-    const el = layer.querySelector<HTMLElement>(`[data-sprite="${def.id}"]`)!
+    const el = host.querySelector<HTMLElement>(`[data-sprite="${def.id}"]`)!
     const canvas = el.querySelector('canvas')!
     const item: Item = {
       el,
       canvas,
       g: new Pen(canvas.getContext('2d')!),
       draw: def.make(),
-      start: def.start,
+      // A step's ink draws on when it first comes on screen (the IntersectionObserver below).
+      start: def.step ? Infinity : def.start,
       def,
       window: def.window,
       w: def.w,
@@ -213,6 +219,7 @@ export function mountBoard(o: {
   let frame = 0
   let suppressClick = false
   let paintAll = true
+  let overShell = false
   const t0 = performance.now()
 
   // ---------- Layout ----------
@@ -243,8 +250,36 @@ export function mountBoard(o: {
     u = phone ? Math.min(W / PHONE.w, PHONE.maxU) : Math.min(W / DESK.w, hero.clientHeight / DESK.h)
     origin = phone ? [W / 2, 0] : [W / 2, hero.clientHeight / 2]
     host.style.setProperty('--u', `${u}px`)
+    const shell = shellParts(host)
+    const hostBox = host.getBoundingClientRect()
+    const track = shell?.track.getBoundingClientRect()
+    const frame = shell?.frame.getBoundingClientRect()
+    const sizes = shell ? shellSizes(shell) : null
     for (const item of items) {
-      if (item.def) item.place = phone ? (item.def.phone ?? null) : item.def.desk
+      if (item.def) item.place = phone ? (item.def.phone ?? null) : item.def.deskOff ? null : item.def.desk
+      if (item.def?.step && item.place) {
+        // A step's mark: its place is an offset from an anchor in the step's area of the shell's
+        // track (layout.ts `step`, lib/shell-steps.ts).
+        if (!track || !frame || !sizes) {
+          item.place = null
+          item.el.style.display = 'none'
+          continue
+        }
+        const { index, side, y: anchor } = item.def.step
+        const begins = track.top - hostBox.top + stepLine(sizes.winH, sizes.step, index)
+        const middle = begins + sizes.step / 2
+        const y = anchor === 'span' ? middle : anchor === 'upper' ? middle - 0.12 * window.innerHeight : anchor === 'above' ? begins - sizes.winH / 2 : begins
+        const x = phone ? W / 2 : side === 'left' ? (frame.left - hostBox.left) / 2 : (frame.right - hostBox.left + W) / 2
+        if (anchor === 'span') {
+          // The brace spans the step's area, less the gap to the next one.
+          item.h = item.bodyH = Math.max(40, (sizes.step - STEP_GAP) / u / item.place.s)
+          item.el.style.setProperty('--h', String(item.h))
+        }
+        const place: Place = { ...item.place, x: (x - origin[0]) / u + item.place.x, y: (y - origin[1]) / u + item.place.y }
+        item.place = place
+        item.el.style.display = ''
+        for (const [name, value] of Object.entries({ dx: place.x, dy: place.y, px: place.x, py: place.y })) item.el.style.setProperty(`--${name}`, String(value))
+      }
       if (!item.place) continue
       sizeCanvas(item)
       placeItem(item)
@@ -258,6 +293,7 @@ export function mountBoard(o: {
 
   const showPan = (): void => {
     layer.style.translate = `${pan[0] * u}px ${pan[1] * u}px`
+    back.style.translate = layer.style.translate
     // The dot grid moves with the board.
     host.style.setProperty('--pan-x', `${pan[0] * u}px`)
     host.style.setProperty('--pan-y', `${pan[1] * u}px`)
@@ -274,8 +310,9 @@ export function mountBoard(o: {
 
   // ---------- Painting ----------
 
-  const paintSprite = (item: Item, t: number): void => {
-    if (!item.place || !item.draw) return
+  /** Paint an animated item; true when its drawing says it is finished and still. */
+  const paintSprite = (item: Item, t: number): boolean | void => {
+    if (!item.place || !item.draw) return false
     const c = item.g.ctx
     const k = item.place.s * u * dpr
     c.setTransform(1, 0, 0, 1, 0, 0)
@@ -283,7 +320,7 @@ export function mountBoard(o: {
     c.setTransform(k, 0, 0, k, 0, 0)
     c.lineCap = 'round'
     c.lineJoin = 'round'
-    item.draw(item.g, still ? 1e4 : t - item.start, still)
+    return item.draw(item.g, still ? 1e4 : t - item.start, still, { w: item.w, h: item.bodyH })
   }
 
   /** Draw a mark in world units on a context whose transform maps world units. */
@@ -338,12 +375,15 @@ export function mountBoard(o: {
   const tick = (now: number): void => {
     frame = 0
     const t = (now - t0) / 1000
-    for (const item of items) if (item.draw && item.place && (paintAll || (!still && item.onScreen))) paintSprite(item, t)
+    for (const item of items) {
+      if (!item.draw || !item.place || !(paintAll || (!still && item.onScreen && !item.settled))) continue
+      if (paintSprite(item, t) === true) item.settled = true
+    }
     paintAll = false
     if (draftActive() || draftShown) paintDraft(now)
     if (running()) frame = requestAnimationFrame(tick)
   }
-  const running = (): boolean => (!still && items.some((item) => item.draw && item.onScreen)) || draftActive()
+  const running = (): boolean => (!still && items.some((item) => item.draw && item.onScreen && !item.settled)) || draftActive()
   const request = (): void => {
     if (!frame) frame = requestAnimationFrame(tick)
   }
@@ -373,7 +413,7 @@ export function mountBoard(o: {
   /** The topmost item under p (world units). */
   const itemAt = (p: XY): Item | null => {
     let best: Item | null = null
-    for (const item of items) if ((!best || item.z > best.z) && hits(item, p)) best = item
+    for (const item of items) if ((!best || item.z > best.z) && !(overShell && item.def?.step) && hits(item, p)) best = item
     return best
   }
 
@@ -487,6 +527,8 @@ export function mountBoard(o: {
   /** A press on the top bar, the pill or the text field belongs to them. */
   const isUi = (target: EventTarget | null): boolean => target instanceof Element && !!target.closest('[data-ui]')
   const isLink = (target: EventTarget | null): boolean => target instanceof Element && !!target.closest('a, button')
+  /** The app shell's window covers the steps' ink behind it: a press there does not take that ink. */
+  const isOverShell = (target: EventTarget | null): boolean => target instanceof Element && !!target.closest('[data-shell-frame]')
 
   const setCursor = (p: XY | null): void => {
     const tool = state.tool
@@ -502,6 +544,7 @@ export function mountBoard(o: {
 
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || isUi(e.target) || press) return
+    overShell = isOverShell(e.target)
     const at = local(e)
     const p = toWorld(at)
     if (editing) {
@@ -546,6 +589,7 @@ export function mountBoard(o: {
     const p = toWorld(at)
     if (!press) {
       if (e.pointerType === 'touch') return
+      overShell = isOverShell(e.target)
       if (state.tool === 'eraser') {
         eraserAt = p
         request()
@@ -632,11 +676,19 @@ export function mountBoard(o: {
   const resize = new ResizeObserver(layout)
   resize.observe(host)
   resize.observe(hero)
+  // The steps' ink follows the app shell's track and window (lib/shell-steps.ts).
+  const shell = shellParts(host)
+  if (shell) {
+    resize.observe(shell.track)
+    resize.observe(shell.frame)
+  }
   // An animated drawing repaints only while it is on screen (it can be dragged anywhere on the page).
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       const item = items.find((each) => each.el === entry.target)
-      if (item) item.onScreen = entry.isIntersecting
+      if (!item) continue
+      item.onScreen = entry.isIntersecting
+      if (item.onScreen && item.start === Infinity) item.start = (performance.now() - t0) / 1000
     }
     request()
   })

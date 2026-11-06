@@ -12,6 +12,16 @@
   pointer-events: none;
 }
 
+/* The layer behind the app shell (its section is z-index 2, AppShell.module.css): the use cases' steps. */
+.back {
+  z-index: 1;
+}
+
+/* A phone-only item (a step's one-line question, layout.ts `deskOff`). */
+.sprite[data-desk='off'] {
+  display: none;
+}
+
 .sprite {
   --x: var(--dx);
   --y: var(--dy);
@@ -95,7 +105,7 @@
 }
 
 
-/* ---------- The tool pill: the app's pill (app.css .pill-bar, .tool) at 1.42 × ---------- */
+/* ---------- The tool pill (ToolPill.tsx): the app's pill at 1.42 ×, under the headline ---------- */
 
 .pill {
   --p: calc(1.42 * var(--u));
@@ -104,86 +114,6 @@
   top: calc(var(--oy) + (346 - 20 * 1.42) * var(--u));
   z-index: 6;
   translate: -50% 0;
-  display: flex;
-  align-items: center;
-  gap: calc(2 * var(--p));
-  height: calc(40 * var(--p));
-  padding: 0 calc(4 * var(--p));
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-}
-
-.divider {
-  flex-shrink: 0;
-  width: 1px;
-  height: calc(16 * var(--p));
-  margin: 0 calc(5 * var(--p));
-  background: var(--border-subtle);
-}
-
-.tool {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: calc(30 * var(--p));
-  height: calc(30 * var(--p));
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.tool svg {
-  width: calc(17 * var(--p));
-  height: calc(17 * var(--p));
-}
-
-.tool:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.tool[aria-pressed='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.quiet {
-  color: var(--text-tertiary);
-}
-
-/* The pill's spot under the headline: when it leaves the viewport, the pill docks (Board.tsx). */
-.spot {
-  position: absolute;
-  left: 50%;
-  top: calc(var(--oy) + (346 - 20 * 1.42) * var(--u));
-  width: 1px;
-  height: calc(40 * 1.42 * var(--u));
-  pointer-events: none;
-}
-
-/* Docked: the app's own pill size, at the bottom centre of the viewport. */
-.docked {
-  --p: 1px;
-  position: fixed;
-  top: auto;
-  bottom: 16px;
-  background: var(--bg-glass);
-  box-shadow: var(--shadow-float);
-  animation: dock 220ms ease;
-}
-
-@keyframes dock {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
 }
 
 /* ---------- Phones and narrow windows ---------- */
@@ -195,22 +125,16 @@
     --s: var(--ps);
   }
 
+  .sprite[data-desk='off'] {
+    display: block;
+  }
+
   .sprite[data-phone='off'] {
     display: none;
   }
 
-  .pill,
-  .spot {
+  .pill {
     --p: calc(0.86 * var(--u));
     top: calc(578 * var(--u));
-  }
-
-  .spot {
-    height: calc(40 * 0.86 * var(--u));
-  }
-
-  .docked {
-    --p: 0.86px;
-    top: auto;
   }
 }

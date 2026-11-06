@@ -1,0 +1,464 @@
+/*
+ * The app shell under the hero (decision D12): the app's window in its own look, copied from
+ * space/src/renderer/src/styles/tokens.css and app.css (.sidebar, .board-row, .topbar, .pill,
+ * .status-dot, .board-controls, .pill-bar, .tool). Nothing in it works.
+ *
+ * Scroll: the track is as tall as the stage plus one scroll step per use case; the stage sticks in
+ * the middle of the viewport while the page scrolls through the track (AppShell.tsx picks the
+ * use case from the scroll).
+ */
+.section {
+  --win-w: min(86.5vw, 1600px, calc((100svh - 150px) * 1.62));
+  --win-h: calc(var(--win-w) / 1.62);
+  --step: 75svh;
+  /* Over the board's back layer (the steps' ink passes behind the window), under the visitor's ink. */
+  position: relative;
+  z-index: 2;
+  /* A gap under the hero, so its lowest windows end clearly above the shell; in design units, so the hero's scale stays. */
+  padding: calc(56 * var(--u)) 16px 96px;
+}
+
+.track {
+  width: var(--win-w);
+  height: calc(var(--win-h) + 3 * var(--step));
+  margin: 0 auto;
+}
+
+.stage {
+  position: sticky;
+  top: calc((100svh - var(--win-h)) / 2);
+}
+
+/* ---------- The window ---------- */
+
+.frame {
+  position: relative;
+  width: var(--win-w);
+  height: var(--win-h);
+}
+
+.window {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-app);
+  box-shadow: var(--shadow-card);
+}
+
+/*
+ * The window's inside: laid out in the app's own px at 1 / --s of the window's size and scaled
+ * down by --s, as a screenshot of a bigger window. The chrome shows at 0.8 of the app's size and
+ * the board gets more room. The dot grid scales with it.
+ */
+.inner {
+  --s: 0.8;
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  width: calc(100% / var(--s));
+  height: calc(100% / var(--s));
+  transform: scale(var(--s));
+  transform-origin: 0 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: normal;
+  cursor: default;
+}
+
+:where(.inner) svg {
+  display: block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+/* The macOS window buttons, in the title row (14 px, as in the app's window). */
+.lights {
+  position: absolute;
+  z-index: 1;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  gap: 9px;
+}
+
+.lights i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--window-close);
+}
+
+.lights i:nth-child(2) {
+  background: var(--window-minimize);
+}
+
+.lights i:nth-child(3) {
+  background: var(--window-zoom);
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-app);
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* The title row's strip: Back, Forward and the sidebar button from --chrome-reserve (92 px). */
+.strip {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 44px;
+  margin-bottom: 4px;
+  padding-left: 91px;
+}
+
+.lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.titleButton {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+.inner .titleButton svg {
+  width: 20px;
+  height: 20px;
+}
+
+.inner .panel svg {
+  width: 16px;
+  height: 16px;
+}
+
+.disabled {
+  color: var(--text-tertiary);
+  opacity: 0.5;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 0 8px 8px;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 8px 16px;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.action .name {
+  flex: 1;
+}
+
+.hint,
+.time {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.time {
+  margin-left: auto;
+}
+
+.more {
+  display: grid;
+  place-items: center end;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+.inner .more svg {
+  width: 14px;
+  height: 14px;
+  margin-right: -2px;
+}
+
+.footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--muted);
+}
+
+.folder .name {
+  flex: 1;
+  color: var(--text);
+}
+
+.chevrons {
+  color: var(--text-tertiary);
+}
+
+.inner .chevrons svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---------- Top bar ---------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+.topbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 44px;
+  padding: 0 12px 0 16px;
+  background: var(--bg-app);
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+}
+
+/* The title lead shows in the top bar only while the sidebar is hidden (the phone layout). */
+.phoneLead {
+  display: none;
+}
+
+.board {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 560;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  animation: appear 300ms ease both;
+}
+
+/* The agent pill, connected: the live dot and the agent's name; the dot pulses when a use case starts. */
+.agent {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-live);
+  box-shadow: 0 0 0 2px var(--status-live-ring);
+  animation: pulse 900ms ease-out 200ms;
+}
+
+/* ---------- The board ---------- */
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(circle at center, var(--canvas-dot) 1px, transparent 1.4px);
+  background-size: var(--grid-size) var(--grid-size);
+}
+
+.ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+
+.controls {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  column-gap: 12px;
+  align-items: end;
+  padding: 12px;
+}
+
+.tools {
+  grid-column: 2;
+}
+
+/* Undo, redo and the zoom: bare buttons in the bottom right corner. */
+.corner {
+  display: flex;
+  grid-column: 3;
+  align-items: center;
+  justify-self: end;
+  gap: 2px;
+}
+
+.corner .tool {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-tertiary);
+}
+
+.inner .corner svg {
+  width: 15px;
+  height: 15px;
+}
+
+.gap {
+  flex-shrink: 0;
+  width: 8px;
+}
+
+.zoom {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  height: 28px;
+  padding: 0 4px;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 2px var(--status-live-ring);
+  }
+  35% {
+    box-shadow: 0 0 0 6px var(--status-live-pulse);
+  }
+  100% {
+    box-shadow: 0 0 0 2px var(--status-live-ring);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board,
+  .dot {
+    animation: none;
+  }
+
+}
+
+/* ---------- Phones: the window without its sidebar, laid out at 540 × 700 and scaled to the screen (--z, AppShell.tsx) ---------- */
+@media (max-width: 719px) {
+  .section {
+    --win-w: calc(100vw - 32px);
+    --win-h: calc(700px * var(--z, 0.66));
+    --step: 70svh;
+    padding: 32px 16px 64px;
+  }
+
+  /* The phone: the inside is 540 × 700 app px, scaled to the screen's width (--z, AppShell.tsx). */
+  .inner {
+    --s: var(--z, 0.66);
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .corner {
+    display: none;
+  }
+
+  .topbar {
+    padding-left: 91px;
+  }
+
+  .phoneLead {
+    display: inline-flex;
+    margin-right: 4px;
+  }
+}

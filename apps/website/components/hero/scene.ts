@@ -10,43 +10,53 @@ import { humanize, type Point } from '@/lib/board/hand'
 import { arc, clamp01, cyc, Ink, oval, pen, Pen, share, write } from '@/lib/board/kit'
 import { drawStroke, revealPoints } from '@/lib/board/paint'
 import { mulberry32 } from '@/lib/board/random'
+import { spline } from '@/lib/board/spline'
 
-export type Draw = (g: Pen, t: number, still: boolean) => void
+/**
+ * A drawing: `box` is the item's canvas size in its own units (a step's brace changes height with
+ * the page). A drawing that becomes still returns true once it is finished; the engine then stops
+ * painting it. A drawing that keeps moving returns nothing.
+ */
+export type Draw = (g: Pen, t: number, still: boolean, box?: { w: number; h: number }) => boolean | void
 
 /**
  * The labels' size: write()'s letters run wider than the reference image's hand at the same size,
  * so the sizes below (read off the reference by eye) are scaled to match its text widths.
  */
 const LABEL_SCALE = 0.74
-const label = (text: string, size: number, x: number, y: number, color = 'text', o: { center?: boolean } = {}): Ink => write(text, size * LABEL_SCALE, x, y, color, o)
+export const label = (text: string, size: number, x: number, y: number, color = 'text', o: { center?: boolean } = {}): Ink => write(text, size * LABEL_SCALE, x, y, color, o)
 
 /** Drawing on goes this many times faster than the board's natural pace. */
 const PACE = 1.7
-const TAU = Math.PI * 2
+export const TAU = Math.PI * 2
 
-/** A line that changes each frame, as pen ink: the same seed gives the same hand each frame. */
-function inkLine(g: Pen, line: Point[], color: string, width: number, seed: number, part = 1): void {
+/**
+ * A line that changes each frame, as pen ink: the same seed gives the same hand each frame. The
+ * line runs as a smooth curve through its points (lib/board/spline.ts), so a few points do not
+ * show as straight pieces.
+ */
+export function inkLine(g: Pen, line: Point[], color: string, width: number, seed: number, part = 1): void {
   if (part <= 0 || line.length < 2) return
-  const points = humanize(line, 0.25, mulberry32(seed))
+  const points = humanize(spline(line), 0.25, mulberry32(seed))
   drawStroke(g.ctx, { points: part < 1 ? revealPoints(points, part) : points, color: hex(color), width }, 0, g.a)
 }
 
 /** Static inks that draw on one after the other: [ink, start second]. */
-function drawOn(g: Pen, t: number, still: boolean, list: [Ink, number][]): void {
+export function drawOn(g: Pen, t: number, still: boolean, list: [Ink, number][]): void {
   for (const [ink, start] of list) g.ink(ink, still ? 1 : share(t, start, ink, PACE))
 }
 
 /** How far a part that starts at `start` and takes `span` seconds is drawn. */
-const part = (t: number, still: boolean, start: number, span: number): number => (still ? 1 : clamp01((t - start) / span))
+export const part = (t: number, still: boolean, start: number, span: number): number => (still ? 1 : clamp01((t - start) / span))
 
-const wave = (x0: number, x1: number, y: number, amp: number, len: number, phase: number, tilt = 0): Point[] => {
+export const wave = (x0: number, x1: number, y: number, amp: number, len: number, phase: number, tilt = 0): Point[] => {
   const out: Point[] = []
   for (let x = x0; x <= x1 + 0.01; x += 2.5) out.push([x, y + tilt * (x - x0) + amp * Math.sin(((x - x0) / len) * TAU - phase)])
   return out
 }
 
 /** An arrow as pen ink: the shaft, then the head (the board's arrow head rule). */
-function arrowLines(x1: number, y1: number, x2: number, y2: number, head = 7): Point[][] {
+export function arrowLines(x1: number, y1: number, x2: number, y2: number, head = 7): Point[][] {
   const length = Math.hypot(x2 - x1, y2 - y1) || 1
   const ux = (x2 - x1) / length
   const uy = (y2 - y1) / length
@@ -75,7 +85,7 @@ function dashes(x1: number, y1: number, x2: number, y2: number, on = 5, off = 4)
 }
 
 /** A point along a polyline at `s` (0..1) of its length. */
-function along(line: Point[], s: number): Point {
+export function along(line: Point[], s: number): Point {
   let total = 0
   for (let i = 1; i < line.length; i++) total += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1])
   let left = clamp01(s) * total
@@ -91,7 +101,7 @@ function along(line: Point[], s: number): Point {
 }
 
 /** A soft glowing dot: a moving signal or a photon. */
-function glow(g: Pen, x: number, y: number, r: number, color: string, alpha = 1): void {
+export function glow(g: Pen, x: number, y: number, r: number, color: string, alpha = 1): void {
   g.dot(x, y, r * 2.4, color, 0.18 * alpha)
   g.dot(x, y, r, color, alpha)
 }

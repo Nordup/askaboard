@@ -1,4 +1,4 @@
-import { AppShot } from '@/components/AppShot'
+import { AppShell } from '@/components/AppShell'
 import { Board } from '@/components/Board'
 import { Hero } from '@/components/Hero'
 import { REPO_URL } from '@/lib/site'
@@ -8,7 +8,7 @@ export default function Home() {
   return (
     <main className={styles.page} data-board="">
       <Hero />
-      <AppShot />
+      <AppShell />
       <footer id="download" className={styles.footer}>
         MIT · <a href={REPO_URL}>GitHub</a>
       </footer>

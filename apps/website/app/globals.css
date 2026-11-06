@@ -6,6 +6,7 @@
   --bg-elevated: #1c1c1f;
   --bg-elevated-2: #232327;
   --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
   --border-subtle: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.13);
   --canvas-dot: rgba(255, 255, 255, 0.07);
@@ -33,6 +34,10 @@
   /* The GitHub star (the app's --status-warn). */
   --star: #fbbf24;
   --border: #2e3448;
+  /* The agent pill's live dot (the app's --status-live tokens). */
+  --status-live: #4ade80;
+  --status-live-ring: rgba(74, 222, 128, 0.18);
+  --status-live-pulse: rgba(74, 222, 128, 0.35);
   /* The visitor's ink (pen, shapes, text): the board accent blue, on trial; the app's white ink is #ececef. */
   --ink: #6e8bff;
   /* The macOS window buttons on the hero's windows. */

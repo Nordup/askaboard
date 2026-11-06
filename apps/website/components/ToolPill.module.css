@@ -1,0 +1,66 @@
+/*
+ * The app's tool pill (space/src/renderer/src/styles/app.css .board-controls__tools, .pill-bar,
+ * .pill-bar__divider, .tool, .tool > .lucide). --p is one app px in CSS px: 1px in the shell,
+ * bigger under the hero (Board.module.css).
+ */
+.pill {
+  --p: 1px;
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--p));
+  height: calc(40 * var(--p));
+  padding: 0 calc(4 * var(--p));
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+}
+
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: calc(16 * var(--p));
+  margin: 0 calc(5 * var(--p));
+  background: var(--border-subtle);
+}
+
+.tool {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: calc(30 * var(--p));
+  height: calc(30 * var(--p));
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+}
+
+/* Icons whose drawing fills less or more of the box than most get a scale (tools.tsx iconScale); the line keeps its weight. */
+.tool svg {
+  width: calc(17 * var(--p) * var(--icon-scale, 1));
+  height: calc(17 * var(--p) * var(--icon-scale, 1));
+  stroke-width: calc(1.75 / var(--icon-scale, 1));
+}
+
+button.tool {
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+button.tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tool[data-on] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quiet {
+  color: var(--text-tertiary);
+}
