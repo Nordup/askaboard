@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom'
 import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, isPainted, isShape, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type ImageNode, type LiveNode, type NodeStyle, type Removal, type Revision, type ShapeNode } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import { isMac } from '../platform'
-import { FONTS, MARKER_SCALE, shapeTool, type DrawStyle, type ToolId, type ToolState } from '../tools'
+import { FONTS, MARKER_SCALE, PEN_WIDTHS, SHAPE_WIDTHS, shapeTool, type DrawStyle, type ToolId, type ToolState } from '../tools'
 import type { BoardCommand, CommandContext } from './commands'
 import { boardKeyAction, canPaste, pasteContent, readNodeClipboard, refreshSystemClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
 import { ContentLayer, measureContent, type ContentContext } from './content'
@@ -1884,7 +1884,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
         seq: 0,
         tool: highlighter ? 'highlighter' : 'pen',
         color,
-        width: width * (highlighter ? MARKER_SCALE : 1),
+        width: PEN_WIDTHS[width] * (highlighter ? MARKER_SCALE : 1),
         points: mouseInk?.points ?? [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
       }
       requestPaint({ active: true })
@@ -1896,7 +1896,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     } else if (kind === 'shape' && pressShape) {
       // A shape is top level: unlike a stroke (commitStroke), it never joins the frame it is drawn on.
       const { color, width, fill, line, heads } = styleRef.current
-      dragRef.current.shape = newShape(newItemId('n'), pressShape, startBoard, { color, width, fill, line, heads }, zAbove(indexRef.current.children.get(ROOT) ?? []))
+      dragRef.current.shape = newShape(newItemId('n'), pressShape, startBoard, { color, width: SHAPE_WIDTHS[width], fill, line, heads }, zAbove(indexRef.current.children.get(ROOT) ?? []))
     }
   }
 

@@ -86,10 +86,13 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--title-button-gap`, `--title-icon-size`;
   `--sidebar-row-height`, `--folder-row-height`,
   `--topbar-rename-width`,
-  the board controls (U10): `--palette-height`, `--tool-size`,
-  `--swatch-size`, `--swatch-dot`, `--option-size`, `--option-text-pad`,
-  `--option-bar-width`, `--pill-divider-height`, `--zoom-label-min`,
-  `--toast-bottom`; `--pill-height`, `--pill-gap`, `--pill-action-size`,
+  the board controls (U10, U12): `--tools-pill-height`, `--tool-size`,
+  `--tool-icon-size`, `--corner-pill-height`, `--corner-button-size`,
+  `--corner-icon-size`, `--corner-divider-height`, `--corner-divider-gap`,
+  `--style-pill-height`, `--swatch-size`, `--swatch-dot`, `--option-size`,
+  `--option-icon-size`, `--option-text-pad`, `--option-bar-width`,
+  `--option-fill-size`, `--pill-bar-pad`, `--pill-divider-height`,
+  `--pill-divider-gap`, `--zoom-label-min`, `--toast-bottom`; `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
   `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
   `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
@@ -184,23 +187,30 @@ missing part goes into the same block.
 
 ## Board controls
 
-The four pills over the bottom of the canvas (decision U10,
-`BoardControls.tsx`, the comment block above `.board-controls` in
-`app.css`). Each is a `.pill-bar` (48 px, `--bg-elevated`, 1 px
-`--border-subtle`, `--radius-pill`, `--shadow-float`). Parts: `.tool` (34
-px round button, 17 px lucide icon, stroke 1.75; pressed: `--accent-soft`
-and `--accent`; `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider`
-(1 × 22 px), `.swatch` with `.swatch__dot`, `.option` (28 px, round;
-pressed: `--bg-active`, `--text-primary`; `.option--text` for a word,
-`.option__bar` for a width, `.option__fill` for a fill (a 12 px square:
-outline, light tint, solid), `.option__line` for a line style (a bar:
-solid, dashed, dotted)) and `.zoom-label`.
+The three quiet pills over the bottom of the canvas (decisions U10, U12;
+approved mockup "bottom_controls_quiet_small_v8"; `BoardControls.tsx`, the
+comment block above `.board-controls` in `app.css`). Each is a `.pill-bar`
+(`--bg-elevated`, 1 px `--border-subtle`, `--radius-pill`, padding 0 4 px,
+gap 2 px, no shadow) with its own height. Parts: `.tool` (round button,
+lucide icon at stroke 1.75; pressed: `--accent-soft` and `--accent`;
+`.tool--quiet` is `--text-tertiary`), `.pill-bar__divider` (1 × 16 px,
+margin 0 5 px), `.swatch` (24 px) with `.swatch__dot` (13 px), `.option`
+(22 px, round, 14 px icon; pressed: `--bg-active`, `--text-primary`;
+`.option--text` for a word (12 px), `.option__bar` for a width (as thick
+as the step's shape line: 1.5, 2.5, 4 px), `.option__fill` for a fill (a
+12 px square: outline, light tint, solid), `.option__line` for a line
+style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
+12 px). Icon sizes come from the tokens (`.tool > .lucide`, `.option >
+.lucide`), not from the components.
 
-- Zoom pill (− % +) at the bottom left, the undo pill (undo, redo) 8 px
-  after it, the tool pill (keep-tool lock, divider, the tools of
-  `tools.ts TOOLS`) centred on the canvas. The row is a grid `1fr auto 1fr`
-  with a 12 px gap and margin, so on a narrow canvas the tool pill moves
-  right and stays 12 px after the undo pill.
+- The corner pill (30 px) at the bottom left, 12 px in, centred on the tool
+  pill's row: − % + , a divider (1 × 14 px, margin 0 4 px), undo and redo;
+  24 px buttons, 14 px icons. The tool pill (36 px; 28 px buttons, 16 px
+  icons): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
+  between groups (Select and Hand; the shapes; Pen, Text and Eraser),
+  centred on the canvas. The row is a grid `1fr auto 1fr` with a 12 px gap
+  and margin, so on a narrow canvas the tool pill moves right and stays
+  12 px after the corner pill.
 - The style pill shows for a tool with style fields, or for a selection
   with the Select tool (`board/style.ts`): colours, fill, width, line,
   arrowheads (one, two, none: icons), pen or marker, text size (S M L XL,
@@ -209,10 +219,14 @@ solid, dashed, dotted)) and `.zoom-label`.
   fill, width, line; arrow: colour, width, line, heads; line: colour,
   width, line. For a selection it ends with Duplicate, Delete (only when an
   item may change) and More; when the whole pill would be wider than the
-  canvas less 24 px, it shows More alone. It sits 8 px above the tool pill,
+  canvas less 24 px, it shows More alone. The style pill is 32 px. It sits 8 px above the tool pill,
   centred on it, and shifts to stay 12 px inside the canvas.
-- Shapes (B71) are drawn on the board as ink: a light fill is the colour at
-  0.18 alpha. A selected arrow or line has two round end handles in place
+- Width (Fine, Medium, Bold) is one step for every kind: a shape draws it
+  at 1.5, 2.5 or 4 board points, the pen at 2, 3.5 or 6. Text sizes: S 18,
+  M 24 (default), L 32, XL 44.
+- Shapes (B71) are drawn on the board as ink: one even line with a gentle
+  wobble, a rectangle with round corners (radius min(12, 0.15 × the shorter
+  side)); a light fill is the colour at 0.18 alpha. A selected arrow or line has two round end handles in place
   of the box handles.
 - The board menu (`BoardMenu.tsx`, the shared `Menu`): one command list
   (`board/commands.ts`) feeds the right-click menu (at the pointer) and the
@@ -224,7 +238,7 @@ solid, dashed, dotted)) and `.zoom-label`.
   the label: "Select V or 1", "Undo ⌘Z". The font words (Hand, Plain,
   Code) show their label, so they get none.
 - The zoom % is only here, not in the top bar. A click on it opens the
-  shared `Menu` 8 px above the zoom pill: Zoom to 100% (⌘0), Zoom to fit
+  shared `Menu` 8 px above the corner pill: Zoom to 100% (⌘0), Zoom to fit
   (⇧1), Zoom to selection (⇧2, only with a selection). Both fits glide and
   never zoom in past 100%.
 - The keys panel (`?`, `KeysPanel.tsx`): a `.menu--panel` over a

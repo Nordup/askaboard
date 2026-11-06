@@ -1,7 +1,7 @@
 import { tip } from './Tooltip'
-import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
-import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolKeys, type PenKind, type StyleField, type ToolState } from '../tools'
+import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, SHAPE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolKeys, WIDTH_STEPS, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
@@ -49,7 +49,8 @@ interface BoardControlsProps {
 
 const PEN_ICONS: Record<PenKind, LucideIcon> = { pen: PenLine, marker: Highlighter }
 
-const ICON = { size: 17, strokeWidth: 1.75 } as const
+/** Lucide icons: their size comes from the pill's tokens (app.css `.tool > .lucide`, `.option > .lucide`). */
+const ICON = { strokeWidth: 1.75 } as const
 
 /** The More menu and the zoom menu open this far above their pill (CSS px), as the style pill sits above the tool pill. */
 const MENU_GAP = 8
@@ -119,24 +120,21 @@ export function BoardControls(props: BoardControlsProps) {
 
   return (
     <div className="board-controls" ref={rootRef}>
-      <div className="board-controls__start">
-        <div className="pill-bar" role="toolbar" aria-label="Zoom">
-          <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
-            <Minus {...ICON} />
-          </button>
-          <ZoomMenu zoom={zoom} onZoom={props.onZoom} commandContext={props.commandContext} />
-          <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
-            <Plus {...ICON} />
-          </button>
-        </div>
-        <div className="pill-bar" role="toolbar" aria-label="History">
-          <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
-            <Undo2 {...ICON} />
-          </button>
-          <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
-            <Redo2 {...ICON} />
-          </button>
-        </div>
+      <div className="pill-bar board-controls__corner" role="toolbar" aria-label="Zoom and history">
+        <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
+          <Minus {...ICON} />
+        </button>
+        <ZoomMenu zoom={zoom} onZoom={props.onZoom} commandContext={props.commandContext} />
+        <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
+          <Plus {...ICON} />
+        </button>
+        <span className="pill-bar__divider" />
+        <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
+          <Undo2 {...ICON} />
+        </button>
+        <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
+          <Redo2 {...ICON} />
+        </button>
       </div>
 
       <div className="board-controls__center">
@@ -159,19 +157,21 @@ export function BoardControls(props: BoardControlsProps) {
             {tools.lock ? <Lock {...ICON} /> : <LockOpen {...ICON} />}
           </button>
           <span className="pill-bar__divider" />
-          {TOOLS.map((tool) => {
+          {TOOLS.map((tool, i) => {
             const Icon = tool.id === 'select' && tools.selectMode === 'lasso' ? LassoIcon : tool.Icon
             return (
-              <button
-                key={tool.id}
-                className="tool"
-                {...tip(tool.label, toolKeys(tool))}
-                aria-label={tool.label}
-                aria-pressed={tools.tool === tool.id}
-                onClick={() => props.onChooseTool(tool.id)}
-              >
-                <Icon {...ICON} />
-              </button>
+              <Fragment key={tool.id}>
+                {i > 0 && TOOLS[i - 1].group !== tool.group && <span className="pill-bar__divider" />}
+                <button
+                  className="tool"
+                  {...tip(tool.label, toolKeys(tool))}
+                  aria-label={tool.label}
+                  aria-pressed={tools.tool === tool.id}
+                  onClick={() => props.onChooseTool(tool.id)}
+                >
+                  <Icon {...ICON} />
+                </button>
+              </Fragment>
             )
           })}
         </div>
@@ -205,16 +205,17 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
       </button>
     ))
   } else if (field === 'width') {
-    options = STROKE_WIDTHS.map((width) => (
+    // One bar per step, as thick as a shape line of that step (the pen maps the step to its own width).
+    options = WIDTH_STEPS.map((step) => (
       <button
-        key={width.px}
+        key={step.id}
         className="option"
-        {...tip(`${width.label} stroke`)}
-        aria-label={`${width.label} stroke`}
-        aria-pressed={values.width === width.px}
-        onClick={() => onStyle({ width: width.px })}
+        {...tip(`${step.label} stroke`)}
+        aria-label={`${step.label} stroke`}
+        aria-pressed={values.width === step.id}
+        onClick={() => onStyle({ width: step.id })}
       >
-        <span className="option__bar" style={{ height: Math.max(1.5, width.px / 2) }} />
+        <span className="option__bar" style={{ height: SHAPE_WIDTHS[step.id] }} />
       </button>
     ))
   } else if (field === 'fill') {

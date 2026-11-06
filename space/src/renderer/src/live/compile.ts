@@ -5,7 +5,7 @@ import { joinPath, splitPath, type FrameKind, type MomentsFailure } from '@share
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
 import { polylineInk } from '@shared/ink-points'
-import { humanize, strokeSeed } from '../board/hand'
+import { handLine, humanize, penWobble, strokeSeed } from '../board/hand'
 import type { Scene } from '../agent/placement'
 import { ownBox } from '../board/rotation'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
@@ -241,7 +241,7 @@ function handPath(d: string, jitter: number, key: string): string {
     const closed = subpath.some((segment) => segment[0] === 'Z')
     for (const line of polylineInk(flattenPath(subpath, 'ink'))) {
       const flat = line.map(([x, y]) => [x, y] as Point)
-      const points = humanize(flat, jitter, mulberry32(strokeSeed(`${key}:${run++}`, flat)))
+      const points = handLine(flat, penWobble(jitter), mulberry32(strokeSeed(`${key}:${run++}`, flat)))
       out.push(points.map(([x, y], k) => `${k ? 'L' : 'M'}${r2(x)} ${r2(y)}`).join(' ') + (closed ? ' Z' : ''))
     }
   }

@@ -5,7 +5,7 @@
  */
 
 import { isKnown, type NodeStyle, type ShapeKind } from '@shared/board-format'
-import { FONTS, MARKER_SCALE, TEXT_ALIGNS, TEXT_SIZES, type DrawStyle, type StyleField } from '../tools'
+import { FONTS, MARKER_SCALE, PEN_WIDTHS, SHAPE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, widthStep, type DrawStyle, type StyleField } from '../tools'
 import type { BoardNode } from './types'
 
 /** A part of DrawStyle: what one press in the style pill changes. */
@@ -45,8 +45,10 @@ const r2 = (value: number): number => Math.round(value * 100) / 100
 export function styleOf(node: BoardNode): StylePatch {
   if (!isKnown(node)) return {}
   if (node.kind === 'ink') {
+    // Only an exact width counts, as for text sizes: an agent's own width matches no step.
     const marker = node.tool === 'highlighter'
-    return { color: node.color, width: r2(marker ? node.width / MARKER_SCALE : node.width), pen: marker ? 'marker' : 'pen' }
+    const width = widthStep(PEN_WIDTHS, r2(marker ? node.width / MARKER_SCALE : node.width))
+    return { color: node.color, ...(width ? { width } : {}), pen: marker ? 'marker' : 'pen' }
   }
   if (node.kind === 'text') {
     // Only an exact option counts: a size from a corner drag or an agent's own font matches none.
@@ -67,9 +69,10 @@ export function styleOf(node: BoardNode): StylePatch {
   }
   if (node.kind === 'shape') {
     const fields = KIND_FIELDS[node.shape]
+    const width = widthStep(SHAPE_WIDTHS, r2(node.width))
     return {
       color: node.color,
-      width: r2(node.width),
+      ...(width ? { width } : {}),
       line: node.line,
       ...(fields.includes('fill') ? { fill: node.fill } : {}),
       ...(fields.includes('heads') ? { heads: node.heads } : {})
@@ -86,7 +89,7 @@ export function restyle(node: BoardNode, patch: StylePatch): BoardNode {
   const color = fields.includes('color') ? patch.color : undefined
   if (node.kind === 'ink') {
     const scale = node.tool === 'highlighter' ? MARKER_SCALE : 1
-    const width = patch.width !== undefined ? patch.width * scale : node.width
+    const width = patch.width !== undefined ? PEN_WIDTHS[patch.width] * scale : node.width
     const nextColor = color ?? node.color
     return width === node.width && nextColor === node.color ? node : { ...node, color: nextColor, width }
   }
@@ -104,7 +107,7 @@ export function restyle(node: BoardNode, patch: StylePatch): BoardNode {
   if (node.kind === 'shape') {
     const next = {
       color: color ?? node.color,
-      width: patch.width ?? node.width,
+      width: patch.width !== undefined ? SHAPE_WIDTHS[patch.width] : node.width,
       line: patch.line ?? node.line,
       fill: fields.includes('fill') ? (patch.fill ?? node.fill) : node.fill,
       heads: fields.includes('heads') ? (patch.heads ?? node.heads) : node.heads

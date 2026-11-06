@@ -149,19 +149,29 @@
   --sidebar-row-height: 30px; /* every sidebar row: New board, Search boards, a board */
   --folder-row-height: 32px; /* the folder button in the sidebar footer (one line): --space-1 under the footer's line, --space-2 on the other sides */
   --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */
-  /* The board controls (U10): four pills over the canvas bottom, in the palette look */
-  --palette-height: 48px; /* every board control pill */
-  --tool-size: 34px; /* a tool button (17 px icon) */
-  --swatch-size: 26px; /* a colour swatch's hit area */
-  --swatch-dot: 16px; /* the colour dot inside it */
-  --option-size: 28px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
+  /* The board controls (U10, U12): three quiet pills over the canvas bottom */
+  --tools-pill-height: 36px; /* the tool pill */
+  --tool-size: 28px; /* a tool button */
+  --tool-icon-size: 16px; /* its lucide icon (stroke 1.75) */
+  --corner-pill-height: 30px; /* the corner pill: zoom and undo, centred on the tool pill's row */
+  --corner-button-size: 24px; /* a corner pill button (zoom out, zoom in, undo, redo) */
+  --corner-icon-size: 14px;
+  --corner-divider-height: 14px; /* the line between zoom and undo */
+  --corner-divider-gap: 4px;
+  --style-pill-height: 32px; /* the style pill */
+  --swatch-size: 24px; /* a colour swatch's hit area */
+  --swatch-dot: 13px; /* the colour dot inside it */
+  --option-size: 22px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
+  --option-icon-size: 14px; /* an option's lucide icon */
   --option-text-pad: 9px; /* the side padding of a text option (S, M, L, XL) */
-  --option-bar-width: 14px; /* the bar of a width or line option */
+  --option-bar-width: 12px; /* the bar of a width or line option */
   --option-fill-size: 12px; /* the square of a fill option (none, light, solid) */
-  --pill-divider-height: 22px; /* the line between groups in a pill */
-  --zoom-label-min: 52px; /* the zoom pill's % label */
+  --pill-bar-pad: var(--space-1); /* a pill's side padding */
+  --pill-divider-height: 16px; /* the line between groups in a pill */
+  --pill-divider-gap: 5px; /* on each side of that line */
+  --zoom-label-min: 42px; /* the zoom % label */
   /* A toast shows above the tool pill and the style pill */
-  --toast-bottom: calc(var(--space-3) + 2 * var(--palette-height) + var(--space-2) + var(--space-3));
+  --toast-bottom: calc(var(--space-3) + var(--tools-pill-height) + var(--space-2) + var(--style-pill-height) + var(--space-3));
   --pill-height: 26px;
   --pill-gap: 7px; /* between a pill's dot, label and parts */
   --pill-action-size: 20px; /* the one icon button inside a pill (scene pill: pause / resume) */

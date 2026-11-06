@@ -1,9 +1,10 @@
 /**
  * The strokes of a shape (decision B71). A rectangle, an ellipse, an arrow or a line stays an
  * editable item (ShapeNode) and the ink painter draws it: this module turns its fields into ink
- * strokes with the hand of hand.ts (the wobble and taper of the agents' pen ink), seeded by the
- * shape's own seed, and into one fill polygon under them. The strokes are made from the shape's
- * size each time, so a resized shape keeps the size of its wobble.
+ * strokes with the hand of hand.ts (one even line with a gentle wobble, as the agents' pen shapes),
+ * seeded by the shape's own seed, and into one fill polygon under them. A rectangle is one line round
+ * its box with round corners, an ellipse one loop. The strokes are made from the shape's size each
+ * time, so a resized shape keeps the size of its wobble.
  *
  * Everything that paints, hits, picks or measures ink takes a shape through the `painted*`
  * functions here, so ink and shapes share one look and one set of rules.
@@ -12,15 +13,22 @@
 import { mulberry32 } from '@shared/live-scene'
 import { MAX_SHAPE_EXTENT, type InkPoint, type ShapeHeads, type ShapeKind, type ShapeLine, type ShapeNode } from '@shared/board-format'
 import { inkLocalBounds, pointInPolygon, polygonBounds, strokeHitByCircle, strokeInsidePolygon } from './geometry'
-import { humanize } from './hand'
+import { handLine, type Wobble } from './hand'
 import type { InkNode, PaintedNode, Point, Region } from './types'
 
-/** The wobble of a shape's stroke, as hand.ts humanize takes it (about 1 board point on a long side). */
-const JITTER = 0.45
+/** The wobble of a shape's line on a long side: gentle and slow (the approved look, 2026-11-06). */
+const WOBBLE: Wobble = { amplitude: 0.55, waves: [48, 17] }
 /** A side or a loop shorter than this wobbles less, in proportion (board points). */
 const FULL_WOBBLE_LENGTH = 120
-/** The pressure of a dashed or dotted line: one even width, so each dash is one path. */
-const EVEN_PRESSURE = 0.55
+/** The pressure of every shape point: 0.5 paints at the nominal width (geometry.ts pressureWidth), one even line. */
+const EVEN_PRESSURE = 0.5
+/** A rectangle's corner radius: this share of its shorter side, at most CORNER_RADIUS board points. */
+const CORNER_SHARE = 0.15
+const CORNER_RADIUS = 12
+/** A rectangle's line ends this far past its start along the top side (board points), as a pen closes a box. */
+const CLOSE_OVERSHOOT = 3
+/** An ellipse's loop goes this far past its start (radians), and up to as much again by its seed. */
+const ELLIPSE_OVERLAP = 0.06
 /** An arrowhead's wings turn this far from the shaft (radians). */
 const HEAD_ANGLE = 0.5
 /** A light fill is the colour at this alpha. */
@@ -55,35 +63,59 @@ export interface ShapeLook {
 const geometries = new Map<string, Geometry>()
 const looks = new WeakMap<ShapeNode, ShapeLook>()
 
-/** How much a line of this length wobbles. */
-const jitterFor = (length: number): number => JITTER * Math.min(1, length / FULL_WOBBLE_LENGTH)
+/** The wobble of a line of this length. */
+const wobbleFor = (length: number): Wobble => ({ ...WOBBLE, amplitude: WOBBLE.amplitude * Math.min(1, length / FULL_WOBBLE_LENGTH) })
 
 const add = (a: Point, b: Point, k = 1): Point => [a[0] + b[0] * k, a[1] + b[1] * k]
 
 /**
- * One side of a rectangle, as a pen draws it: it starts a little before its corner and runs a
- * little past the next one, slightly off the true line.
+ * The outline of a w × h box with round corners of radius r, clockwise from the top side's right
+ * end (w - r, 0) to its left end (r, 0). The corners have a point every 3 board points or so.
  */
-function side(a: Point, b: Point, width: number, random: () => number): InkPoint[] | null {
-  const length = Math.hypot(b[0] - a[0], b[1] - a[1])
-  if (length < 0.5) return null
-  const u: Point = [(b[0] - a[0]) / length, (b[1] - a[1]) / length]
-  const n: Point = [-u[1], u[0]]
-  const over = Math.min(length * 0.08, 2 + width * 0.6)
-  const nudge = Math.min(1.6, length * 0.02)
-  const start = add(add(a, u, -over * (0.2 + 0.3 * random())), n, (random() - 0.5) * nudge)
-  const end = add(add(b, u, over * (0.6 + 0.4 * random())), n, (random() - 0.5) * nudge)
-  return humanize([start, end], jitterFor(length), random)
+function roundedBox(w: number, h: number, r: number): Point[] {
+  const out: Point[] = []
+  const parts = Math.max(2, Math.ceil((r * Math.PI) / 2 / 3))
+  const corners: [number, number, number][] = [[w - r, r, -Math.PI / 2], [w - r, h - r, 0], [r, h - r, Math.PI / 2], [r, r, Math.PI]]
+  for (const [cx, cy, from] of corners) {
+    for (let k = 0; k <= parts; k++) {
+      const angle = from + ((Math.PI / 2) * k) / parts
+      out.push([cx + r * Math.cos(angle), cy + r * Math.sin(angle)])
+    }
+  }
+  return out
 }
 
-/** The ellipse in the box, as `count` points from angle `from` over `turn` radians; `drift` widens it a little as it goes round. */
-function ellipsePoints(w: number, h: number, from: number, turn: number, count: number, drift = 0): Point[] {
+/**
+ * The start of a closed outline again, for `length` board points along it (round a corner too), with
+ * its last point `lift` board points to the side: the end of a line that goes a little past its start.
+ */
+function overshoot(outline: readonly Point[], length: number, lift: number): Point[] {
+  const out: Point[] = []
+  let left = length
+  for (let i = 1; i < outline.length && left > 0; i++) {
+    const a = outline[i - 1]
+    const b = outline[i]
+    const span = Math.hypot(b[0] - a[0], b[1] - a[1])
+    if (span <= 0) continue
+    const k = Math.min(1, left / span)
+    const end: Point = [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]
+    left -= span * k
+    if (left > 0) {
+      out.push(end)
+      continue
+    }
+    out.push([end[0] - ((b[1] - a[1]) / span) * lift, end[1] + ((b[0] - a[0]) / span) * lift])
+  }
+  return out
+}
+
+/** The ellipse in the box, as `count` points from angle `from` over `turn` radians. */
+function ellipsePoints(w: number, h: number, from: number, turn: number, count: number): Point[] {
   const out: Point[] = []
   for (let i = 0; i <= count; i++) {
     const t = i / count
     const angle = from + turn * t
-    const k = 1 + drift * t
-    out.push([w / 2 + (w / 2) * k * Math.cos(angle), h / 2 + (h / 2) * k * Math.sin(angle)])
+    out.push([w / 2 + (w / 2) * Math.cos(angle), h / 2 + (h / 2) * Math.sin(angle)])
   }
   return out
 }
@@ -93,7 +125,7 @@ function head(tip: Point, dir: Point, length: number, random: () => number): Ink
   const back: Point = [-dir[0], -dir[1]]
   const turn = (angle: number): Point => [back[0] * Math.cos(angle) - back[1] * Math.sin(angle), back[0] * Math.sin(angle) + back[1] * Math.cos(angle)]
   const spread = HEAD_ANGLE * (0.92 + 0.16 * random())
-  return humanize([add(tip, turn(spread), length), tip, add(tip, turn(-spread), length)], 0.25, random)
+  return handLine([add(tip, turn(spread), length), tip, add(tip, turn(-spread), length)], wobbleFor(length), random)
 }
 
 /**
@@ -102,20 +134,19 @@ function head(tip: Point, dir: Point, length: number, random: () => number): Ink
  */
 function dashed(points: InkPoint[], line: ShapeLine, width: number, closed: boolean): InkPoint[][] {
   if (line === 'solid' || points.length < 2) return [points]
-  const even = points.map(([x, y]) => [x, y, EVEN_PRESSURE] as InkPoint)
   const lengths = [0]
-  for (let i = 1; i < even.length; i++) lengths.push(lengths[i - 1] + Math.hypot(even[i][0] - even[i - 1][0], even[i][1] - even[i - 1][1]))
+  for (let i = 1; i < points.length; i++) lengths.push(lengths[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]))
   const total = lengths[lengths.length - 1]
-  if (total < 1) return [even]
+  if (total < 1) return [points]
   /** The point at length s along the line. */
   let at = 1
   const pointAt = (s: number): InkPoint => {
-    while (at < even.length - 1 && lengths[at] < s) at++
+    while (at < points.length - 1 && lengths[at] < s) at++
     while (at > 1 && lengths[at - 1] > s) at--
     const span = lengths[at] - lengths[at - 1] || 1
     const k = Math.min(1, Math.max(0, (s - lengths[at - 1]) / span))
-    const [ax, ay] = even[at - 1]
-    const [bx, by] = even[at]
+    const [ax, ay] = points[at - 1]
+    const [bx, by] = points[at]
     return [ax + (bx - ax) * k, ay + (by - ay) * k, EVEN_PRESSURE]
   }
   const out: InkPoint[][] = []
@@ -136,7 +167,7 @@ function dashed(points: InkPoint[], line: ShapeLine, width: number, closed: bool
     const from = k * (dash + gap)
     const to = Math.min(total, from + dash)
     const piece: InkPoint[] = [pointAt(from)]
-    for (let i = 0; i < even.length; i++) if (lengths[i] > from && lengths[i] < to) piece.push(even[i])
+    for (let i = 0; i < points.length; i++) if (lengths[i] > from && lengths[i] < to) piece.push(points[i])
     piece.push(pointAt(to))
     out.push(piece)
   }
@@ -156,13 +187,14 @@ function makeGeometry(shape: ShapeKind, w: number, h: number, width: number, lin
     strokes.push(...dashed(points, solid ? 'solid' : line, width, closed))
   }
   if (shape === 'rect') {
-    const corners: Point[] = [[0, 0], [w, 0], [w, h], [0, h]]
-    outline = corners
-    if (line === 'solid') for (let i = 0; i < 4; i++) put(side(corners[i], corners[(i + 1) % 4], width, random))
-    else if (w >= 0.5 || h >= 0.5) {
-      // Dashes and dots run round the corners: one closed line.
-      const loop = [...corners, corners[0]]
-      put(humanize(loop, jitterFor((w + h) / 2), random), true)
+    const radius = Math.min(CORNER_RADIUS, CORNER_SHARE * Math.min(w, h))
+    outline = roundedBox(w, h, radius)
+    if (w >= 0.5 || h >= 0.5) {
+      // One line round the box from the top side's right end. A solid line goes on a little past its
+      // start, slightly off it; dashes and dots run whole periods round a closed line.
+      const loop: Point[] = [...outline, outline[0]]
+      if (line === 'solid') loop.push(...overshoot(outline, Math.min(CLOSE_OVERSHOOT, (w + h) * 0.05), (random() - 0.5) * 0.8))
+      put(handLine(loop, wobbleFor((w + h) / 2), random), true)
     }
   } else if (shape === 'ellipse') {
     const around = Math.PI * (3 * (w + h) / 2 - Math.sqrt(((3 * w) / 2 + h / 2) * (w / 2 + (3 * h) / 2)))
@@ -170,16 +202,14 @@ function makeGeometry(shape: ShapeKind, w: number, h: number, width: number, lin
     if (around >= 1) {
       const count = Math.max(24, Math.ceil(around / 3))
       const from = random() * Math.PI * 2
-      if (line === 'solid') {
-        // A pen goes a little past where it began, a little wider than it started.
-        const overlap = 0.14 + random() * 0.1
-        put(humanize(ellipsePoints(w, h, from, Math.PI * 2 + overlap, count, (random() - 0.5) * 0.04), jitterFor(around / 4), random))
-      } else put(humanize(ellipsePoints(w, h, from, Math.PI * 2, count), jitterFor(around / 4), random), true)
+      // A solid loop goes a little past where it began.
+      const turn = Math.PI * 2 + (line === 'solid' ? ELLIPSE_OVERLAP * (1 + random()) : 0)
+      put(handLine(ellipsePoints(w, h, from, turn, count), wobbleFor(around / 4), random), true)
     }
   } else {
     const length = Math.hypot(w, h)
     if (length >= 0.5) {
-      put(humanize([[0, 0], [w, h]], jitterFor(length), random))
+      put(handLine([[0, 0], [w, h]], wobbleFor(length), random))
       if (shape === 'arrow' && heads !== 'none') {
         const dir: Point = [w / length, h / length]
         const size = Math.min(length * 0.4, 8 + width * 3.2)

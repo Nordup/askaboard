@@ -835,15 +835,16 @@ button:focus-visible {
   background-position: calc(var(--canvas-dot-pitch) / 2) calc(var(--canvas-dot-pitch) / 2);
 }
 
-/* ---------- Board controls (decision U8) ---------- */
+/* ---------- Board controls (decisions U10, U12) ---------- */
 
 /*
- * The bottom row over the canvas: zoom and undo at the start, the tool pill in
- * the middle column. With 1fr auto 1fr the tool pill is centred on the canvas
- * while the first column has room; on a narrow canvas the first column takes
- * its own width and the tool pill moves right, one gap after it. The style
- * pill sits above the tool pill; BoardControls shifts it (--style-shift) to
- * stay a margin inside the canvas. Every pill is a .pill-bar.
+ * The bottom row over the canvas: the corner pill (zoom and undo) at the
+ * start, centred on the row, and the tool pill in the middle column. With
+ * 1fr auto 1fr the tool pill is centred on the canvas while the first column
+ * has room; on a narrow canvas the first column takes its own width and the
+ * tool pill moves right, one gap after it. The style pill sits above the tool
+ * pill; BoardControls shifts it (--style-shift) to stay a margin inside the
+ * canvas. Every pill is a quiet .pill-bar (no shadow) with its own height.
  */
 .board-controls {
   position: absolute;
@@ -859,10 +860,15 @@ button:focus-visible {
   pointer-events: none;
 }
 
-.board-controls__start {
-  display: flex;
-  gap: var(--space-2);
+/* The corner pill's buttons, icons and divider are smaller than the tool pill's. */
+.board-controls__corner {
+  --tool-size: var(--corner-button-size);
+  --tool-icon-size: var(--corner-icon-size);
+  --pill-divider-height: var(--corner-divider-height);
+  --pill-divider-gap: var(--corner-divider-gap);
+  height: var(--corner-pill-height);
   justify-self: start;
+  align-self: center;
 }
 
 .board-controls__center {
@@ -870,7 +876,13 @@ button:focus-visible {
   grid-column: 2;
 }
 
+/* Each pill sets its own height (.pill-bar has none). */
+.board-controls__tools {
+  height: var(--tools-pill-height);
+}
+
 .board-controls__style {
+  height: var(--style-pill-height);
   position: absolute;
   left: 50%;
   bottom: calc(100% + var(--space-2));
@@ -882,12 +894,10 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-half);
-  height: var(--palette-height);
-  padding: 0 var(--space-2);
+  padding: 0 var(--pill-bar-pad);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-float);
   pointer-events: auto;
 }
 
@@ -895,7 +905,7 @@ button:focus-visible {
   flex-shrink: 0;
   width: 1px;
   height: var(--pill-divider-height);
-  margin: 0 var(--space-2);
+  margin: 0 var(--pill-divider-gap);
   background: var(--border-subtle);
 }
 
@@ -908,6 +918,11 @@ button:focus-visible {
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
   transition: background 120ms ease, color 120ms ease;
+}
+
+.tool > .lucide {
+  width: var(--tool-icon-size);
+  height: var(--tool-icon-size);
 }
 
 .tool:hover {
@@ -977,6 +992,11 @@ button:focus-visible {
   border-radius: var(--radius-pill);
   color: var(--text-tertiary);
   transition: background 120ms ease, color 120ms ease;
+}
+
+.option > .lucide {
+  width: var(--option-icon-size);
+  height: var(--option-icon-size);
 }
 
 .option:hover {

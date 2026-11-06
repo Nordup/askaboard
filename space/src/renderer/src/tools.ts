@@ -23,19 +23,21 @@ export interface ToolDef {
   Icon: LucideIcon
   /** The style options this tool draws with, in the style pill's order. */
   style: readonly StyleField[]
+  /** The tool pill puts a divider between groups: moving, shapes, then the pen, text and eraser. */
+  group: 'move' | 'shape' | 'mark'
 }
 
 /** The tools in the tool pill's order. A new tool is one row here. */
 export const TOOLS: readonly ToolDef[] = [
-  { id: 'select', label: 'Select', key: 'V', digit: '1', Icon: MousePointer2, style: [] },
-  { id: 'hand', label: 'Hand', key: 'H', Icon: Hand, style: [] },
-  { id: 'rect', label: 'Rectangle', key: 'R', digit: '2', Icon: Square, style: ['color', 'fill', 'width', 'line'] },
-  { id: 'ellipse', label: 'Ellipse', key: 'O', digit: '3', Icon: Circle, style: ['color', 'fill', 'width', 'line'] },
-  { id: 'arrow', label: 'Arrow', key: 'A', digit: '4', Icon: MoveUpRight, style: ['color', 'width', 'line', 'heads'] },
-  { id: 'line', label: 'Line', key: 'L', digit: '5', Icon: Slash, style: ['color', 'width', 'line'] },
-  { id: 'pen', label: 'Pen', key: 'P', digit: '6', Icon: PenLine, style: ['color', 'width', 'pen'] },
-  { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color', 'size', 'font', 'align'] },
-  { id: 'eraser', label: 'Eraser', key: 'E', digit: '0', Icon: Eraser, style: [] }
+  { id: 'select', label: 'Select', key: 'V', digit: '1', Icon: MousePointer2, style: [], group: 'move' },
+  { id: 'hand', label: 'Hand', key: 'H', Icon: Hand, style: [], group: 'move' },
+  { id: 'rect', label: 'Rectangle', key: 'R', digit: '2', Icon: Square, style: ['color', 'fill', 'width', 'line'], group: 'shape' },
+  { id: 'ellipse', label: 'Ellipse', key: 'O', digit: '3', Icon: Circle, style: ['color', 'fill', 'width', 'line'], group: 'shape' },
+  { id: 'arrow', label: 'Arrow', key: 'A', digit: '4', Icon: MoveUpRight, style: ['color', 'width', 'line', 'heads'], group: 'shape' },
+  { id: 'line', label: 'Line', key: 'L', digit: '5', Icon: Slash, style: ['color', 'width', 'line'], group: 'shape' },
+  { id: 'pen', label: 'Pen', key: 'P', digit: '6', Icon: PenLine, style: ['color', 'width', 'pen'], group: 'mark' },
+  { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color', 'size', 'font', 'align'], group: 'mark' },
+  { id: 'eraser', label: 'Eraser', key: 'E', digit: '0', Icon: Eraser, style: [], group: 'mark' }
 ]
 
 /** The Select button's icon in lasso mode. */
@@ -77,17 +79,28 @@ export const INK_COLORS: readonly InkColor[] = [
   { id: 'orange', label: 'Orange', value: '#ff9f45' }
 ]
 
-export interface StrokeWidth {
-  label: string
-  /** The nominal pen width in board points. A marker stroke is MARKER_SCALE times wider. */
-  px: number
-}
+export type WidthStep = 'fine' | 'medium' | 'bold'
 
-export const STROKE_WIDTHS: readonly StrokeWidth[] = [
-  { label: 'Fine', px: 2 },
-  { label: 'Medium', px: 3.5 },
-  { label: 'Bold', px: 6 }
+/**
+ * The width steps of the style pill. Each kind of item maps a step to its own width (board points):
+ * the pen keeps its widths (decision B69), and a shape draws an even line that is finer than ink.
+ */
+export const WIDTH_STEPS: readonly { id: WidthStep; label: string }[] = [
+  { id: 'fine', label: 'Fine' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'bold', label: 'Bold' }
 ]
+
+/** The nominal pen width of each step. A marker stroke is MARKER_SCALE times wider. */
+export const PEN_WIDTHS: Record<WidthStep, number> = { fine: 2, medium: 3.5, bold: 6 }
+
+/** The even line width of a shape (rectangle, ellipse, arrow, line) at each step. */
+export const SHAPE_WIDTHS: Record<WidthStep, number> = { fine: 1.5, medium: 2.5, bold: 4 }
+
+/** The step whose width in `table` is exactly `width`, or undefined (an agent's or an older shape's width matches none). */
+export function widthStep(table: Record<WidthStep, number>, width: number): WidthStep | undefined {
+  return WIDTH_STEPS.find((step) => table[step.id] === width)?.id
+}
 
 export type PenKind = 'pen' | 'marker'
 
@@ -106,12 +119,12 @@ export interface TextSize {
   px: number
 }
 
-/** Text sizes: Excalidraw's 16, 20, 28 and 36 px. New text was 20 px before the style pill, so M is the default. */
+/** Text sizes (founder, 2026-11-06). M is the default for new text. */
 export const TEXT_SIZES: readonly TextSize[] = [
-  { id: 'S', label: 'Small', px: 16 },
-  { id: 'M', label: 'Medium', px: 20 },
-  { id: 'L', label: 'Large', px: 28 },
-  { id: 'XL', label: 'Extra large', px: 36 }
+  { id: 'S', label: 'Small', px: 18 },
+  { id: 'M', label: 'Medium', px: 24 },
+  { id: 'L', label: 'Large', px: 32 },
+  { id: 'XL', label: 'Extra large', px: 44 }
 ]
 
 export type FontId = 'hand' | 'plain' | 'code'
@@ -157,8 +170,8 @@ export const ARROW_HEADS: readonly { id: ShapeHeads; label: string; Icon: Lucide
 export interface DrawStyle {
   /** A hex colour from INK_COLORS (any colour string on an item). */
   color: string
-  /** The nominal pen width in board points (STROKE_WIDTHS). */
-  width: number
+  /** The width step: each kind maps it to its own width (PEN_WIDTHS, SHAPE_WIDTHS). */
+  width: WidthStep
   fill: ShapeFill
   line: ShapeLine
   heads: ShapeHeads
@@ -182,7 +195,7 @@ export const INITIAL_TOOLS: ToolState = {
   tool: 'select',
   selectMode: 'box',
   lock: false,
-  style: { color: INK_COLORS[0].value, width: STROKE_WIDTHS[1].px, fill: 'none', line: 'solid', heads: 'end', pen: 'pen', size: TEXT_SIZES[1].px, font: 'hand', align: 'left' }
+  style: { color: INK_COLORS[0].value, width: 'medium', fill: 'none', line: 'solid', heads: 'end', pen: 'pen', size: TEXT_SIZES[1].px, font: 'hand', align: 'left' }
 }
 
 /** Choose a tool: a press on Select while it is active switches between the box and the lasso. */
