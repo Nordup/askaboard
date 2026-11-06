@@ -59,7 +59,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--status-live-pulse`, `--status-error-ring`, `--status-warn-ring`,
   `--status-bad-ring`, `--status-play`, `--status-play-ring`
 - Canvas tools: `--selection-fill`, `--selection-border`, `--lasso-fill`,
-  `--eraser-ring`, `--eraser-halo`, `--swatch-edge`, `--handle-rotate-size`,
+  `--eraser-ring`, `--eraser-halo`, `--handle-rotate-size`,
   `--handle-rotate-reach`, `--handle-rotate-stem`,
   `--handle-rotate-stem-width`
 - The hand on the board: `--ls-hand` in `board/content.css`, the font
@@ -297,7 +297,7 @@ comment block above `.board-controls` in `app.css`). Each is a `.pill-bar`
 gap 2 px, `--shadow-float`, U16) with its own height. Parts: `.tool` (round button,
 lucide icon at stroke 1.75; pressed: `--accent-soft` and `--accent`;
 `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider` (1 × 16 px,
-margin 0 5 px), `.swatch` (24 px) with `.swatch__dot` (13 px), `.option`
+margin 0 5 px), `.swatch` with `.swatch__dot` (the pen ring), `.option`
 (22 px, round, 14 px icon; pressed: `--bg-active`, `--text-primary`;
 `.option--text` for a word (12 px), `.option__bar` for a width (as thick
 as the step's shape line: 1.5, 2.5, 4 px), `.option__fill` for a fill (a
@@ -323,14 +323,15 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
   fill, width, line; arrow: colour, width, line, heads; line: colour,
   width, line. For a selection it ends with Duplicate, Delete (only when an
   item may change) and More; when the whole pill would be wider than the
-  canvas less 24 px, it shows More alone. The style pill is 36 px (28 px swatches with a 15 px dot, 26 px options); a chosen colour has the grey circle of every chosen option, no ring. The colours are the ones agents draw with most (white, the accent blue, purple, yellow, green, pink: the board palette of `live/colors.ts`; `tools.ts INK_COLORS`). It sits 8 px above the tool pill,
+  canvas less 24 px, it shows More alone. The style pill is 36 px (28 px swatches with a 15 px pen ring, 26 px options); each swatch is a small pen ring in the agents' ink (`InkGlyph.tsx PenRing`, [`agent-ink.md`](agent-ink.md) "Ink glyphs"); a chosen colour has the grey circle of every chosen option. The colours are the ones agents draw with most (white, the accent blue, purple, yellow, green, pink: the board palette of `live/colors.ts`; `tools.ts INK_COLORS`). It sits 8 px above the tool pill,
   centred on it, and shifts to stay 12 px inside the canvas.
 - Width (Fine, Medium, Bold) is one step for every kind: a shape draws it
   at 1.5, 2.5 or 4 board points, the pen at 2, 3.5 or 6. Text sizes: S 18,
   M 24 (default), L 32, XL 44.
-- Shapes (B71) are drawn on the board as ink: one even line with a gentle
-  wobble, a rectangle with round corners (radius min(12, 0.15 × the shorter
-  side)); a light fill is the colour at 0.18 alpha. A selected arrow or line has two round end handles in place
+- Shapes (B71) are drawn on the board as ink with the agents' pen recipe
+  ([`agent-ink.md`](agent-ink.md)): the wobble and the pressure taper of an
+  agent's pen shape, a rectangle with round corners (radius min(12, 0.2 ×
+  the shorter side)); a light fill is the colour at 0.18 alpha. A selected arrow or line has two round end handles in place
   of the box handles.
 - The board menu (`BoardMenu.tsx`, the shared `Menu`): one command list
   (`board/commands.ts`) feeds the right-click menu (at the pointer) and the

@@ -149,6 +149,9 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
    where each thing lives.
 3. [`design-system.md`](design-system.md) — the UI rules. Required before
    any UI change.
+   - [`agent-ink.md`](agent-ink.md) — how agent ink is made: the pen
+     recipe step by step with every parameter. The learner's shapes and the
+     colour swatches use it. Read it before you change how ink looks.
 4. [`decisions.md`](decisions.md) — every decision, with the reason and the
    rejected alternatives.
 5. [`working-guide.md`](working-guide.md) — how to build and check things

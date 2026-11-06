@@ -5,6 +5,7 @@ import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
+import { PenRing } from './InkGlyph'
 
 /**
  * What the style pill shows: its fields, with the values of the tool or of the selection (a missing value
@@ -200,7 +201,7 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
         style={{ '--swatch': color.value } as CSSProperties}
         onClick={() => onStyle({ color: color.value })}
       >
-        <span className="swatch__dot" />
+        <PenRing name={color.id} className="swatch__dot" />
       </button>
     ))
   } else if (field === 'width') {

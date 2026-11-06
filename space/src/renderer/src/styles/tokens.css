@@ -59,7 +59,6 @@
   --lasso-fill: rgba(110, 139, 255, 0.08);
   --eraser-ring: rgba(255, 255, 255, 0.6);
   --eraser-halo: rgba(0, 0, 0, 0.5);
-  --swatch-edge: rgba(0, 0, 0, 0.25); /* inset line around an ink colour swatch */
 
   --selection-border: 1.5px;
   /* The rotate handle of a selected text */
@@ -164,7 +163,7 @@
   --corner-divider-gap: 4px;
   --style-pill-height: 36px; /* the style pill */
   --swatch-size: 28px; /* a colour swatch's hit area */
-  --swatch-dot: 15px; /* the colour dot inside it */
+  --swatch-dot: 15px; /* the pen ring inside it (InkGlyph.tsx PenRing) */
   --option-size: 26px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
   --option-icon-size: 15px; /* an option's lucide icon */
   --option-text-pad: 9px; /* the side padding of a text option (S, M, L, XL) */

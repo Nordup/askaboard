@@ -1,12 +1,13 @@
 import type { InkPoint } from '@shared/board-format'
-import { INK_STEP } from '@shared/ink-points'
+import { INK_STEP, polylineInk } from '@shared/ink-points'
 import type { Point } from './types'
 
 /**
  * Ink that looks drawn by hand: a slight wobble and, for pen ink, a pressure
  * profile with a taper at both ends. Live scenes draw their pen ink with it
  * (the stage makes the points of pen shapes, shared/ink-points.ts), and the
- * learner's shapes get their even line from it (shapes.ts), so both have one hand.
+ * learner's shapes and the ink glyphs draw with the same pen (penInk), so all
+ * have one hand. The recipe step by step: docs/learning-space/agent-ink.md.
  */
 
 /**
@@ -81,8 +82,8 @@ function wobbled(line: Point[], wobble: Wobble, random: () => number): [number, 
 
 /**
  * A polyline with the hand's wobble and an even width (pressure 0.5, which
- * paints at the nominal width): the line of the learner's shapes (shapes.ts)
- * and of the agents' pen shapes (live/compile.ts handPath).
+ * paints at the nominal width): the outline of an agent's pen shape with a
+ * fill (live/compile.ts handPath).
  */
 export function handLine(line: Point[], wobble: Wobble, random: () => number): InkPoint[] {
   return wobbled(line, wobble, random).map(([x, y]) => [x, y, 0.5])
@@ -113,4 +114,17 @@ export function humanize(line: Point[], jitter: number, random: () => number): I
     const pressure = Math.max(0.08, Math.min(1, base * ends + 0.05 * Math.sin(s / 31 + phase)))
     return [x, y, Math.round(pressure * 100) / 100]
   })
+}
+
+/** The jitter of an agent's pen shape when the scene gives none (stage/live-prelude.js shapeObject, live/compile.ts). */
+export const PEN_JITTER = 0.3
+
+/**
+ * The agents' pen ink along polylines (a path flattened by shared/path-geometry.ts flattenPath with
+ * 'ink', or straight segments): sampled into strokes by polylineInk, then each stroke humanized at
+ * PEN_JITTER with the next draws of `random`. The learner's shapes (shapes.ts) and the ink glyphs
+ * (components/InkGlyph.tsx) draw with it, so they look as an agent's circle(…, { pen: true }) does.
+ */
+export function penInk(lines: readonly (readonly (readonly number[])[])[], random: () => number): InkPoint[][] {
+  return polylineInk(lines).map((line) => humanize(line, PEN_JITTER, random))
 }

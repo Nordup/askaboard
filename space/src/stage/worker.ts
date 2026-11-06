@@ -3,6 +3,7 @@ import { STAGE_LIMITS, type StageMode, type StageReply, type StageTiming } from 
 import { chunkBytes, CREDIT_BYTES, FRAMES_VERSION, FrameEncoder, type MomentsFailure } from '../shared/frames'
 import { polylineInk } from '../shared/ink-points'
 import { flattenPath, parsePath } from '../shared/path-geometry'
+import { arrowHead, arrowWings, ellipseSegments, f2, rectSegments } from '../shared/pen-shapes'
 import { mulberry32, SCENE_EASES, trackNumber } from '../shared/live-scene'
 import { moduleUrl, programSite, resolveSpecifier, siteLabel, type StageModule, type StageProgram } from '../shared/scene-program'
 import { BRIDGE_HEADER, type FromWorker, type ToWorker } from './worker-protocol'
@@ -176,7 +177,7 @@ function init(message: Extract<ToWorker, { t: 'init' }>): void {
     G.__measure = ask
     G.__frames = (sid: number, kind: string, math: boolean, sample: Record<string, unknown>, seed: boolean): void => frameSink?.add(sid, kind, math, sample, seed)
     G.__framesThrough = (t: number): void => frameSink?.through(t)
-    G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, SCENE_EASES, trackNumber, mulberry32, programSite, siteLabel })
+    G.__shared = Object.freeze({ parsePath, flattenPath, polylineInk, f2, ellipseSegments, rectSegments, arrowHead, arrowWings, SCENE_EASES, trackNumber, mulberry32, programSite, siteLabel })
     G.__host = (fns: Host) => {
       host = fns
     }

@@ -960,12 +960,12 @@ button:focus-visible {
   border-radius: 50%;
 }
 
+/* The colour as a small pen ring in the agents' ink (components/InkGlyph.tsx PenRing). */
 .swatch__dot {
+  display: block;
   width: var(--swatch-dot);
   height: var(--swatch-dot);
-  border-radius: 50%;
-  background: var(--swatch);
-  box-shadow: inset 0 0 0 1px var(--swatch-edge);
+  color: var(--swatch);
   transition: transform 120ms ease;
 }
 

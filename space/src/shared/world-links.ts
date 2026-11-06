@@ -6,6 +6,8 @@
  * the points of a still.
  */
 
+import { arrowWings, f2 } from './pen-shapes'
+
 export type LinkPoint = [number, number]
 
 /** The places of a world's published points now, by node id and name: board x, board y, visible. */
@@ -66,22 +68,11 @@ export function pointNow(points: WorldPoints, world: string, point: string): [nu
   return points[world]?.[point] ?? null
 }
 
-const f2 = (value: number): number => Math.round(value * 100) / 100
-
-/** The path of a line, or with a head of an arrow, as live-prelude.js makes it. */
+/** The path of a line, or with a head of an arrow, as live-prelude.js makes it (shared/pen-shapes.ts arrowWings). */
 function pathOf(a: LinkPoint, b: LinkPoint, head: number | undefined): string {
   const line = `M${f2(a[0])} ${f2(a[1])} L${f2(b[0])} ${f2(b[1])}`
   if (head === undefined) return line
-  const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1
-  const ux = (b[0] - a[0]) / length
-  const uy = (b[1] - a[1]) / length
-  const wing = (angle: number): LinkPoint => {
-    const c = Math.cos(angle)
-    const s = Math.sin(angle)
-    return [b[0] - head * (ux * c - uy * s), b[1] - head * (uy * c + ux * s)]
-  }
-  const p = wing(0.45)
-  const q = wing(-0.45)
+  const [p, q] = arrowWings(a[0], a[1], b[0], b[1], head)
   return `${line} M${f2(p[0])} ${f2(p[1])} L${f2(b[0])} ${f2(b[1])} L${f2(q[0])} ${f2(q[1])}`
 }
 

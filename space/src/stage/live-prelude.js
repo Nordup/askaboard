@@ -50,8 +50,9 @@
   delete G.__framesThrough
   // The code the board runs too (stage/worker.ts hands it over): path geometry without the DOM (shared/path-geometry.ts), the
   // ink points of pen shapes (shared/ink-points.ts), the eases, number tracks and seeded random of scenes (shared/live-scene.ts),
-  // and where in the agent's code a stack frame is: the inline code or a module file (shared/scene-program.ts).
-  const { parsePath, flattenPath, polylineInk, SCENE_EASES: EASES, trackNumber, mulberry32, programSite, siteLabel } = G.__shared
+  // and where in the agent's code a stack frame is: the inline code or a module file (shared/scene-program.ts); the outlines of
+  // circle, ellipse, rect and arrow (shared/pen-shapes.ts), which the learner's shapes reuse.
+  const { parsePath, flattenPath, polylineInk, f2, ellipseSegments, rectSegments, arrowHead, arrowWings, SCENE_EASES: EASES, trackNumber, mulberry32, programSite, siteLabel } = G.__shared
   delete G.__shared
   const FONT = JSON.parse(G.__fontText)
   delete G.__fontText
@@ -262,7 +263,6 @@
     for (let i = 1; i < line.length; i++) length += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1])
     return length
   }
-  const f2 = (v) => Math.round(v * 100) / 100
 
   /** The absolute segments of an SVG path "d" (shared/path-geometry.ts); a failure that says what is wrong. */
   function pathSegments(d) {
@@ -313,20 +313,6 @@
     }
     if (ok && closed) line.push([line[0][0], line[0][1]])
     return { d: closed ? `${d}Z` : d.trim(), lines: ok ? [line] : null }
-  }
-
-  /** An ellipse as four cubic arcs (absolute segments), starting at the left (a hand starts circles there). */
-  function ellipseSegments(cx, cy, rx, ry) {
-    const k = 0.5522847498
-    const p = (x, y) => [f2(x), f2(y)]
-    return [
-      ['M', ...p(cx - rx, cy)],
-      ['C', ...p(cx - rx, cy + ry * k), ...p(cx - rx * k, cy + ry), ...p(cx, cy + ry)],
-      ['C', ...p(cx + rx * k, cy + ry), ...p(cx + rx, cy + ry * k), ...p(cx + rx, cy)],
-      ['C', ...p(cx + rx, cy - ry * k), ...p(cx + rx * k, cy - ry), ...p(cx, cy - ry)],
-      ['C', ...p(cx - rx * k, cy - ry), ...p(cx - rx, cy - ry * k), ...p(cx - rx, cy)],
-      ['Z']
-    ]
   }
 
   // ---------- Objects ----------
@@ -931,17 +917,9 @@
     coord(x2, 'x2')
     coord(y2, 'y2')
     const length = Math.hypot(x2 - x1, y2 - y1) || 1
-    const ux = (x2 - x1) / length
-    const uy = (y2 - y1) / length
     const width = opts.width === undefined ? 3 : num(opts.width, 'arrow width')
-    const head = opts.head === undefined ? Math.max(10, Math.min(22, length * 0.2, width * 5)) : num(opts.head, 'arrow head')
-    const wing = (angle) => {
-      const c = Math.cos(angle)
-      const s = Math.sin(angle)
-      return [x2 - head * (ux * c - uy * s), y2 - head * (uy * c + ux * s)]
-    }
-    const [ax, ay] = wing(0.45)
-    const [bx, by] = wing(-0.45)
+    const head = opts.head === undefined ? arrowHead(length, width) : num(opts.head, 'arrow head')
+    const [[ax, ay], [bx, by]] = arrowWings(x1, y1, x2, y2, head)
     const [p, q, a, b] = [
       [f2(x1), f2(y1)],
       [f2(x2), f2(y2)],
@@ -1005,13 +983,7 @@
     num(w, 'rect width')
     num(h, 'rect height')
     const r = Math.max(0, Math.min(opts.radius === undefined ? 0 : num(opts.radius, 'rect radius'), Math.abs(w) / 2, Math.abs(h) / 2))
-    const [x0, y0, x1, y1] = [f2(x), f2(y), f2(x + w), f2(y + h)]
-    let segments
-    if (r > 0) {
-      const [xr, yr, xw, yh] = [f2(x + r), f2(y + r), f2(x + w - r), f2(y + h - r)]
-      const corner = (ex, ey) => ['A', r, r, 0, 0, 1, ex, ey]
-      segments = [['M', xr, y0], ['L', xw, y0], corner(x1, yr), ['L', x1, yh], corner(xw, y1), ['L', xr, y1], corner(x0, yh), ['L', x0, yr], corner(xr, y0), ['Z']]
-    } else segments = [['M', x0, y0], ['L', x1, y0], ['L', x1, y1], ['L', x0, y1], ['Z']]
+    const segments = rectSegments(x, y, w, h, r)
     return shapeObject('rect', pathText(segments), opts, {}, null, segments)
   }
 
