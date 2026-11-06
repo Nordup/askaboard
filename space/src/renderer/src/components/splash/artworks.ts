@@ -4,7 +4,6 @@
  * instance draws itself at a time in seconds. To add an artwork, write its module and add it to ARTWORKS in art.ts.
  */
 
-import type { RibbonState } from './ribbons'
 import type { TreeGpu } from './tree'
 
 /** The band in CSS px. */
@@ -26,8 +25,8 @@ export interface ArtworkInstance {
    * alphas with; `pointer` (−1…1 each way, eased) lets parts at other depths move by the difference.
    */
   draw(ctx: CanvasRenderingContext2D, t: number, size: Size, fade: number, pointer: readonly [number, number]): void
-  /** What the WebGL layer (gl.ts) can draw for this artwork; with it, draw() runs only on the 2D fallback. */
-  gpu?: { ribbons?: RibbonState; tree?: TreeGpu }
+  /** What the WebGL layer (gl.ts) can draw for this artwork; when it draws, draw() is not called. */
+  gpu?: { tree?: TreeGpu }
 }
 
 export interface Artwork {

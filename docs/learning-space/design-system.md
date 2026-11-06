@@ -608,11 +608,9 @@ internal data (a path, an id). One shared tooltip instead
   shows a quiet work of art, in the background and not loud
   (`components/splash/art.ts`). Under it always the breathing grid: a dot
   grid (`--splash-dot-pitch`) where three slow waves lift dots and turn them
-  from `--ink-white` toward `--accent`. Over it one artwork per launch, picked
-  at random from a registry (`ARTWORKS`; with two or more, never the previous
-  launch's pick), each varied by the launch's seed. Now: "Flowing ribbons",
-  42 thin lines from the accent through `--splash-ribbon-violet` into
-  `--splash-ribbon-teal`, faded at both ends. "Blossom tree" (`tree.ts`,
+  from `--ink-white` toward `--accent`. Over it the artwork, from a
+  registry (`ARTWORKS`, one entry now), varied by the launch's seed: the
+  "Blossom tree" (`tree.ts`,
   after the founder's ink-painting references): a plum tree whose dark
   gnarled trunk rises from the lower right (about 83 % of the width) with an
   S-twist, then bends at mid height into one long limb that reaches across
@@ -642,18 +640,16 @@ internal data (a path, an id). One shared tooltip instead
   pointer, the moon 5 px, the trunk and the main limb 15 px; each crown
   branch has its own depth (±40 %, eased from its parent so forks hold),
   flowers keep their branch's depth, falling petals are nearest (1.3×).
-  Each ribbon line has its own depth around 14 px (±40 % across the
-  sheet), so the sheet shears. The title and the version stay still.
+  The title and the version stay still.
   Rendering: WebGL (`gl.ts`) paints the band: the ground and the grid
-  (one fragment shader; each pixel finds its nearest dot), the ribbons
-  (one static vertex buffer of thin quads, placed by the vertex shader)
-  and the grown tree: the moon, the wash and the still trunk as bitmaps
+  (one fragment shader; each pixel finds its nearest dot) and the grown
+  tree: the moon, the wash and the still trunk as bitmaps
   on their depths, the swaying bark as one mesh, the flowers as instanced
   sprites from an atlas, the petals instanced; the vertex shader sways and
   shifts them from a few uniforms (the two springs, the pointer). The
   tree's growth (its first 5.7 s) is painted by the 2D canvas over the GL
   grid, then hands over to the GPU. One source of the numbers (`grid.ts`,
-  `RIBBON`, `WIND`, `DEPTH`, `ATLAS`) serves both painters; without
+  `WIND`, `DEPTH`, `ATLAS`) serves both painters; without
   WebGL, or when its context is lost, the 2D canvas paints everything. After the entry (6 s) the band paints at most 30 times a
   second (its motion is slow), and every display frame again while the
   parallax catches up with the pointer. "Learning Space" (17 px, 600) bottom

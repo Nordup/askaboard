@@ -59,8 +59,6 @@ export default defineConfig({
   renderer: {
     resolve: { alias: { '@shared': shared } },
     plugins: [react()],
-    // Dev only (components/splash/art.ts): SPACE_SPLASH_ART=<artwork id> shows that artwork at every launch.
-    define: { __SPACE_SPLASH_ART__: JSON.stringify(process.env.SPACE_SPLASH_ART ?? '') },
     // A dev server names its bundled dependencies anew each time it builds them, and each name stayed in the app's disk caches (500 MB). Dev only: a built app reads its files from disk.
     server: { headers: { 'Cache-Control': 'no-store' } }
   }

@@ -1,31 +1,22 @@
 /**
- * The splash band's WebGL layer (decision U20): the ground, the breathing grid and the artwork on the GPU. The grid is
- * one fragment shader over the band (each pixel finds its nearest dot); the ribbons are one static vertex buffer of the
- * 42 polylines as thin quads whose places the vertex shader computes from x, the line's k, the time and the seed's
- * phases. The grown tree is a still bitmap (moon, wash, still trunk), one mesh of its swaying bark, instanced flower
- * sprites from an atlas and instanced petals; the vertex shader sways them from a few uniforms (the two springs).
- * The numbers come from grid.ts, ribbons.ts and tree.ts (one source for both painters); art.ts falls back to the 2D
- * painters when WebGL is missing or its context is lost, and the tree's growth stays 2D.
+ * The splash band's WebGL layer (decision U20): the ground, the breathing grid and the grown tree on the GPU. The grid
+ * is one fragment shader over the band (each pixel finds its nearest dot). The tree is still bitmaps (moon, wash, still
+ * trunk), one mesh of its swaying bark, instanced flower sprites from an atlas and instanced petals; the vertex shader
+ * sways and shifts them from a few uniforms (the two springs, the pointer). The numbers come from grid.ts and tree.ts
+ * (one source for both painters); art.ts falls back to the 2D painters when WebGL is missing or its context is lost,
+ * and the tree's growth stays 2D.
  */
 import { rgba, type Palette, type Size } from './artworks'
 import { GRID, gridColours } from './grid'
-import { RIBBON, type RibbonState } from './ribbons'
 import { ATLAS, DEPTH, WIND, type TreeFrame, type TreeGpu, type TreeLayer } from './tree'
 
 export interface GlLayer {
   /** True once the context is lost: art.ts then paints with 2D. */
   readonly lost: boolean
-  /** Paint a frame: the grid at grid time `gridT` shifted by `gridShift` CSS px, then the ribbons if given. */
   /** Whether this context can paint the grown tree (instancing). */
   readonly canTree: boolean
-  draw(
-    size: Size,
-    dpr: number,
-    gridT: number,
-    gridShift: [number, number],
-    ribbons: { state: RibbonState; t: number; shift: [number, number]; fade: number } | null,
-    tree?: { gpu: TreeGpu; frame: TreeFrame; pointer: readonly [number, number]; fade: number; alpha: number } | null
-  ): void
+  /** Paint a frame: the grid at grid time `gridT` shifted by `gridShift` CSS px, then the grown tree if given. */
+  draw(size: Size, dpr: number, gridT: number, gridShift: [number, number], tree: { gpu: TreeGpu; frame: TreeFrame; pointer: readonly [number, number]; fade: number; alpha: number } | null): void
   /** Free the context (the band unmounts). */
   release(): void
 }
@@ -63,68 +54,6 @@ void main() {
   float r = (1.0 + ${f(GRID.grow)} * k) * (uScale.x + uScale.y) * 0.5;
   float cover = clamp((r - length(css - centre)) * uDpr + 0.5, 0.0, 1.0);
   gl_FragColor = vec4(mix(uGround, col, a * cover), 1.0);
-}`
-
-const RIBBON_VS = `
-attribute vec3 aVert; // x index, line index, side (−1 or 1)
-uniform vec2 uRes;
-uniform float uDpr;
-uniform vec2 uBand;   // CSS px
-uniform vec2 uShift;  // CSS px
-uniform vec4 uW0;     // fx, amp, fk, phase now
-uniform vec4 uW1;
-uniform vec4 uW2;
-uniform vec4 uS;      // fx, amp, 0, phase now
-uniform float uDepth; // a line's depth is 1 + uDepth · (2k − 1)
-varying float vSide;
-varying float vG;
-varying float vK;
-void main() {
-  float x = aVert.x * ${f(RIBBON.step)};
-  float k = aVert.y / ${f(RIBBON.lines - 1)};
-  float h = uBand.y;
-  float q0 = x * uW0.x + uW0.w + k * uW0.z;
-  float q1 = x * uW1.x + uW1.w + k * uW1.z;
-  float q2 = x * uW2.x + uW2.w + k * uW2.z;
-  float qs = x * uS.x + uS.w;
-  float ks = (k - 0.5) * h * uS.y;
-  float y = h * ${f(RIBBON.mid)} + h * (uW0.y * sin(q0) + uW1.y * sin(q1) + uW2.y * sin(q2)) + ks * sin(qs);
-  float dy = h * (uW0.y * uW0.x * cos(q0) + uW1.y * uW1.x * cos(q1) + uW2.y * uW2.x * cos(q2)) + ks * uS.x * cos(qs);
-  float sx = uBand.x / ${f(RIBBON.unitsW)};
-  vec2 p = vec2(x * sx, y);
-  vec2 t = normalize(vec2(sx, dy));
-  float extent = 0.5 * uDpr + 1.0;
-  vec2 dev = (p - uShift * (1.0 + uDepth * (2.0 * k - 1.0))) * uDpr + vec2(-t.y, t.x) * aVert.z * extent;
-  vSide = aVert.z * extent;
-  vG = p.x / uBand.x;
-  vK = k;
-  gl_Position = vec4(dev.x / uRes.x * 2.0 - 1.0, 1.0 - dev.y / uRes.y * 2.0, 0.0, 1.0);
-}`
-
-const RIBBON_FS = `
-precision highp float;
-uniform float uDpr;
-uniform float uFade;
-uniform vec4 uC[4];   // colour (0…1) and alpha per stop
-uniform vec4 uAt;     // the stops' places
-uniform vec4 uAk;     // alpha per k
-varying float vSide;
-varying float vG;
-varying float vK;
-void main() {
-  vec4 s0 = uC[0] + vec4(0.0, 0.0, 0.0, uAk.x * vK);
-  vec4 s1 = uC[1] + vec4(0.0, 0.0, 0.0, uAk.y * vK);
-  vec4 s2 = uC[2] + vec4(0.0, 0.0, 0.0, uAk.z * vK);
-  vec4 s3 = uC[3] + vec4(0.0, 0.0, 0.0, uAk.w * vK);
-  float g = clamp(vG, 0.0, 1.0);
-  vec4 c;
-  if (g < uAt.y) c = mix(s0, s1, (g - uAt.x) / (uAt.y - uAt.x));
-  else if (g < uAt.z) c = mix(s1, s2, (g - uAt.y) / (uAt.z - uAt.y));
-  else c = mix(s2, s3, (g - uAt.z) / (uAt.w - uAt.z));
-  // A 1 CSS px line, anti-aliased across its width.
-  float cover = clamp(0.5 * uDpr + 0.5 - abs(vSide), 0.0, 1.0);
-  float a = c.a * cover * uFade;
-  gl_FragColor = vec4(c.rgb * a, a);
 }`
 
 // ---------- The tree ----------
@@ -284,8 +213,7 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
     return null
   }
   const gridProgram = program(QUAD_VS, GRID_FS)
-  const ribbonProgram = program(RIBBON_VS, RIBBON_FS)
-  if (!gridProgram || !ribbonProgram) {
+  if (!gridProgram) {
     gl.getExtension('WEBGL_lose_context')?.loseContext()
     devCount(-1)
     return null
@@ -297,31 +225,6 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
   gl.bindBuffer(gl.ARRAY_BUFFER, quad)
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
   const gridPos = gl.getAttribLocation(gridProgram, 'aPos')
-
-  // The ribbons: two triangles per segment, per line, in line order (so later lines lie over earlier ones, as in 2D).
-  const points = Math.floor(RIBBON.unitsW / RIBBON.step) + 1
-  const verts = new Float32Array(RIBBON.lines * (points - 1) * 6 * 3)
-  {
-    let o = 0
-    const put = (j: number, i: number, side: number): void => {
-      verts[o++] = j
-      verts[o++] = i
-      verts[o++] = side
-    }
-    for (let i = 0; i < RIBBON.lines; i++)
-      for (let j = 0; j < points - 1; j++) {
-        put(j, i, -1)
-        put(j, i, 1)
-        put(j + 1, i, -1)
-        put(j + 1, i, -1)
-        put(j, i, 1)
-        put(j + 1, i, 1)
-      }
-  }
-  const ribbonBuffer = gl.createBuffer()
-  gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuffer)
-  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW)
-  const ribbonVert = gl.getAttribLocation(ribbonProgram, 'aVert')
 
   // Colours, once.
   const { low, high, pitch } = gridColours(palette)
@@ -337,24 +240,6 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
     scale: loc(gridProgram, 'uScale'),
     shift: loc(gridProgram, 'uShift'),
     t: loc(gridProgram, 'uT')
-  }
-  gl.useProgram(ribbonProgram)
-  const stopColours = RIBBON.stops.flatMap((s) => {
-    const c = rgba(palette.get(s.token))
-    return [c[0] / 255, c[1] / 255, c[2] / 255, s.alpha]
-  })
-  gl.uniform4fv(loc(ribbonProgram, 'uC'), new Float32Array(stopColours))
-  gl.uniform4f(loc(ribbonProgram, 'uAt'), RIBBON.stops[0].at, RIBBON.stops[1].at, RIBBON.stops[2].at, RIBBON.stops[3].at)
-  gl.uniform4f(loc(ribbonProgram, 'uAk'), RIBBON.stops[0].alphaK, RIBBON.stops[1].alphaK, RIBBON.stops[2].alphaK, RIBBON.stops[3].alphaK)
-  const r = {
-    res: loc(ribbonProgram, 'uRes'),
-    dpr: loc(ribbonProgram, 'uDpr'),
-    band: loc(ribbonProgram, 'uBand'),
-    shift: loc(ribbonProgram, 'uShift'),
-    w: [loc(ribbonProgram, 'uW0'), loc(ribbonProgram, 'uW1'), loc(ribbonProgram, 'uW2')],
-    s: loc(ribbonProgram, 'uS'),
-    depth: loc(ribbonProgram, 'uDepth'),
-    fade: loc(ribbonProgram, 'uFade')
   }
   gl.disable(gl.DEPTH_TEST)
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
@@ -497,7 +382,7 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
       return lost
     },
     canTree,
-    draw(size, dpr, gridT, gridShift, ribbons, tree) {
+    draw(size, dpr, gridT, gridShift, tree) {
       if (lost || released) return
       const w = canvas.width
       const h = canvas.height
@@ -517,31 +402,14 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
       gl.disableVertexAttribArray(gridPos)
 
       if (tree) drawTree(size, dpr, w, h, tree)
-      if (!ribbons) return
-      const { state, t } = ribbons
-      gl.enable(gl.BLEND)
-      gl.useProgram(ribbonProgram)
-      gl.bindBuffer(gl.ARRAY_BUFFER, ribbonBuffer)
-      gl.enableVertexAttribArray(ribbonVert)
-      gl.vertexAttribPointer(ribbonVert, 3, gl.FLOAT, false, 0, 0)
-      gl.uniform2f(r.res, w, h)
-      gl.uniform1f(r.dpr, dpr)
-      gl.uniform2f(r.band, size.w, size.h)
-      gl.uniform2f(r.shift, ribbons.shift[0], ribbons.shift[1])
-      state.waves.forEach((wave, i) => gl.uniform4f(r.w[i], wave.fx, wave.amp, wave.fk, t * wave.ft + wave.phase))
-      gl.uniform4f(r.s, state.spread.fx, state.spread.amp, 0, t * state.spread.ft + state.spread.phase)
-      gl.uniform1f(r.fade, ribbons.fade)
-      gl.uniform1f(r.depth, state.depth)
-      gl.drawArrays(gl.TRIANGLES, 0, verts.length / 3)
-      gl.disableVertexAttribArray(ribbonVert)
     },
     release() {
       if (released) return
       released = true
       canvas.removeEventListener('webglcontextlost', onLost)
-      for (const b of [quad, ribbonBuffer, unitQuad, corners, meshBuffer, spriteBuffer, petalBuffer]) gl.deleteBuffer(b)
+      for (const b of [quad, unitQuad, corners, meshBuffer, spriteBuffer, petalBuffer]) gl.deleteBuffer(b)
       for (const t of [moonTex, washTex, stillTex, atlasTex]) gl.deleteTexture(t)
-      for (const p of [gridProgram, ribbonProgram, stillProgram, meshProgram, spriteProgram, petalProgram]) if (p) gl.deleteProgram(p)
+      for (const p of [gridProgram, stillProgram, meshProgram, spriteProgram, petalProgram]) if (p) gl.deleteProgram(p)
       gl.getExtension('WEBGL_lose_context')?.loseContext()
       devCount(-1)
     }

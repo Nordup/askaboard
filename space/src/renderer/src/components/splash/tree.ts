@@ -577,7 +577,7 @@ export const tree: Artwork = {
     const Y = new Float32Array(N)
     const baseX = new Float32Array(N)
     const baseY = new Float32Array(N)
-    // Scratch for one ribbon's outline: its spine (C), left (L) and right (R) edges, half-widths and spine points.
+    // Scratch for one branch shape's outline: its spine (C), left (L) and right (R) edges, half-widths and spine points.
     const CX = new Float32Array(4096)
     const CY = new Float32Array(4096)
     const LX = new Float32Array(4096)
@@ -666,7 +666,7 @@ export const tree: Artwork = {
     }
 
     /** One branch range as a filled tapered shape into the current path (see outline). */
-    const ribbon = (ctx: CanvasRenderingContext2D, a: number, b: number, D: number, k: number, noise: number, core = false): void => {
+    const branchShape = (ctx: CanvasRenderingContext2D, a: number, b: number, D: number, k: number, noise: number, core = false): void => {
       const n = outline(a, b, D, k, noise, core)
       if (!n) return
       ctx.moveTo(LX[0], LY[0])
@@ -776,11 +776,11 @@ export const tree: Artwork = {
     /** The bark of branch ranges: fill and the dark core, the lit rim along `rimRanges`, and with `marks` the streaks and knots. */
     const paintBark = (ctx: CanvasRenderingContext2D, ranges: [number, number][], D: number, k: number, rimRanges: [number, number][], marks: boolean): void => {
       ctx.beginPath()
-      for (const [a, b] of ranges) ribbon(ctx, a, b, D, k, 1)
+      for (const [a, b] of ranges) branchShape(ctx, a, b, D, k, 1)
       ctx.fillStyle = css(bark, 1)
       ctx.fill()
       ctx.beginPath()
-      for (const [a, b] of ranges) if (W[a] * sy * k > 2.4) ribbon(ctx, a, b, D, k, 1.4, true)
+      for (const [a, b] of ranges) if (W[a] * sy * k > 2.4) branchShape(ctx, a, b, D, k, 1.4, true)
       ctx.fillStyle = css(core, 1)
       ctx.fill()
       // The lit rim: broken, on the upper-left side.

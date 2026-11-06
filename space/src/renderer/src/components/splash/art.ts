@@ -1,47 +1,21 @@
 /**
  * The splash band (decision U20): a quiet work of art in the background of the start screen. Under it, always, the
  * breathing grid: the board's dot grid, where slow waves lift some dots and turn them from white ink toward the accent
- * blue. Over it one artwork per launch, picked at random (ARTWORKS), never the previous launch's when there are two or
- * more; the seed also varies the artwork and the grid, so no two launches look the same.
+ * blue. Over it the artwork (ARTWORKS; now one, the blossom tree), varied by the launch's seed with the grid, so no two
+ * launches look the same.
  *
- * Two canvases at devicePixelRatio and one rAF loop. Under, WebGL (gl.ts): the ground, the grid and the ribbons on the
- * GPU. Over it, 2D: the tree (or nothing for the ribbons). Without WebGL, or when its context is lost, the 2D canvas
- * paints everything (grid.ts, the artwork's draw()). The loop waits while the document is hidden and stops when the band
+ * Two canvases at devicePixelRatio and one rAF loop. Under, WebGL (gl.ts): the ground, the grid and the grown tree on
+ * the GPU. Over it, 2D: the tree while it grows. Without WebGL, or when its context is lost, the 2D canvas paints
+ * everything (grid.ts, the artwork's draw()). The loop waits while the document is hidden and stops when the band
  * unmounts, which also frees the GL context. Reduced motion: one still frame.
  */
 import { seeded, type Artwork, type Palette, type Size } from './artworks'
 import { startGl } from './gl'
 import { grid2D } from './grid'
-import { ribbons } from './ribbons'
 import { tree } from './tree'
 
-/** The artworks the band picks from. A new one is its own module (artworks.ts has the shape). */
-export const ARTWORKS: Artwork[] = [ribbons, tree]
-
-/** Dev only: SPACE_SPLASH_ART=<id> (electron.vite.config.ts) shows that artwork at every launch. */
-declare const __SPACE_SPLASH_ART__: string
-
-const LAST_KEY = 'ls.splash.artwork'
-
-/** One artwork at random; with two or more, never the one the previous launch showed. */
-function pickArtwork(random: () => number): Artwork {
-  const forced = import.meta.env.DEV ? ARTWORKS.find((a) => a.id === __SPACE_SPLASH_ART__) : undefined
-  if (forced) return forced
-  let last: string | null = null
-  try {
-    last = localStorage.getItem(LAST_KEY)
-  } catch {
-    // No storage: any artwork.
-  }
-  const choices = ARTWORKS.length > 1 ? ARTWORKS.filter((a) => a.id !== last) : ARTWORKS
-  const artwork = choices[Math.floor(random() * choices.length)] ?? ARTWORKS[0]
-  try {
-    localStorage.setItem(LAST_KEY, artwork.id)
-  } catch {
-    // No storage: the next launch may repeat it.
-  }
-  return artwork
-}
+/** The artworks the band picks from, one per launch. A new one is its own module (artworks.ts has the shape). */
+export const ARTWORKS: Artwork[] = [tree]
 
 /** The grid moves this far against the pointer, in CSS px at the band's edge (an artwork says its own). */
 const PARALLAX_GRID = 3
@@ -67,7 +41,7 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
 
   const seed = (Math.random() * 2 ** 32) >>> 0
   const random = seeded(seed)
-  let artwork = pickArtwork(random)
+  const artwork = ARTWORKS[Math.floor(random() * ARTWORKS.length)]
   let art = artwork.init((random() * 2 ** 32) >>> 0, palette)
   /** The grid's own variation: where its waves start. */
   const gridPhase = random() * 100
@@ -112,8 +86,8 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
   const costs: number[] | null = import.meta.env.DEV ? [] : null
   if (costs) (window as unknown as { __splashFrameMs?: number[] }).__splashFrameMs = costs
   /**
-   * Dev only, over the debug port: window.__splash.show({ art, seed, t, fps }) restarts the band with that artwork and
-   * seed, at time t (seconds; t null runs the clock from 0, a number holds that still frame); fps sets the calm cap.
+   * Dev only, over the debug port: window.__splash.show({ seed, t, fps, pointer }) restarts the artwork with that seed,
+   * at time t (seconds; t null runs the clock from 0, a number holds that still frame); fps sets the calm cap.
    */
   let held: number | null = null
   /** Dev: show({ pointer: false }) ignores the pointer, so a measurement is not moved by a mouse passing by. */
@@ -122,17 +96,15 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
   let calmInterval = CALM_INTERVAL
   if (import.meta.env.DEV) {
     ;(window as unknown as { __splash?: unknown }).__splash = {
-      show(o: { art?: string; seed?: number; t?: number | null; fps?: number; pointer?: boolean }): string {
+      show(o: { seed?: number; t?: number | null; fps?: number; pointer?: boolean }): string {
         calmInterval = o.fps ? 1 / o.fps : CALM_INTERVAL
         ignorePointer = o.pointer === false
         if (ignorePointer) target[0] = target[1] = shift[0] = shift[1] = 0
-        const next = ARTWORKS.find((a) => a.id === o.art) ?? artwork
-        artwork = next
-        art = next.init((o.seed ?? (Math.random() * 2 ** 32)) >>> 0, palette)
+        art = artwork.init((o.seed ?? (Math.random() * 2 ** 32)) >>> 0, palette)
         held = o.t ?? null
         clock = held ?? 0
         frame()
-        return `${next.id} seed ${o.seed ?? 'random'} t ${held ?? 'running'}`
+        return `${artwork.id} seed ${o.seed ?? 'random'} t ${held ?? 'running'}`
       }
     }
   }
@@ -147,16 +119,14 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
     const artShift: [number, number] = [shift[0] * artwork.parallax, shift[1] * artwork.parallax]
     ctx!.setTransform(1, 0, 0, 1, 0, 0)
     if (gl && !gl.lost) {
-      // The artwork on the GPU when it can: the ribbons always, the tree once grown (its growth stays 2D).
-      const ribbonState = art.gpu?.ribbons
+      // The tree on the GPU once grown (its growth stays 2D).
       const treeGpu = art.gpu?.tree && gl.canTree && art.gpu.tree.ready(t) ? art.gpu.tree : null
-      const gpu = !!(ribbonState || treeGpu)
+      const gpu = !!treeGpu
       gl.draw(
         size,
         dpr,
         t + gridPhase,
         gridShift,
-        ribbonState ? { state: ribbonState, t, shift: artShift, fade: ease } : null,
         treeGpu ? { gpu: treeGpu, frame: treeGpu.frame(t, size, dpr, shift as [number, number]), pointer: shift as [number, number], fade: ease, alpha: Math.min(1, 0.55 + ease) } : null
       )
       if (!gpu || painted2D) ctx!.clearRect(0, 0, canvas.width, canvas.height)

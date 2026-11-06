@@ -224,8 +224,6 @@
   --splash-band-aspect: 2; /* the band's width ÷ its height at most */
   --splash-band-min-height: 160px;
   --splash-dot-pitch: 20px; /* the breathing grid's pitch in the 680 × 340 mockup units (art.ts reads it and scales it with the band) */
-  --splash-ribbon-violet: rgb(160, 120, 255); /* "Flowing ribbons" (ribbons.ts): from the accent through this violet */
-  --splash-ribbon-teal: rgb(80, 200, 190); /* into this teal, faded out at the band's right edge */
   --splash-tree-bark: rgb(62, 52, 52); /* "Blossom tree" (tree.ts): the branches, a warm grey that reads on --bg-canvas */
   --splash-tree-core: rgb(20, 17, 18); /* the dark ink core of the trunk and thick limbs */
   --splash-tree-rim: rgb(226, 208, 196); /* the lit rim and dry-brush streaks of the bark, the wash at the base */
