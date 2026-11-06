@@ -1,5 +1,6 @@
 import { tip } from './Tooltip'
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import { Minus, Pause, Play, RotateCcw, SkipForward } from 'lucide-react'
 import { useSceneState } from '../live/state'
 import { rebuildFailure, useRestoredVersion } from '../live/rebuild'
@@ -220,11 +221,12 @@ export function ScriptPanel() {
   }, [])
 
   // Laid out also while it shows nothing: its box is what scriptPanelArea measures.
+  // An observer runs after this frame's layout: a box left to a later render shows the old place for one frame (Hide Sidebar).
   useLayoutEffect(() => {
     layout(position)
     const canvas = panel.current?.parentElement
     if (!canvas) return
-    const observer = new ResizeObserver(() => layout(position))
+    const observer = new ResizeObserver(() => flushSync(() => layout(position)))
     observer.observe(canvas)
     return () => observer.disconnect()
   }, [position, layout])
