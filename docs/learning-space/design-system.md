@@ -426,9 +426,8 @@ internal data (a path, an id). One shared tooltip instead
     a `.menu__line` `No boards match “…”` and the row `New board “…”` (the
     name main will give the file), which makes the board and opens it, with
     no rename step.
-  - Rows: `.menu__item`, 32 px, `--radius-md`; actions keep their 16 px
-    icons, a board row has an empty icon cell (its name in the column of
-    the action labels and the typed text), its folder as `.menu__sub` for a board outside
+  - Rows: `.menu__item`, 32 px, `--radius-md`; every row has a 16 px
+    icon (actions their own, a board row `LayoutDashboard`), its folder as `.menu__sub` for a board outside
     `boards/`, the short time (or the shortcut) as `.menu__hint`. The
     selected row is `.menu__item--current`; the first row starts selected
     and is selected again when the text changes.

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import { FolderOpen, Search, SquarePen } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, Search, SquarePen } from 'lucide-react'
 import { sanitizeBoardName } from '@shared/board-format'
 import { shortAgo } from '@shared/board-digest'
 import type { BoardListEntry } from '@shared/space-api'
@@ -236,8 +236,7 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
                   }}
                   onClick={() => run(row)}
                 >
-                  {/* A board row has no icon and no icon cell: its name starts in the column of the headings and the action icons. */}
-                  {row.kind !== 'board' && <span className="menu__icon">{row.kind === 'action' ? row.icon : <SquarePen {...ROW_ICON} />}</span>}
+                  <span className="menu__icon">{row.kind === 'board' ? <LayoutDashboard {...ROW_ICON} /> : row.kind === 'create' ? <SquarePen {...ROW_ICON} /> : row.icon}</span>
                   <span className="menu__label">{label(row)}</span>
                   {row.kind === 'board' && row.board.dir && <span className="menu__sub">{row.board.dir}</span>}
                   {row.kind === 'board' ? <span className="menu__hint">{shortAgo(row.board.editedAt, now)}</span> : row.kind === 'action' ? <span className="menu__hint">{row.hint}</span> : null}
