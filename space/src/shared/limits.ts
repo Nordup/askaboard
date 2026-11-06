@@ -18,3 +18,5 @@ export const MAX_STYLE_CHARS = 2_000
 export const MAX_NAME_CHARS = 200
 /** Nesting depth of **bold** / *italic* markup in text. */
 export const MAX_MARKUP_DEPTH = 16
+/** Bytes of one image brought into the folder's assets/ (an agent's download or data: URL, a pasted image). */
+export const MAX_ASSET_BYTES = 10 * 1024 * 1024

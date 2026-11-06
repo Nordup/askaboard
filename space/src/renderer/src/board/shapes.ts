@@ -11,7 +11,7 @@
 
 import { mulberry32 } from '@shared/live-scene'
 import { MAX_SHAPE_EXTENT, type InkPoint, type ShapeHeads, type ShapeKind, type ShapeLine, type ShapeNode } from '@shared/board-format'
-import { inkLocalBounds, pointInPolygon, strokeHitByCircle, strokeInsidePolygon } from './geometry'
+import { inkLocalBounds, pointInPolygon, polygonBounds, strokeHitByCircle, strokeInsidePolygon } from './geometry'
 import { humanize } from './hand'
 import type { InkNode, PaintedNode, Point, Region } from './types'
 
@@ -229,24 +229,10 @@ export function shapeLook(node: ShapeNode): ShapeLook {
     bounds.height = bottom - bounds.y
   }
   for (const each of strokes) grow(inkLocalBounds(each))
-  if (fill) grow(polygonRegion(fill))
+  if (fill) grow(polygonBounds(fill))
   look = { strokes, paths, fill, bounds }
   looks.set(node, look)
   return look
-}
-
-function polygonRegion(polygon: readonly Point[]): Region {
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  for (const [x, y] of polygon) {
-    minX = Math.min(minX, x)
-    minY = Math.min(minY, y)
-    maxX = Math.max(maxX, x)
-    maxY = Math.max(maxY, y)
-  }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
 // ---------- Ink and shapes alike ----------
@@ -309,6 +295,17 @@ const r1 = (value: number): number => {
 
 /** A size or a vector component on the 0.1 grid, within MAX_SHAPE_EXTENT, so the board file keeps the shape. */
 const extent = (value: number): number => r1(Math.max(-MAX_SHAPE_EXTENT, Math.min(MAX_SHAPE_EXTENT, value)))
+/** A side of a rectangle or an ellipse: as extent, and never negative (the board file refuses a negative side). */
+const boxSide = (value: number): number => extent(Math.max(0, value))
+
+/**
+ * True when a drawn shape is large enough to keep: a rectangle or an ellipse needs both sides of at
+ * least `min`, a line or an arrow a length of at least `min` (board points). A smaller one paints as
+ * a doubled line or a dot, so a drag that draws it makes nothing.
+ */
+export function shapeHasSize(node: ShapeNode, min: number): boolean {
+  return hasEnds(node) ? Math.hypot(node.w, node.h) >= min : Math.min(node.w, node.h) >= min
+}
 
 /** A new learner shape at a board point, with no size yet; its drag gives it one (shapeTo). */
 export function newShape(id: string, shape: ShapeKind, at: Point, style: ShapeStyle, z: number): ShapeNode {
@@ -346,8 +343,8 @@ export function shapeTo(node: ShapeNode, from: Point, to: Point, constrain: bool
     dy = (dy < 0 ? -1 : 1) * size
   }
   // The size is rounded once, so a square stays square on the 0.1 grid.
-  const w = extent(Math.abs(dx))
-  const h = extent(Math.abs(dy))
+  const w = boxSide(Math.abs(dx))
+  const h = boxSide(Math.abs(dy))
   return { ...node, x: r1(r1(from[0]) - (dx < 0 ? w : 0)), y: r1(r1(from[1]) - (dy < 0 ? h : 0)), w, h }
 }
 
@@ -374,5 +371,5 @@ export function moveEnd(node: ShapeNode, end: 'start' | 'end', delta: Point, con
 
 /** A rectangle or an ellipse in a new box; `box` is in the shape's world coordinates, `origin` the world place of its parent's 0, 0. */
 export function shapeInBox(node: ShapeNode, box: Region, origin: Point): ShapeNode {
-  return { ...node, x: r1(box.x - origin[0]), y: r1(box.y - origin[1]), w: extent(box.width), h: extent(box.height) }
+  return { ...node, x: r1(box.x - origin[0]), y: r1(box.y - origin[1]), w: boxSide(box.width), h: boxSide(box.height) }
 }

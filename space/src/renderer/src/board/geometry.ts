@@ -172,10 +172,19 @@ function densePoints(stroke: InkNode, step: number, cap = 600): Point[] {
   return out
 }
 
-function polygonBounds(polygon: readonly Point[]): Region {
-  const xs = polygon.map((point) => point[0])
-  const ys = polygon.map((point) => point[1])
-  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
+/** The bounds of points. A loop: Math.min(...points) throws on more points than a call takes arguments (a long lasso). */
+export function polygonBounds(polygon: readonly Point[]): Region {
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const [x, y] of polygon) {
+    minX = Math.min(minX, x)
+    minY = Math.min(minY, y)
+    maxX = Math.max(maxX, x)
+    maxY = Math.max(maxY, y)
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
 /**

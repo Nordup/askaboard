@@ -364,6 +364,8 @@ function validKnown(node: BoardNode): boolean {
         finite(raw.h) &&
         Math.abs(raw.w) <= MAX_SHAPE_EXTENT &&
         Math.abs(raw.h) <= MAX_SHAPE_EXTENT &&
+        // A rectangle or an ellipse has a box (no negative side); an arrow or a line is a vector from x, y.
+        (raw.shape === 'arrow' || raw.shape === 'line' || (raw.w >= 0 && raw.h >= 0)) &&
         typeof raw.color === 'string' &&
         finite(raw.width) &&
         raw.width > 0 &&

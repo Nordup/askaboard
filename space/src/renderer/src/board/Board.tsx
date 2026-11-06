@@ -14,6 +14,7 @@ import {
   HOME_ZOOM,
   inkBounds,
   overlapShare,
+  polygonBounds,
   regionContains,
   regionInsidePolygon,
   screenToBoard,
@@ -25,9 +26,10 @@ import { MouseInk } from './mouse-ink'
 import { restyle, selectionStyle, type SelectionStyle, type StylePatch } from './style'
 import { huggedNodes } from './hug'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
-import { hasEnds, moveEnd, newShape, paintedHitByCircle, paintedInsidePolygon, paintedLocalBounds, shapeInBox, shapeTo } from './shapes'
+import { hasEnds, moveEnd, newShape, paintedHitByCircle, paintedInsidePolygon, paintedLocalBounds, shapeHasSize, shapeInBox, shapeTo } from './shapes'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves, wheelWorlds } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
+import { MAX_ASSET_BYTES } from '@shared/limits'
 import type { WorldPointer } from '@shared/world-protocol'
 import { copiedLinks, linkedBox, linkedTip, linkLook, pointNow, withLink, type LinkedNode, type LinkLook, type WorldPoints } from '@shared/world-links'
 import { applyElementOverride, clearElementOverride, type NodeOverride, type PlaybackFrame } from './playback'
@@ -220,15 +222,21 @@ export interface BoardProps {
 }
 
 /**
- * The first press of a pen (pointerType 'pen') in this app session switches to the Pen tool,
- * so a tablet draws at once while Select is the default. Later presses keep the chosen tool.
+ * The pen switch: the first pen press of this app session that would draw with Select (the
+ * default tool) switches to Pen first, so a tablet draws at once. The pen's first press with a
+ * tool the learner chose (Pen, Eraser, a shape, Text) uses up the switch too. A press that does
+ * not use a tool does not: the pen's eraser end, the Hand tool and other pans.
  */
 let penSeen = false
 /** Pasted text with a line longer than this many characters gets a wrap width of PASTE_WRAP_EM times its font size. */
 const PASTE_WRAP_CHARS = 60
 const PASTE_WRAP_EM = 30
+/** Pasted text longer than this (characters) is refused: one text item that large is no note on a board. */
+const MAX_PASTE_TEXT_CHARS = 100_000
 /** A pasted image is at most this share of the view wide (its own pixel width when that is less). */
 const PASTE_IMAGE_SHARE = 0.6
+/** A pasted image with more pixels than this is refused: the board would decode it whole to paint it. */
+const MAX_PASTE_IMAGE_PIXELS = 64_000_000
 
 /** A file as a data: URL (for importAsset). */
 function readDataUrl(file: Blob): Promise<string> {
@@ -237,6 +245,16 @@ function readDataUrl(file: Blob): Promise<string> {
     reader.onload = () => resolve(reader.result as string)
     reader.onerror = () => reject(reader.error ?? new Error('The image could not be read.'))
     reader.readAsDataURL(file)
+  })
+}
+
+/** The pixel size of an image (a data: URL), or null when it does not load. Only the header is read: the image is not decoded. */
+function imageSize(url: string): Promise<Point | null> {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => resolve([image.naturalWidth, image.naturalHeight])
+    image.onerror = () => resolve(null)
+    image.src = url
   })
 }
 
@@ -1762,10 +1780,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     pasteAnchorRef.current = startBoard
 
     const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch' || tool === 'hand')
-    // The session's first pen press draws: it switches to Pen first (penSeen).
-    // A shape tool the learner chose draws its shape with the pen too.
-    const penSwitch = event.pointerType === 'pen' && !penSeen && !shouldPan && !penEraser && tool !== 'pen' && tool !== 'eraser' && !shapeTool(tool)
-    if (event.pointerType === 'pen') penSeen = true
+    // The pen switch (penSeen): with Select, the session's first pen press switches to Pen first.
+    const penUsesTool = event.pointerType === 'pen' && !shouldPan && !penEraser
+    const penSwitch = penUsesTool && !penSeen && tool === 'select'
+    if (penUsesTool) penSeen = true
     if (penSwitch) onToolChangeRef.current?.('pen')
     const pressTool: ToolId = penSwitch ? 'pen' : tool
     const pressShape = shapeTool(pressTool)
@@ -2085,8 +2103,8 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
       drag.last = screen
       showShape(drag)
       const shape = drag.shape
-      // A press, or a drag that came back to about where it began, makes nothing.
-      if (!drag.changed || !shape || Math.max(Math.abs(shape.w), Math.abs(shape.h)) * cameraRef.current.zoom < TAP_SIZE) {
+      // A press, a drag that came back to about where it began, or a box with no height or width makes nothing.
+      if (!drag.changed || !shape || !shapeHasSize(shape, TAP_SIZE / cameraRef.current.zoom)) {
         if (drag.changed) setNodes(drag.startNodes)
         return
       }
@@ -2123,9 +2141,8 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
 
   /** The end of a lasso or a box: a tap on the empty board clears the selection; else the selection is what the polygon holds (with Shift, it adds). */
   const finishPick = (drag: DragState, polygon: readonly Point[]): void => {
-    const xs = drag.points.map((point) => point[0])
-    const ys = drag.points.map((point) => point[1])
-    const isTap = Math.max(...xs) - Math.min(...xs) < TAP_SIZE && Math.max(...ys) - Math.min(...ys) < TAP_SIZE
+    const span = polygonBounds(drag.points)
+    const isTap = span.width < TAP_SIZE && span.height < TAP_SIZE
     if (!isTap) {
       const ids = pickInPolygon(polygon)
       setSelectedIds(drag.additive ? [...drag.startSelectedIds, ...ids] : ids)
@@ -2633,8 +2650,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
       const local = isPainted(node) ? paintedLocalBounds(node) : null
       return [node.x + (local?.x ?? 0), node.y + (local?.y ?? 0)]
     }
-    const minX = Math.min(...rootNodes.map((node) => left(node)[0]))
-    const minY = Math.min(...rootNodes.map((node) => left(node)[1]))
+    const { x: minX, y: minY } = polygonBounds(rootNodes.map(left))
     let z = zAbove(index.children.get(ROOT) ?? [])
     const nodes = clip.nodes.map((node) => {
       const copy = { ...withoutScene(node), id: idMap.get(node.id) as string } as BoardNode & { parent?: string }
@@ -2648,13 +2664,18 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     setSelectedIds(clip.roots.map((id) => idMap.get(id) as string))
   }
 
-  /** Paste text from another app: a learner text item in the Text tool's style, its top-left at the paste point. */
+  /** Paste text from another app: a learner text item in the Text tool's style, its top-left at the paste point. Too long a text is refused. */
   const pasteText = (text: string): void => {
+    if (text.length > MAX_PASTE_TEXT_CHARS) {
+      onErrorRef.current?.(`Couldn't paste the text. It is longer than ${MAX_PASTE_TEXT_CHARS.toLocaleString('en-US')} characters.`)
+      return
+    }
     const anchor = pasteAnchor()
     const { color, size, font, align } = styleRef.current
     const fontFamily = FONTS.find((option) => option.id === font)?.value ?? FONTS[0].value
     // Typed text has no wrap width; a long line of pasted text wraps at about 60 characters instead.
-    const longest = Math.max(...text.split('\n').map((line) => line.length))
+    let longest = 0
+    for (const line of text.split('\n')) longest = Math.max(longest, line.length)
     const style: NodeStyle = { color, fontSize: `${size}px`, fontFamily, textAlign: align }
     if (longest > PASTE_WRAP_CHARS) style.width = `${Math.round(size * PASTE_WRAP_EM)}px`
     const node: TextNode = {
@@ -2675,20 +2696,15 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
   /**
    * Paste an image from another app: main saves it into the folder's assets/ (importAsset: image types and a
    * size limit), then it lands centred on the paste point, at most PASTE_IMAGE_SHARE of the view wide.
+   * Too large a file or too many pixels is refused before the image is read or decoded.
    */
   const pasteImage = async (file: File): Promise<void> => {
     const anchor = pasteAnchor()
-    const [size, src] = await Promise.all([
-      createImageBitmap(file).then(
-        (bitmap) => {
-          const natural: Point = [bitmap.width, bitmap.height]
-          bitmap.close()
-          return natural
-        },
-        () => null
-      ),
-      readDataUrl(file).then((url) => window.space.importAsset(url))
-    ])
+    if (file.size > MAX_ASSET_BYTES) throw new Error(`The image is larger than ${MAX_ASSET_BYTES / 1024 / 1024} MB.`)
+    const url = await readDataUrl(file)
+    const size = await imageSize(url)
+    if (size && size[0] * size[1] > MAX_PASTE_IMAGE_PIXELS) throw new Error(`The image has more than ${Math.round(MAX_PASTE_IMAGE_PIXELS / 1e6)} million pixels.`)
+    const src = await window.space.importAsset(url)
     // The board closed or changed while the image was saved.
     if (!mountedRef.current) return
     let style: NodeStyle = {}

@@ -5,6 +5,7 @@ import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve,
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
 import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, parseBoard, sanitizeBoardName, serializeBoard } from '@shared/board-format'
+import { MAX_ASSET_BYTES } from '@shared/limits'
 import type { BoardChange, BoardList, BoardListEntry, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
 const MAX_DEPTH = 10
@@ -15,8 +16,6 @@ const MAX_BOARD_BYTES = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 150
 /** The boards list goes to the renderer at most this often: a burst of saves sends one list. */
 const BOARD_LIST_DELAY_MS = 250
-/** Images that agents bring in (downloads, data: URLs) are capped at this size. */
-const MAX_ASSET_BYTES = 10 * 1024 * 1024
 const ASSETS_DIR = 'assets'
 const EXT_FOR_TYPE: Record<string, string> = {
   'image/png': '.png',
