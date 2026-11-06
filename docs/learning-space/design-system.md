@@ -71,7 +71,8 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--ink-pink`, `--ink-orange`
 - Type: `--font-ui`, `--font-mono`, `--text-xs` … `--text-xl`, `--leading`,
   `--leading-current` (the reading view's lines)
-- Space: `--space-1` … `--space-6`, `--space-8`
+- Space: `--space-half` (2px, stacked lines of one text block), `--space-1` …
+  `--space-6`, `--space-8`
 - Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
   `--radius-pill`
 - Shadow: `--shadow-float`, `--shadow-card`

@@ -94,6 +94,9 @@ function entryBytes({ doc, history, log }: CacheEntry): number {
 
 const NO_BOARDS: BoardListEntry[] = []
 
+/** The one rule for the boards list: of the same folder, the list with the higher seq stays; a list of another folder replaces it. */
+const newerList = (current: BoardList | null, list: BoardList): BoardList => (current && current.root === list.root && current.seq >= list.seq ? current : list)
+
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   /** The folder's files: only for the setup offer (AGENTS.md). The boards come from boardList. */
@@ -137,7 +140,7 @@ export function App() {
   /** Take a boards list from main: only of the folder shown, and only newer than the one shown (a late list is dropped). */
   const takeBoards = useCallback((list: BoardList) => {
     if (list.root !== rootRef.current) return
-    setBoardList((current) => (current && current.root === list.root && current.seq >= list.seq ? current : list))
+    setBoardList((current) => newerList(current, list))
   }, [])
 
   // ---------- Saving ----------
@@ -434,6 +437,7 @@ export function App() {
   /** Show a new folder (or none). Edits made after the last save stay pending under the folder they belong to. */
   const applySnapshot = useCallback((next: Snapshot) => {
     leaveBoard()
+    const leaving = rootRef.current
     rootRef.current = next.folder?.root ?? null
     cacheRef.current.clear()
     openTokenRef.current++
@@ -446,9 +450,12 @@ export function App() {
     setPreviewPath(next.devOpen ?? null)
     preferredBoardRef.current = next.folder?.lastBoard ?? null
     setTree(next.folder?.tree ?? null)
-    setBoardList(next.folder?.boards ?? null)
+    const list = next.folder?.boards ?? null
+    setBoardList((current) => (list ? newerList(current, list) : null))
     setSnapshot(next)
-  }, [leaveBoard])
+    // Main read the snapshot's list early: a newer list it sent before the folder changed here was dropped. Ask once, by the same rule.
+    if (list && list.root !== leaving) void space.getBoards().then(takeBoards, (error: unknown) => console.error(`boards list: ${errorMessage(error)}`))
+  }, [leaveBoard, takeBoards])
 
   // Open a board automatically: the last one, else the first one.
   useEffect(() => {
@@ -797,21 +804,27 @@ export function App() {
   const [fullScreen, setFullScreen] = useState(shellStart.fullScreen)
   /** The setting as last asked for, so two quick toggles are two changes before main answers. */
   const sidebarHiddenRef = useRef(shellStart.sidebarHidden)
+  /**
+   * The one place the setting changes here (the sidebar button, ⌘B, the View menu). Before the sidebar hides, a rename
+   * in it commits through its own blur (the field unmounts with no blur of its own). The setup flyout hangs at the
+   * sidebar's edge, so it closes on each change, as the sidebar's own menus do.
+   */
+  const changeSidebarHidden = useCallback((hidden: boolean): boolean => {
+    if (hidden === sidebarHiddenRef.current) return false
+    const active = document.activeElement
+    if (hidden && active instanceof HTMLElement && active.closest('.sidebar')) active.blur()
+    sidebarHiddenRef.current = hidden
+    setSidebarHidden(hidden)
+    setMenuSetup(false)
+    return true
+  }, [])
   useEffect(() => {
-    const offs = [
-      space.onSidebarHidden((hidden) => {
-        sidebarHiddenRef.current = hidden
-        setSidebarHidden(hidden)
-      }),
-      space.onFullScreen(setFullScreen)
-    ]
+    const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen)]
     return () => offs.forEach((off) => off())
-  }, [])
+  }, [changeSidebarHidden])
   const toggleSidebar = useCallback(() => {
-    sidebarHiddenRef.current = !sidebarHiddenRef.current
-    setSidebarHidden(sidebarHiddenRef.current)
-    space.setSidebarHidden(sidebarHiddenRef.current)
-  }, [])
+    if (changeSidebarHidden(!sidebarHiddenRef.current)) space.setSidebarHidden(sidebarHiddenRef.current)
+  }, [changeSidebarHidden])
 
   // The search panel (⌘K, the "Search boards" row): open only with a folder; a second ⌘K closes it.
   const [searchOpen, setSearchOpen] = useState(false)
@@ -924,6 +937,9 @@ export function App() {
   createBoardRef.current = createBoard
   const openFolderDialogRef = useRef(openFolderDialog)
   openFolderDialogRef.current = openFolderDialog
+  // The search panel's rows keep their identity while it is open: an App render (a boards list, an agent's edit) moves no scroll.
+  const newBoardFromSearch = useCallback(() => void createBoardRef.current(), [])
+  const openFolderFromSearch = useCallback(() => void openFolderDialogRef.current(), [])
 
   // ---------- Agents (MCP) ----------
 
@@ -1276,9 +1292,9 @@ export function App() {
           boards={boards}
           onClose={closeSearch}
           onOpenBoard={(path) => void openBoard(path)}
-          onNewBoard={() => void createBoard()}
+          onNewBoard={newBoardFromSearch}
           onCreateNamed={(name) => void createNamedBoard(name)}
-          onOpenFolder={() => void openFolderDialog()}
+          onOpenFolder={openFolderFromSearch}
         />
       )}
     </div>

@@ -120,11 +120,12 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
     return () => window.removeEventListener('keydown', key, true)
   }, [])
 
-  // The selected row stays in view; the first row brings the top (its heading) back too.
+  // The selected row stays in view; the first row brings the top (its heading) back too. Only a new selection or a new
+  // text moves the scroll: a list that arrives while the panel is open (an agent's edit, a save) keeps the learner's scroll.
   useLayoutEffect(() => {
     if (current <= 0) scrollRef.current?.scrollTo({ top: 0 })
     else rowRefs.current[current]?.scrollIntoView({ block: 'nearest' })
-  }, [current, rows])
+  }, [current, text])
 
   const run = (row: Row): void => {
     // The panel closes first (and the focus goes back), then the row's action runs: a new board's rename field, the folder dialog.

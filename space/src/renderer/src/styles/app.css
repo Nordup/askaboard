@@ -245,7 +245,8 @@ button:focus-visible {
   container: topbar / inline-size;
 }
 
-.topbar button {
+/* The bar drags the window; every control in it takes clicks, selections and focus instead. */
+.topbar :is(button, input, textarea, select, a, [role='button'], [tabindex]) {
   -webkit-app-region: no-drag;
 }
 
@@ -1243,7 +1244,7 @@ button:focus-visible {
 }
 
 .menu__lede:has(+ .menu__lede) {
-  padding-bottom: 2px;
+  padding-bottom: var(--space-half);
 }
 
 .menu__item {
@@ -1383,6 +1384,8 @@ button:focus-visible {
   padding: var(--menu-pad);
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Rows move when a newer list arrives (edit-time order): the scroll stays where the learner left it, not with a moved row. */
+  overflow-anchor: none;
 }
 
 .menu__list {
