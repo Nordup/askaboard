@@ -23,8 +23,8 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    founder's request, 2026-10-25), because the learner reads the scene's
    lines next to the drawing. The learner drags it where it is in the way
    least, and hides it into the scene pill. The search panel (⌘K, decision
-   U7, 2026-11-06) covers the window with a backdrop, because it is short
-   and the learner opens it.
+   U7, 2026-11-06) and the Settings dialog (⌘,, U12) cover the window with
+   a backdrop, because the learner opens them.
 
 ## Where the design lives
 
@@ -99,10 +99,12 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--reading-view-height`, `--reading-view-gap`, `--reading-para-gap`,
   `--reading-said`, `--reading-next`, `--reading-light`,
   `--reading-light-ramp`
-- Search panel: `--backdrop` (behind a modal panel), `--search-panel-width`,
-  `--search-panel-height`, `--search-panel-margin-x`,
-  `--search-panel-margin-y`; a modal panel's `--panel-field-height` and
-  `--panel-row-height`
+- Modal panels: `--backdrop` (behind a modal panel), `--panel-margin-x`,
+  `--panel-margin-y` (the least space to the window's edges),
+  `--panel-field-height`, `--panel-row-height`; the search panel's
+  `--search-panel-width`, `--search-panel-height`; the Settings dialog's
+  `--settings-dialog-width`, `--settings-dialog-height`, `--panel-nav-width`,
+  `--setting-field-width`, `--radio-size`, `--radio-dot`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
@@ -114,7 +116,10 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 Every menu, popover and flyout uses it: the sidebar folder and board menus
 (`Menu.tsx`), the agent popover (`AgentPill.tsx`), the scene pill's menu
 (`ScenePill.tsx`), the performance pill's menu (`PerfPill.tsx`), the setup
-flyout (`SetupMenu.tsx`), the search panel (`SearchPanel.tsx`). The reference comment block sits above `.menu` in
+flyout (`SetupMenu.tsx`), the search panel (`SearchPanel.tsx`) and the
+Settings dialog (`settings/`). Both modal panels are the one `ModalPanel.tsx`
+(backdrop, focus in and back, keys kept in the panel, Tab round the panel,
+Escape and a backdrop press close). The reference comment block sits above `.menu` in
 `app.css`.
 
 **Spacing and type** come only from custom properties on `.menu`:
@@ -137,6 +142,8 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--bg-glass` over a blur (`--glass-filter`), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__switch`, `.menu__select`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small native select, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
+| `.menu--split` with `.menu__nav` (`.menu__nav-end`) and `.menu__pane` (`.menu__header`) | A modal panel in two parts: a section list (`--panel-nav-width`, a hairline at its right; `.menu__item` rows, the current one `--current`, a hover fill; `.menu__nav-end` pins rows at the bottom) and a pane: a header (`--panel-field-height`, the title at `--text-lg`, a close `.icon-button`, a hairline under it) over a `.menu__scroll` |
+| `.menu__setting` with `.menu__setting-row`, `.menu__setting-text` (`.menu__name`, `.menu__desc`), `.menu__radio`; `.menu__settings`; `.menu__group` | A setting: the name, a muted description under it (`--text-tertiary`, meta size, wraps), one `.menu__control` at the right, lines under it; a hairline between settings. A row with `role="radio"` is one choice (a 14 px `.menu__radio`, an accent dot when chosen); `.menu__settings` wraps such a group. `.menu__group` is a heading and its rows |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
 | `.menu__separator` | The hairline between groups |
@@ -227,11 +234,8 @@ solid, dashed, dotted)) and `.zoom-label`.
   shared `Menu` 8 px above the zoom pill: Zoom to 100% (⌘0), Zoom to fit
   (⇧1), Zoom to selection (⇧2, only with a selection). Both fits glide and
   never zoom in past 100%.
-- The keys panel (`?`, `KeysPanel.tsx`): a `.menu--panel` over a
-  `.backdrop`, centred, `--keys-panel-width` (720 px). A `.menu__title`,
-  then `.menu__columns` (Tools, Edit, View): `.menu__heading` and
-  `.menu__row` rows, keys in `.menu__meta--mono`. The rows come from
-  `TOOLS` and `board/commands.ts`. Escape, `?` or a press outside closes it.
+- `?` opens Settings > Keyboard shortcuts (see "Settings dialog"): the one
+  list of the keys, from `TOOLS` and `board/commands.ts`.
 
 ## Icon buttons and status dots
 
@@ -362,7 +366,8 @@ internal data (a path, an id). One shared tooltip instead
   (`.menu.folder-menu`, the sidebar's width): the path as one quiet
   `.menu__path` line (`~` for home; longer than 32 characters:
   `~/…/<parent>/<folder>`), a separator, Reveal, Open Learning Folder…,
-  Edit Board Guide…, Recent. No folder name, no lede. No folder: the
+  Edit Board Guide…, Recent, then a separator, Settings (⌘,) and Keyboard
+  shortcuts (?). No folder name, no lede. No folder: the
   footer reads "Open a folder". The boards list shows all boards up to
   15; above 15, the first 10 and "Show N more", and "Show less" when
   expanded.
@@ -531,25 +536,47 @@ internal data (a path, an id). One shared tooltip instead
     element that had it (with the ring only if it had one at open), then
     the row's action runs.
 
-- **Settings panel** (decision U8, 2026-11-06; a simple first version, the
-  founder redesigns it later; `SettingsPanel.tsx`). Settings… (⌘,) in the
-  app menu (File menu off macOS) opens a centred `.menu--panel`
-  (`.menu.settings-panel`, `--settings-panel-width` 380 px, the height of
-  its rows) over a `.backdrop`. Rows are `--panel-row-height`. Heading
-  "Voice": "Read lines aloud" with a `.menu__switch`; a separator; the
-  model rows (`.menu__item`, the chosen one `--current` with a check):
-  "Cloud voice" with the meta "Free, a daily limit", and "On this Mac ·
-  Kokoro" with Install · N MB (`.btn-sm`), a progress bar and percent,
-  "Installed" and a quiet Remove (`.btn-text`), or one `.menu__line--error`
-  with Retry; a separator; "Voice" (a `.menu__select` and a play icon
-  button, a spinner while the sample loads) and "Pace" (a
-  `.menu__select`); a separator; heading "Gemini key": a password
-  `.menu__text` ("Your Gemini API key") and Save, or "Key saved" and
-  Remove. Escape and a backdrop click close it.
+- **Settings dialog** (decision U12, approved mockup, 2026-11-06;
+  `components/settings/`, replaced the U8 panel). One centred
+  `.menu.menu--panel.menu--split.settings-dialog` over a `.backdrop`
+  (`ModalPanel.tsx`): `--settings-dialog-width` × `--settings-dialog-height`
+  (760 × 520 px), at most the window less `--panel-margin-x` /
+  `--panel-margin-y` on each side.
+  - Opens from Settings… (⌘,; the File menu off macOS), the folder menu's
+    last items (a separator, "Settings" ⌘, and "Keyboard shortcuts" ?),
+    the `?` key (at Keyboard shortcuts; `?` there closes it) and the voice
+    notice (at Voice). ⌘, while it is open keeps its section. Escape, the
+    close button and a backdrop press close it; the focus goes back as it
+    was.
+  - The section list (`.menu__nav`): lucide icons at 16 px, General
+    (`SlidersHorizontal`), Voice (`Volume2`), Agents (`Bot`), Folder
+    (`Folder`), Keyboard shortcuts (`Keyboard`); About (`Info`) at the
+    bottom (`.menu__nav-end`). The pane: the section title in the header,
+    then `.menu__setting` rows.
+  - General: Interface size (a `.menu__select`, "Automatic (N%)" and 80 %
+    to 200 %, the labels of View > Interface Size), Show performance (a
+    `.menu__switch`).
+  - Voice: Read lines aloud (switch); Cloud voice and On this Mac · Kokoro
+    as two `role="radio"` settings in a `.menu__settings` group (Kokoro:
+    Install · N MB, the progress bar and percent, Installed and Remove, or
+    an error line with Retry; it is chosen only when installed); Voice (a
+    select and the play icon button); Pace (a select); Gemini key ("Optional:
+    your own key removes the daily limit": a password `.menu__text` and Save,
+    or "Key saved" and Remove).
+  - Agents: the agent popover's Connect rows (`ConnectAgents.tsx`, one
+    component, here with a description per app) and "Manual setup and
+    other agents".
+  - Folder: the folder name with its path (`~`, shortened as in the folder
+    menu) and Reveal; Change folder (Change folder…); Board guide (Edit);
+    Set up for learning (Set up…, which opens the setup flyout, or "Set up"
+    with a check). No folder: one row, "No folder open" with Open a folder.
+  - Keyboard shortcuts: `.menu__group` headings Tools, Edit, View and
+    `.menu__row` rows, keys in `.menu__meta--mono`.
+  - About: the product name with "Version N", and the license.
 - **Voice notice.** At the cloud voice's daily limit the board's toast
   (`.toast--warn`: lucide `VolumeX` in `--status-warn`) says "Not enough
   voice credits left for today." with one text action
-  (`.toast__action`) "Set up local voice", which opens Settings. At most
+  (`.toast__action`) "Set up local voice", which opens Settings at Voice. At most
   once a day per app run.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note

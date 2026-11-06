@@ -55,5 +55,3 @@ export function windowButtonPosition(factor: number): { x: number; y: number } {
 export function windowButtonsEnd(factor: number): number | null {
   return process.platform === 'darwin' ? (WINDOW_BUTTONS_X + WINDOW_BUTTONS_WIDTH) / factor : null
 }
-
-export const percent = (factor: number): string => `${Math.round(factor * 100)}%`

@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { createPortal, flushSync } from 'react-dom'
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { FolderOpen, LayoutDashboard, Search, SquarePen } from 'lucide-react'
 import { sanitizeBoardName } from '@shared/board-format'
 import { shortAgo } from '@shared/board-digest'
 import type { BoardListEntry } from '@shared/space-api'
-import { markFocus, returnFocus } from '../lib/focus'
 import { openFolderLabel, shortcut } from '../platform'
+import { ModalPanel } from './ModalPanel'
 
 interface SearchPanelProps {
   /** Newest edit first (main/folder.ts boardList). */
@@ -57,20 +57,15 @@ function matchBoards(boards: BoardListEntry[], text: string): Row[] {
  * The search panel (decision U7, left-panel plan section 6): a modal panel over the whole window,
  * opened from the sidebar's "Search boards" row and File > Search Boards… (⌘K). App mounts it
  * while it is open. Focus stays in the field; the keys move the selection and run its row; a
- * close gives the focus back as it was (lib/focus.ts: no ring when the pointer opened the panel).
+ * close gives the focus back as it was (the shared ModalPanel, lib/focus.ts: no ring when the pointer opened the panel).
  */
 export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreateNamed, onOpenFolder }: SearchPanelProps) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const [now] = useState(() => Date.now())
-  const backdropRef = useRef<HTMLDivElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
-  const [opener] = useState(markFocus)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
   /** The last pointer place over the rows: a mouse move at the same place (Chromium sends one after a scroll) moves no selection. */
   const pointer = useRef<{ x: number; y: number } | null>(null)
 
@@ -96,27 +91,6 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
   const { rows } = view
   // The list can change while the panel is open (an agent's edit): the selection stays in it.
   const current = Math.min(selected, rows.length - 1)
-
-  // Open: an open menu or popover closes (the backdrop is an outside press for all of them), then the field takes the focus.
-  // Close: the focus goes back to the element that had it, with its ring only if it showed one.
-  useLayoutEffect(() => {
-    backdropRef.current?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    inputRef.current?.focus({ preventScroll: true })
-    return () => returnFocus(opener)
-  }, [opener])
-
-  // While open, no key reaches the board, the tools or the sidebar: a key outside the panel goes back to the field.
-  useEffect(() => {
-    const key = (event: KeyboardEvent): void => {
-      if (panelRef.current?.contains(event.target as Node)) return
-      event.stopPropagation()
-      if (!event.metaKey && !event.ctrlKey) event.preventDefault()
-      if (event.key === 'Escape') onCloseRef.current()
-      else inputRef.current?.focus({ preventScroll: true })
-    }
-    window.addEventListener('keydown', key, true)
-    return () => window.removeEventListener('keydown', key, true)
-  }, [])
 
   // The selected row stays in view; the first row brings the top (its heading) back too. Only a new selection or a new
   // text moves the scroll: a list that arrives while the panel is open (an agent's edit, a save) keeps the learner's scroll.
@@ -168,26 +142,9 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
   }
 
   rowRefs.current.length = rows.length
-  return createPortal(
-    <div
-      ref={backdropRef}
-      className="backdrop"
-      // A press on the backdrop keeps the focus in the field until the click closes the panel.
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div
-        ref={panelRef}
-        className="menu menu--panel search-panel"
-        role="dialog"
-        aria-label="Search boards"
-        onMouseDown={(event) => {
-          // The focus stays in the field: a press on a row or on the panel does not take it.
-          if (event.target !== inputRef.current) event.preventDefault()
-        }}
-      >
+  // The shared modal panel: the field keeps the focus (a press on a row, the panel or the backdrop does not take it).
+  return (
+    <ModalPanel className="search-panel" label="Search boards" onClose={onClose} focusRef={inputRef} holdFocus>
         <div className="menu__field">
           <Search size={17} strokeWidth={1.75} />
           <input
@@ -245,8 +202,6 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
             ))}
           </div>
         )}
-      </div>
-    </div>,
-    document.body
+    </ModalPanel>
   )
 }

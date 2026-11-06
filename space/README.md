@@ -85,11 +85,11 @@ Electron runs native Wayland. Differences from macOS:
   its audio. With no key, the audio comes from our voice server
   (`LEARNING_SPACE_VOICE_HOST`, decision T39), with a daily cap per user; an own
   Gemini key (`GEMINI_API_KEY`, or a line in `~/.learning-space/.env`) goes to
-  Gemini directly. Settings… (⌘,) holds Read Lines Aloud (on by default), the
+  Gemini directly. Settings > Voice (⌘,) holds Read Lines Aloud (on by default), the
   voice, the pace, the Gemini key and the local voice: Install downloads
   Kokoro (about 370 MB, `~/.learning-space/models/kokoro/`, T40). When the
   voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
-  silent. View > Voice and View > Pace apply to new scenes. Clips stay in the folder's `.learning-space/voice/`.
+  silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
@@ -247,6 +247,8 @@ to 20 s for that window and its dev hook to load.
 | `eval-state` | Board, zoom, tool, selection and nodes as JSON |
 | `recent <folder>`, `draw … --then-recent <folder>` | The sidebar's recent-folder item; with `draw`, right after the last pen-up |
 | `close`, `close-answer try\|close` | Closes the window, as the red button does; answers the sheet "Couldn't save your board" |
+| `select <css selector> [value]` | Prints a `<select>`'s value and options; with a value, chooses it as the learner does |
+| `menu <id>`, `menu-state <id>` | Chooses an app menu item by id, as its accelerator does (`settings`, `search-boards`, `show-performance`, `interface-size-120`, `pace:<id>`); prints a menu item as it shows (label, checked, enabled, visible) |
 | `frames <ms>` | Counts the window's display frames for that long (run it beside a `drag`): fps and the longest frame. A window in the background may get fewer frames |
 
 The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.

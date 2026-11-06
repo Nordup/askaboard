@@ -1,10 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { record } from './analytics'
 import { telemetryIdentity } from './analytics-id'
-import { agentHomeDir } from './agent-home'
+import { readVoiceKey } from './voice-key'
 import { LOCAL_MODEL, localVoiceState, speakLocal } from './kokoro'
 import { getLocalVoice, getPace, getVoice, getVoiceModel } from './state'
 
@@ -60,20 +59,7 @@ interface LinePlace {
 /** What a voiced say() gets from main (stage/live-prelude.js voiceOf). */
 export type VoiceAnswer = LinePlace & { clip: string }
 
-/** The key: the environment first, then ~/.learning-space/.env. Read at each use, so a key added later counts at the next scene. */
-function readKey(): string | null {
-  const own = process.env.GEMINI_API_KEY?.trim()
-  if (own) return own
-  try {
-    const line = /^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*(.*)$/m.exec(readFileSync(join(agentHomeDir(), '.env'), 'utf8'))
-    // A quoted value, else a value up to white space: a comment can follow it.
-    return (line && (/^(['"])(.*?)\1/.exec(line[1].trim())?.[2] ?? /^\S*/.exec(line[1].trim())?.[0])) || null
-  } catch {
-    return null
-  }
-}
-
-export const hasVoiceKey = (): boolean => readKey() !== null
+export const hasVoiceKey = (): boolean => readVoiceKey() !== null
 
 /** The host request of a voiced line, as stage/live-prelude.js writes it: the key of its answer. */
 const voiceRequest = (text: string): string => JSON.stringify({ kind: 'voiceLine', text })
@@ -279,7 +265,7 @@ const NOT_INSTALLED = 'The local voice is chosen in Settings but is not installe
 /** The speaker of the current choice, or a failure: the local voice not installed, or no install id for the voice server. */
 async function currentSpeaker(): Promise<Speaker | { reason: string }> {
   if (getVoiceModel() === 'local') return localVoiceState().state === 'installed' ? { source: 'local' } : { reason: NOT_INSTALLED }
-  const key = readKey()
+  const key = readVoiceKey()
   if (key) return { source: 'own_key', key }
   const user = await voiceUser()
   return user ? { source: 'backend', host: voiceHost(), user } : { reason: 'the voice server needs an install id, and none could be read or made' }
@@ -495,5 +481,21 @@ export async function voiceSample(signal: AbortSignal): Promise<Buffer> {
   } catch (error) {
     if (signal.aborted) throw error
     throw new Error(error instanceof Error ? error.message : String(error))
+  }
+}
+
+let sample: AbortController | null = null
+
+/** Settings' play button: one sample at a time (a new one stops the last), at most 45 s. */
+export async function playVoiceSample(): Promise<Uint8Array> {
+  sample?.abort()
+  const controller = new AbortController()
+  sample = controller
+  const timer = setTimeout(() => controller.abort(), 45_000)
+  try {
+    return new Uint8Array(await voiceSample(controller.signal))
+  } finally {
+    clearTimeout(timer)
+    if (sample === controller) sample = null
   }
 }

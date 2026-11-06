@@ -1,5 +1,6 @@
 import type { SceneCue, SceneVoice } from '@shared/live-scene'
 import { assetUrl } from '../board/content'
+import { subscribeSettings } from '../lib/settings'
 
 /**
  * The voice of say() lines (docs/learning-space/voice-lines-plan.md). The
@@ -40,11 +41,11 @@ let sent = -1
 let lineEnd: ReturnType<typeof setTimeout> | undefined
 let readLines = false
 
-const stopListening = window.space?.onReadLines?.((on) => {
-  readLines = on
-  if (!on) stopVoice()
+// Settings > Voice > Read lines aloud (lib/settings.ts mirrors main's snapshot).
+const stopListening = subscribeSettings((settings) => {
+  readLines = settings.voice.readLines
+  if (!readLines) stopVoice()
 })
-void window.space?.getReadLines?.().then((on) => (readLines = on))
 
 /** One element for the window, made by the first voiced line. A scene with no voice makes none. */
 function element(): HTMLAudioElement {
@@ -128,5 +129,5 @@ export function stopVoice(): void {
 if (import.meta.hot)
   import.meta.hot.dispose(() => {
     stopVoice()
-    stopListening?.()
+    stopListening()
   })

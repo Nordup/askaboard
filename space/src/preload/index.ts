@@ -47,9 +47,6 @@ const api: SpaceApi = {
   onSidebarHidden: (listener) => listen(IPC.sidebarHidden, listener),
   onFullScreen: (listener) => listen(IPC.fullScreen, listener),
   onWindowButtons: (listener) => listen(IPC.windowButtons, listener),
-  getShowPerformance: () => ipcRenderer.invoke(IPC.getShowPerformance),
-  getReadLines: () => ipcRenderer.invoke(IPC.getReadLines),
-  onReadLines: (listener) => listen(IPC.readLines, listener),
   getUncappedFrames: () => ipcRenderer.invoke(IPC.getUncappedFrames),
   setUncappedFrames: (on) => ipcRenderer.invoke(IPC.setUncappedFrames, on),
   getSettings: () => ipcRenderer.invoke(IPC.getSettings),
@@ -83,6 +80,7 @@ const api: SpaceApi = {
   devFullScreen: (on) => ipcRenderer.send(IPC.devFullScreen, on),
   devSidebarMenu: (click) => ipcRenderer.sendSync(IPC.devSidebarMenu, click) as string | null,
   devClickMenu: (id) => ipcRenderer.sendSync(IPC.devClickMenu, id) as boolean,
+  devMenuItem: (id) => ipcRenderer.sendSync(IPC.devMenuItem, id) as ReturnType<SpaceApi['devMenuItem']>,
   flushStarted: () => ipcRenderer.send(IPC.flushStarted),
   flushDone: (failed) => ipcRenderer.send(IPC.flushDone, failed),
 
