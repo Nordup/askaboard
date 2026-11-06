@@ -136,10 +136,10 @@ export function AppShell() {
       kick()
     }
 
-    // ---------- Which use case: the step whose line last crossed the viewport's centre (lib/shell-steps.ts) ----------
+    // ---------- Which use case: the third of the sticky phase the viewport's centre is in (lib/shell-steps.ts) ----------
     const onScroll = (): void => {
-      const { winH, step } = shellSizes({ track, frame })
-      const i = nextStep(winH, step, window.innerHeight / 2 - track.getBoundingClientRect().top, target)
+      const { winH, third } = shellSizes({ track, frame })
+      const i = nextStep(winH, third, window.innerHeight / 2 - track.getBoundingClientRect().top, target)
       if (i !== target) show(i)
     }
 

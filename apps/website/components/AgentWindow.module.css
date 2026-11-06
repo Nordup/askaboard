@@ -1,0 +1,128 @@
+/*
+ * An agent app's terminal window (AgentWindow.tsx) on the board: the hero's window chrome
+ * (Board.module.css) with the app's name in the title strip and a terminal in the body. Sizes are
+ * design units of the sprite (--k, Board.module.css).
+ */
+.name {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  font-size: calc(12 * var(--k));
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.copy {
+  position: absolute;
+  right: calc(8 * var(--k));
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: calc(22 * var(--k));
+  height: calc(22 * var(--k));
+  padding: 0;
+  border: 0;
+  border-radius: calc(6 * var(--k));
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.copy:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.copy svg {
+  width: calc(13 * var(--k));
+  height: calc(13 * var(--k));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.terminal {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: calc(28 * var(--k));
+  display: flex;
+  flex-direction: column;
+  padding: calc(14 * var(--k)) calc(16 * var(--k)) calc(12 * var(--k));
+  font-family: var(--font-mono);
+  font-size: calc(12.5 * var(--k));
+  line-height: calc(19 * var(--k));
+  color: var(--text);
+}
+
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--k));
+}
+
+/* A line wraps under its text, not under its prompt. */
+.line {
+  padding-left: 2ch;
+  text-indent: -2ch;
+  overflow-wrap: anywhere;
+}
+
+.prompt {
+  color: var(--text-tertiary);
+}
+
+.note {
+  color: var(--text-tertiary);
+}
+
+.link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-soft);
+  text-underline-offset: 0.2em;
+  pointer-events: auto;
+}
+
+.link:hover {
+  color: var(--accent-hover);
+}
+
+.hidden {
+  visibility: hidden;
+}
+
+/* The caret while the line types; there is none at rest. */
+.caret {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.1em;
+  margin-right: -0.6em;
+  vertical-align: -0.2em;
+  background: var(--muted);
+}
+
+.plan {
+  margin-top: auto;
+  font-family: var(--font-ui);
+  font-size: calc(12 * var(--k));
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.planShown {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan {
+    transition: none;
+  }
+}

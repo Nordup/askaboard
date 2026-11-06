@@ -11,16 +11,22 @@
   --win-w: min(86.5vw, 1600px, calc((100svh - 150px) * 1.62));
   --win-h: calc(var(--win-w) / 1.62);
   --step: 75svh;
+  /*
+   * The sticky phase is shorter than the marks' span by this much: the window sticks when the
+   * first mark's top is at 25 % of the viewport and lets go when the last mark's bottom is at
+   * 72 % (lib/shell-steps.ts STICK_AT, RELEASE_AT: 0.72 - 0.25 = 0.47).
+   */
+  --stick-cut: 47svh;
   /* Over the board's back layer (the steps' ink passes behind the window), under the visitor's ink. */
   position: relative;
   z-index: 2;
-  /* A gap under the hero, so its lowest windows end clearly above the shell; in design units, so the hero's scale stays. */
-  padding: calc(56 * var(--u)) 16px 96px;
+  /* A gap under the hero (the founder: room after the hero before the shell); in design units, so the hero's scale stays. */
+  padding: calc(104 * var(--u)) 16px 96px;
 }
 
 .track {
   width: var(--win-w);
-  height: calc(var(--win-h) + 3 * var(--step));
+  height: calc(var(--win-h) + 3 * var(--step) - var(--stick-cut));
   margin: 0 auto;
 }
 
@@ -439,6 +445,8 @@
     --win-w: calc(100vw - 32px);
     --win-h: calc(700px * var(--z, 0.66));
     --step: 70svh;
+    /* On a phone the window sticks and lets go at the marks' ends, as before. */
+    --stick-cut: 0px;
     padding: 32px 16px 64px;
   }
 

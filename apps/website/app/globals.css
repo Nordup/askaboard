@@ -47,6 +47,8 @@
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
   --hand: 'Learning Hand', var(--font-ui);
+  /* The agent windows' terminals. */
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
   --gutter: clamp(16px, 4vw, 56px);
   color-scheme: dark;

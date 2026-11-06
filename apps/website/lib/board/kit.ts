@@ -23,14 +23,18 @@ const lengthOf = (line: readonly (readonly number[])[]): number => {
 
 /**
  * One ink object: strokes that draw one after the other, each in a time proportional to its
- * length with a short lift between strokes (the board's ranges()). A finished ink is painted
- * once into a bitmap at the screen's scale and blitted after that.
+ * length with a short lift between strokes (the board's ranges()). A finished stroke is painted
+ * once into a bitmap and blitted after that, but only one device pixel to one: the bitmap is
+ * made in device pixels at the canvas's exact scale and sub-pixel offset, and drawn at a whole
+ * device pixel. A bitmap scaled, shifted by part of a pixel or turned when it is drawn would be
+ * resampled, and the ink would look soft; so under a turned or skewed transform the strokes are
+ * drawn as paths.
  */
 export class Ink {
   readonly ranges: [number, number][]
   readonly box: { x0: number; y0: number; x1: number; y1: number }
-  /** The bitmap of the strokes drawn so far, at the screen's scale; `baked` strokes are in it. */
-  private cache: { canvas: HTMLCanvasElement; c: CanvasRenderingContext2D; scale: number; x: number; y: number; w: number; h: number; baked: number } | null = null
+  /** The bitmap of the strokes drawn so far, in device pixels; `baked` strokes are in it. */
+  private cache: { canvas: HTMLCanvasElement; c: CanvasRenderingContext2D; scale: number; fx: number; fy: number; baked: number } | null = null
 
   constructor(
     readonly strokes: InkPoint[][],
@@ -60,27 +64,38 @@ export class Ink {
    */
   draw(ctx: Ctx, share = 1, alpha = 1): void {
     if (share <= 0 || alpha <= 0 || !this.strokes.length) return
-    const m = ctx.getTransform()
-    const k = this.bitmap(Math.hypot(m.a, m.b))
     let done = 0
     while (done < this.strokes.length && (share >= 1 || this.ranges[done][1] <= share)) done++
-    if (done < k.baked) {
-      k.c.save()
-      k.c.setTransform(1, 0, 0, 1, 0, 0)
-      k.c.clearRect(0, 0, k.canvas.width, k.canvas.height)
-      k.c.restore()
-      k.baked = 0
-    }
     const color = hex(this.color)
-    for (; k.baked < done; k.baked++) {
-      const points = this.strokes[k.baked]
-      drawStroke(k.c, { points, color, width: this.width }, 0, 1, points)
-    }
-    if (done) {
-      const before = ctx.globalAlpha
-      ctx.globalAlpha = before * Math.min(1, alpha)
-      ctx.drawImage(k.canvas, k.x, k.y, k.w, k.h)
-      ctx.globalAlpha = before
+    const m = ctx.getTransform()
+    // Only a plain scale and shift maps the bitmap's pixels onto the canvas's pixels one to one.
+    const plain = m.a > 0 && Math.abs(m.b) < 1e-9 && Math.abs(m.c) < 1e-9 && Math.abs(m.a - m.d) < 1e-9
+    if (!plain) {
+      for (let i = 0; i < done; i++) drawStroke(ctx, { points: this.strokes[i], color, width: this.width }, 0, alpha, this.strokes[i])
+    } else if (done) {
+      const pad = this.width + 2
+      // The bitmap's top left in device pixels: a whole pixel, and the part of a pixel the bitmap holds.
+      const gx = (this.box.x0 - pad) * m.a + m.e
+      const gy = (this.box.y0 - pad) * m.d + m.f
+      const ix = Math.floor(gx)
+      const iy = Math.floor(gy)
+      const k = this.bitmap(m.a, gx - ix, gy - iy)
+      if (done < k.baked) {
+        k.c.save()
+        k.c.setTransform(1, 0, 0, 1, 0, 0)
+        k.c.clearRect(0, 0, k.canvas.width, k.canvas.height)
+        k.c.restore()
+        k.baked = 0
+      }
+      for (; k.baked < done; k.baked++) {
+        const points = this.strokes[k.baked]
+        drawStroke(k.c, { points, color, width: this.width }, 0, 1, points)
+      }
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.globalAlpha *= Math.min(1, alpha)
+      ctx.drawImage(k.canvas, ix, iy)
+      ctx.restore()
     }
     if (done < this.strokes.length) {
       const [r0, r1] = this.ranges[done]
@@ -90,24 +105,23 @@ export class Ink {
     }
   }
 
-  /** The bitmap at this scale: made again (empty) when the scale grows or shrinks a lot. */
-  private bitmap(scale: number) {
-    if (!this.cache || scale > this.cache.scale * 1.01 || scale < this.cache.scale * 0.66) {
+  /** The bitmap at this scale and sub-pixel offset: made again (empty) when either changes. */
+  private bitmap(scale: number, fx: number, fy: number) {
+    const k = this.cache
+    if (!k || Math.abs(k.scale - scale) > 1e-6 || Math.abs(k.fx - fx) > 1e-3 || Math.abs(k.fy - fy) > 1e-3) {
       const pad = this.width + 2
       const x = this.box.x0 - pad
       const y = this.box.y0 - pad
-      const w = Math.max(1, Math.ceil((this.box.x1 - this.box.x0 + pad * 2) * scale))
-      const h = Math.max(1, Math.ceil((this.box.y1 - this.box.y0 + pad * 2) * scale))
-      const canvas = this.cache?.canvas ?? document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
+      const canvas = k?.canvas ?? document.createElement('canvas')
+      canvas.width = Math.max(1, Math.ceil((this.box.x1 - this.box.x0 + pad * 2) * scale + 1))
+      canvas.height = Math.max(1, Math.ceil((this.box.y1 - this.box.y0 + pad * 2) * scale + 1))
       const c = canvas.getContext('2d')!
-      c.setTransform(scale, 0, 0, scale, -x * scale, -y * scale)
+      c.setTransform(scale, 0, 0, scale, fx - x * scale, fy - y * scale)
       c.lineCap = 'round'
       c.lineJoin = 'round'
-      this.cache = { canvas, c, scale, x, y, w: w / scale, h: h / scale, baked: 0 }
+      this.cache = { canvas, c, scale, fx, fy, baked: 0 }
     }
-    return this.cache
+    return this.cache!
   }
 }
 

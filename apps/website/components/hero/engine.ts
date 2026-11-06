@@ -44,8 +44,9 @@ type Mark =
 /** A board item: a window, a loose drawing or a mark. */
 interface Item {
   el: HTMLElement
-  canvas: HTMLCanvasElement
-  g: Pen
+  /** None for an agent's terminal window: its body is HTML (layout.ts `agent`). */
+  canvas: HTMLCanvasElement | null
+  g: Pen | null
   /** Animated items (windows, loose ink) have a drawing and a start; a mark has its geometry. */
   draw?: Draw
   start: number
@@ -181,14 +182,14 @@ export function mountBoard(o: {
   let z = 0
   const items: Item[] = o.sprites.map((def) => {
     const el = host.querySelector<HTMLElement>(`[data-sprite="${def.id}"]`)!
-    const canvas = el.querySelector('canvas')!
+    const canvas = el.querySelector('canvas')
     const item: Item = {
       el,
       canvas,
-      g: new Pen(canvas.getContext('2d')!),
-      draw: def.make(),
-      // A step's ink draws on when it first comes on screen (the IntersectionObserver below).
-      start: def.step ? Infinity : def.start,
+      g: canvas ? new Pen(canvas.getContext('2d')!) : null,
+      draw: def.make?.(),
+      // A step's ink and an anchored item draw on when they first come on screen (the IntersectionObserver below).
+      start: def.step || def.anchor ? Infinity : def.start,
       def,
       window: def.window,
       w: def.w,
@@ -224,12 +225,28 @@ export function mountBoard(o: {
 
   // ---------- Layout ----------
 
-  /** An item's place in page px: the centre, from the world place, its drag and the pan. */
+  /** CSS px rounded to whole device pixels. */
+  const snap = (px: number): number => Math.round(px * dpr) / dpr
+
+  /**
+   * An item's place in page px: the centre, from the world place, its drag and the pan. An item
+   * that is not turned is moved by the part of a device pixel that its canvas is off the pixel
+   * grid, so the browser shows the canvas's pixels one to one and does not resample (soften) it.
+   */
   const placeItem = (item: Item): void => {
-    item.el.style.translate = `${item.dx * u}px ${item.dy * u}px`
+    const x = item.dx * u
+    const y = item.dy * u
+    item.el.style.translate = `${x}px ${y}px`
+    if (!item.canvas || !item.place || item.place.r !== 0) return
+    const box = item.canvas.getBoundingClientRect()
+    if (!box.width) return
+    const fx = box.left - snap(box.left)
+    const fy = box.top - snap(box.top)
+    if (fx || fy) item.el.style.translate = `${x - fx}px ${y - fy}px`
   }
 
   const sizeCanvas = (item: Item): void => {
+    if (!item.canvas) return
     const k = (item.place?.s ?? 1) * u
     const w = Math.max(1, Math.round(item.w * k * dpr))
     const h = Math.max(1, Math.round(item.bodyH * k * dpr))
@@ -237,15 +254,16 @@ export function mountBoard(o: {
       item.canvas.width = w
       item.canvas.height = h
     }
-    // The canvas shows at its world size, whatever the device pixel ratio: its CSS size comes
-    // from the same numbers as its bitmap, never from a stylesheet (a mark's canvas has no class).
-    item.canvas.style.width = `${item.w * k}px`
-    item.canvas.style.height = `${item.bodyH * k}px`
+    // The canvas shows its bitmap one device pixel to one: its CSS size is the bitmap's size over
+    // the device pixel ratio, never a stylesheet's (a mark's canvas has no class).
+    item.canvas.style.width = `${w / dpr}px`
+    item.canvas.style.height = `${h / dpr}px`
   }
 
   const layout = (): void => {
     W = host.clientWidth
-    dpr = Math.min(2, window.devicePixelRatio || 1)
+    // The true device pixel ratio: a canvas with fewer pixels than the screen is scaled up and looks soft.
+    dpr = window.devicePixelRatio || 1
     const phone = W < PHONE_BELOW
     u = phone ? Math.min(W / PHONE.w, PHONE.maxU) : Math.min(W / DESK.w, hero.clientHeight / DESK.h)
     origin = phone ? [W / 2, 0] : [W / 2, hero.clientHeight / 2]
@@ -255,6 +273,13 @@ export function mountBoard(o: {
     const track = shell?.track.getBoundingClientRect()
     const frame = shell?.frame.getBoundingClientRect()
     const sizes = shell ? shellSizes(shell) : null
+    /** Put an item whose place is an offset from (x, y) page px there; its CSS place follows. */
+    const placeFrom = (item: Item, place: Place, x: number, y: number): void => {
+      const at: Place = { ...place, x: (x - origin[0]) / u + place.x, y: (y - origin[1]) / u + place.y }
+      item.place = at
+      item.el.style.display = ''
+      for (const [name, value] of Object.entries({ dx: at.x, dy: at.y, px: at.x, py: at.y })) item.el.style.setProperty(`--${name}`, String(value))
+    }
     for (const item of items) {
       if (item.def) item.place = phone ? (item.def.phone ?? null) : item.def.deskOff ? null : item.def.desk
       if (item.def?.step && item.place) {
@@ -266,7 +291,7 @@ export function mountBoard(o: {
           continue
         }
         const { index, side, y: anchor } = item.def.step
-        const begins = track.top - hostBox.top + stepLine(sizes.winH, sizes.step, index)
+        const begins = track.top - hostBox.top + stepLine(sizes.winH, sizes.step, index, sizes.lead)
         const middle = begins + sizes.step / 2
         const y = anchor === 'span' ? middle : anchor === 'upper' ? middle - 0.12 * window.innerHeight : anchor === 'above' ? begins - sizes.winH / 2 : begins
         const x = phone ? W / 2 : side === 'left' ? (frame.left - hostBox.left) / 2 : (frame.right - hostBox.left + W) / 2
@@ -275,10 +300,18 @@ export function mountBoard(o: {
           item.h = item.bodyH = Math.max(40, (sizes.step - STEP_GAP) / u / item.place.s)
           item.el.style.setProperty('--h', String(item.h))
         }
-        const place: Place = { ...item.place, x: (x - origin[0]) / u + item.place.x, y: (y - origin[1]) / u + item.place.y }
-        item.place = place
-        item.el.style.display = ''
-        for (const [name, value] of Object.entries({ dx: place.x, dy: place.y, px: place.x, py: place.y })) item.el.style.setProperty(`--${name}`, String(value))
+        placeFrom(item, item.place, x, y)
+      }
+      if (item.def?.anchor && item.place) {
+        // An anchored item: its place is an offset from the top centre of its page element (layout.ts `anchor`).
+        const anchor = host.querySelector<HTMLElement>(`[data-anchor="${item.def.anchor}"]`)
+        if (!anchor) {
+          item.place = null
+          item.el.style.display = 'none'
+          continue
+        }
+        const box = anchor.getBoundingClientRect()
+        placeFrom(item, item.place, box.left - hostBox.left + box.width / 2, box.top - hostBox.top)
       }
       if (!item.place) continue
       sizeCanvas(item)
@@ -292,11 +325,14 @@ export function mountBoard(o: {
   }
 
   const showPan = (): void => {
-    layer.style.translate = `${pan[0] * u}px ${pan[1] * u}px`
+    // In whole device pixels, so the items stay on the pixel grid (placeItem).
+    const x = snap(pan[0] * u)
+    const y = snap(pan[1] * u)
+    layer.style.translate = `${x}px ${y}px`
     back.style.translate = layer.style.translate
     // The dot grid moves with the board.
-    host.style.setProperty('--pan-x', `${pan[0] * u}px`)
-    host.style.setProperty('--pan-y', `${pan[1] * u}px`)
+    host.style.setProperty('--pan-x', `${x}px`)
+    host.style.setProperty('--pan-y', `${y}px`)
   }
 
   const sizeDraft = (): void => {
@@ -312,7 +348,7 @@ export function mountBoard(o: {
 
   /** Paint an animated item; true when its drawing says it is finished and still. */
   const paintSprite = (item: Item, t: number): boolean | void => {
-    if (!item.place || !item.draw) return false
+    if (!item.place || !item.draw || !item.canvas || !item.g) return false
     const c = item.g.ctx
     const k = item.place.s * u * dpr
     c.setTransform(1, 0, 0, 1, 0, 0)
@@ -340,6 +376,7 @@ export function mountBoard(o: {
 
   /** A mark's own canvas: painted once (and again when the scale changes). */
   const paintMark = (item: Item): void => {
+    if (!item.canvas || !item.g) return
     const c = item.g.ctx
     const k = u * dpr
     c.setTransform(1, 0, 0, 1, 0, 0)
@@ -682,13 +719,15 @@ export function mountBoard(o: {
     resize.observe(shell.track)
     resize.observe(shell.frame)
   }
+  // Anchored items follow their page elements (layout.ts `anchor`).
+  for (const anchor of host.querySelectorAll<HTMLElement>('[data-anchor]')) resize.observe(anchor)
   // An animated drawing repaints only while it is on screen (it can be dragged anywhere on the page).
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       const item = items.find((each) => each.el === entry.target)
       if (!item) continue
       item.onScreen = entry.isIntersecting
-      if (item.onScreen && item.start === Infinity) item.start = (performance.now() - t0) / 1000
+      if (item.onScreen && item.start === Infinity) item.start = (performance.now() - t0) / 1000 + (item.def?.anchor ? item.def.start : 0)
     }
     request()
   })

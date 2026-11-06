@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { AgentTerminal, AgentTitle } from './AgentWindow'
 import { mountBoard, type Engine, type HeroState } from './hero/engine'
 import { SPRITES } from './hero/layout'
 import { ToolPill } from './ToolPill'
@@ -71,8 +72,9 @@ export function Board() {
                 <i />
                 <i />
                 <i />
+                {def.agent && <AgentTitle agent={def.agent} />}
               </div>
-              <canvas className={styles.body} />
+              {def.agent ? <AgentTerminal agent={def.agent} /> : <canvas className={styles.body} />}
             </div>
           ) : (
             <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>

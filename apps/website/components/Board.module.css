@@ -59,6 +59,7 @@
 }
 
 .titlebar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: calc(8 * var(--k));

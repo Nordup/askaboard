@@ -1,0 +1,153 @@
+/*
+ * The page's last sections (BringYourAI.tsx, DownloadSection.tsx): parts of the same board. Their
+ * ink and windows are board items placed from the section's top centre in design units (layout.ts
+ * `anchor`), so every place here is in design units too (--u).
+ */
+.section {
+  position: relative;
+}
+
+/* Room between the sections (the founder: "they need more space to breathe"); the places inside a section stay. */
+.agents {
+  height: calc(700 * var(--u));
+  margin-top: calc(150 * var(--u));
+}
+
+/* Its height also holds the room before the footer. */
+.download {
+  height: calc(590 * var(--u));
+  margin-top: calc(50 * var(--u));
+}
+
+/* The heading is hand ink on the board; this one is for screen readers. */
+.hiddenTitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.words {
+  position: absolute;
+  left: 50%;
+  top: calc(282 * var(--u));
+  translate: -50% 0;
+  width: calc(600 * var(--u));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.lead {
+  margin: 0;
+  font-size: calc(22 * var(--u));
+  line-height: calc(30 * var(--u));
+  color: var(--text);
+}
+
+.quiet {
+  margin: calc(8 * var(--u)) 0 0;
+  font-size: calc(18 * var(--u));
+  line-height: calc(25 * var(--u));
+  color: var(--muted);
+}
+
+.source {
+  margin-top: calc(22 * var(--u));
+  font-size: calc(17 * var(--u));
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 0.25em;
+}
+
+.source:hover {
+  text-decoration-color: var(--text);
+}
+
+.cta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(200 * var(--u));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.cta .quiet {
+  margin-top: calc(19 * var(--u));
+}
+
+/* ---------- The footer (t3.codes): one line ---------- */
+
+.footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px var(--gutter);
+  border-top: 1px solid var(--border-subtle);
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.wordmark {
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.wordmark b {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.footer a:hover {
+  color: var(--text);
+}
+
+/* ---------- Phones: the 390-wide frame ---------- */
+@media (max-width: 719px) {
+  .agents {
+    height: calc(1220 * var(--u));
+    margin-top: calc(90 * var(--u));
+  }
+
+  .download {
+    height: calc(400 * var(--u));
+    margin-top: calc(90 * var(--u));
+  }
+
+  .words {
+    top: calc(140 * var(--u));
+    width: calc(340 * var(--u));
+  }
+
+  .lead {
+    font-size: calc(17 * var(--u));
+    line-height: calc(24 * var(--u));
+  }
+
+  .quiet {
+    font-size: calc(14 * var(--u));
+    line-height: calc(20 * var(--u));
+  }
+
+  .source {
+    margin-top: calc(16 * var(--u));
+    font-size: calc(15 * var(--u));
+  }
+
+  .cta {
+    top: calc(110 * var(--u));
+  }
+
+  .cta .quiet {
+    margin-top: calc(14 * var(--u));
+  }
+}
