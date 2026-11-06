@@ -27,6 +27,7 @@ const api: SpaceApi = {
   pickFolder: () => ipcRenderer.invoke(IPC.pickFolder),
   openFolder: (path) => ipcRenderer.invoke(IPC.openFolder, path),
   listFiles: () => ipcRenderer.invoke(IPC.listFiles),
+  getBoards: () => ipcRenderer.invoke(IPC.getBoards),
 
   readBoard: (root, path) => ipcRenderer.invoke(IPC.readBoard, root, path),
   readRecovery: (root, path) => ipcRenderer.invoke(IPC.readRecovery, root, path),
@@ -62,6 +63,7 @@ const api: SpaceApi = {
   rebuildScenes: (sceneIds) => ipcRenderer.invoke(IPC.rebuildScenes, sceneIds),
 
   onFilesChanged: (listener) => listen(IPC.filesChanged, listener),
+  onBoardsChanged: (listener) => listen(IPC.boardsChanged, listener),
   onBoardChanged: (listener) => listen(IPC.boardChanged, listener),
   onMenuCommand: (listener) => listen(IPC.menuCommand, listener),
   onFlushRequest: (listener) => listen<void>(IPC.flushRequest, () => listener()),

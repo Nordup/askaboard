@@ -4,8 +4,8 @@ import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFi
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
-import { BOARD_SUFFIX, BOARDS_DIR, emptyBoard, isBoardPath, parseBoard, serializeBoard } from '@shared/board-format'
-import type { BoardChange, FileNode, FilePreview, FileTree } from '@shared/space-api'
+import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, parseBoard, serializeBoard } from '@shared/board-format'
+import type { BoardChange, BoardList, BoardListEntry, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
 const MAX_DEPTH = 10
 const MAX_ENTRIES = 5000
@@ -13,6 +13,8 @@ const MAX_TEXT_PREVIEW = 1024 * 1024
 const MAX_IMAGE_PREVIEW = 20 * 1024 * 1024
 const MAX_BOARD_BYTES = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 150
+/** The boards list goes to the renderer at most this often: a burst of saves sends one list. */
+const BOARD_LIST_DELAY_MS = 250
 /** Images that agents bring in (downloads, data: URLs) are capped at this size. */
 const MAX_ASSET_BYTES = 10 * 1024 * 1024
 const ASSETS_DIR = 'assets'
@@ -100,9 +102,22 @@ export function sanitizeBoardName(name: string): string {
     .trim()
 }
 
+/** A board of the sidebar list. `dir`: null in boards/, '/' at the folder root, else the board's folder. */
+function boardEntry(path: string, editedAt: number): BoardListEntry {
+  const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+  return { path, name: boardName(path), dir: dir === BOARDS_DIR ? null : dir || '/', editedAt }
+}
+
+/** Newest edit first, then by name (numeric, case-insensitive), then by path. */
+function byEdit(a: BoardListEntry, b: BoardListEntry): number {
+  return b.editedAt - a.editedAt || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+}
+
 export interface FolderEvents {
   filesChanged(tree: FileTree): void
   boardChanged(change: BoardChange): void
+  /** The boards list changed (an own write, create, rename, trash or a change on disk). */
+  boardsChanged(list: BoardList): void
 }
 
 /**
@@ -123,6 +138,17 @@ export class FolderSession {
    * before any listing, reading or hashing.
    */
   private ownWrites = new Map<string, string>()
+  /** The watching session's events (startWatching), null when the folder is not the open one. */
+  private events: FolderEvents | null = null
+  // The boards list (boardList): one list at a time, in order, each with the next seq.
+  private listed: BoardListEntry[] | null = null
+  private listSeq = 0
+  private listChain: Promise<unknown> = Promise.resolve()
+  /** The next list walks the folder (a create, rename, trash or a change on disk); else own saves only patch the last list. */
+  private listWalk = true
+  /** Own saves since the last list: path → mtime. */
+  private listEdits = new Map<string, number>()
+  private listTimer: ReturnType<typeof setTimeout> | null = null
 
   private constructor(readonly root: string) {
     this.name = basename(root)
@@ -218,6 +244,8 @@ export class FolderSession {
 
   startWatching(events: FolderEvents): void {
     this.stopWatching()
+    this.events = events
+    this.listWalk = true
     try {
       this.watcher = watch(this.root, { recursive: true }, (_type, filename) => {
         if (!filename) return
@@ -242,6 +270,14 @@ export class FolderSession {
     if (!changed.length) return
     console.log(`watch: changed outside the app: ${changed.join(', ')}`)
     events.filesChanged(await this.listFiles())
+    // The list before the board events: a board gone on disk is gone from the list when the renderer closes it.
+    this.listWalk = true
+    try {
+      const list = await this.nextList()
+      if (this.events === events) events.boardsChanged(list)
+    } catch (error) {
+      console.error(`boards list: ${String(error)}`)
+    }
     for (const rel of changed) {
       if (!isBoardPath(rel)) continue
       let text: string
@@ -273,6 +309,9 @@ export class FolderSession {
   }
 
   stopWatching(): void {
+    this.events = null
+    if (this.listTimer) clearTimeout(this.listTimer)
+    this.listTimer = null
     this.watcher?.close()
     this.watcher = null
     if (this.debounce) clearTimeout(this.debounce)
@@ -304,7 +343,10 @@ export class FolderSession {
     try {
       await writeFile(temp, text, 'utf8')
       await rename(temp, full)
-      this.ownWrites.set(rel, fileIdentity(await stat(full)))
+      const info = await stat(full)
+      this.ownWrites.set(rel, fileIdentity(info))
+      this.listEdits.set(rel, info.mtimeMs)
+      this.boardsSoon()
     } catch (error) {
       await unlink(temp).catch(() => undefined)
       throw error
@@ -362,6 +404,58 @@ export class FolderSession {
   }
 
   /**
+   * The boards list of the sidebar, newest edit first, read from the folder now. The main process owns the list:
+   * it also sends it (events.boardsChanged) after own saves, creates, renames, trashes and changes on disk.
+   */
+  boardList(): Promise<BoardList> {
+    this.listWalk = true
+    return this.nextList()
+  }
+
+  /**
+   * The next list, after the lists under way, so each list is newer than the one before (seq). A walk lists the board
+   * files (boardFiles, the walk list_boards uses too); without one, the own saves since the last list patch it.
+   */
+  private nextList(): Promise<BoardList> {
+    const run = this.listChain.then(async () => {
+      const edits = this.listEdits
+      this.listEdits = new Map()
+      const known = this.listed ? new Set(this.listed.map((entry) => entry.path)) : null
+      const walk = this.listWalk || !known || [...edits.keys()].some((path) => !known.has(path))
+      this.listWalk = false
+      let entries: BoardListEntry[]
+      try {
+        entries = walk ? (await this.boardFiles()).map(({ path, mtimeMs }) => boardEntry(path, mtimeMs)) : (this.listed as BoardListEntry[]).slice()
+      } catch (error) {
+        this.listWalk = true
+        throw error
+      }
+      if (edits.size) entries = entries.map((entry) => (edits.has(entry.path) ? { ...entry, editedAt: Math.max(entry.editedAt, edits.get(entry.path) as number) } : entry))
+      entries.sort(byEdit)
+      this.listed = entries
+      return { root: this.root, seq: ++this.listSeq, boards: entries }
+    })
+    this.listChain = run.catch(() => undefined)
+    return run
+  }
+
+  /** Send the boards list soon: at most once per BOARD_LIST_DELAY_MS, so a burst of saves sends one list (the timer is not reset, so steady saves still send). */
+  private boardsSoon(walk = false): void {
+    if (walk) this.listWalk = true
+    if (this.listTimer || !this.events) return
+    const events = this.events
+    this.listTimer = setTimeout(() => {
+      this.listTimer = null
+      this.nextList().then(
+        (list) => {
+          if (this.events === events) events.boardsChanged(list)
+        },
+        (error: unknown) => console.error(`boards list: ${String(error)}`)
+      )
+    }, BOARD_LIST_DELAY_MS)
+  }
+
+  /**
    * The id of every board of the folder, for finding the records of boards that are gone (main/storage.ts). Null when
    * the tree is not complete or a board cannot be read or parsed: a board that cannot be read is not a board that is gone.
    */
@@ -404,6 +498,8 @@ export class FolderSession {
       }
     }
     await rename(from, to)
+    this.listEdits.delete(rel)
+    this.boardsSoon(true)
     const hash = this.knownHashes.get(rel)
     this.knownHashes.delete(rel)
     this.ownWrites.delete(rel)
@@ -414,6 +510,8 @@ export class FolderSession {
   async deleteBoard(rel: string): Promise<void> {
     const full = await this.boardFullPath(rel)
     await shell.trashItem(full)
+    this.listEdits.delete(rel)
+    this.boardsSoon(true)
     this.knownHashes.delete(rel)
     this.ownWrites.delete(rel)
   }

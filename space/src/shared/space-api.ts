@@ -38,11 +38,29 @@ export interface FileTree {
   truncated: boolean
 }
 
+/** A board of the sidebar list (main/folder.ts boardList). */
+export interface BoardListEntry {
+  path: string
+  name: string
+  /** The board's folder when it is not boards/: '/' for the folder root, else the folder path. */
+  dir: string | null
+  /** The file's last change (mtime, ms). Opening a board does not change it. */
+  editedAt: number
+}
+
+/** The boards of a folder, newest edit first. The main process owns it; `seq` grows with each list of the folder, so a late list is known. */
+export interface BoardList {
+  root: string
+  seq: number
+  boards: BoardListEntry[]
+}
+
 export interface FolderInfo {
   /** Absolute path of the folder (after symlinks are resolved). */
   root: string
   name: string
   tree: FileTree
+  boards: BoardList
   /** The board that was open the last time, if it still exists. */
   lastBoard: string | null
   /** AGENTS.md exists at the root when the folder opened. */
@@ -584,6 +602,8 @@ export interface SpaceApi {
   /** Make this folder (a picked or a recent one) the open one. The renderer calls it inside its folder switch, after its saves. */
   openFolder(path: string): Promise<Snapshot>
   listFiles(): Promise<FileTree>
+  /** The boards list now, read from the folder (after a create, rename or trash). Main also sends it: onBoardsChanged. */
+  getBoards(): Promise<BoardList>
 
   /** Reads and writes name their folder (`root`): they go to that folder, whichever folder is open by then. */
   readBoard(root: string, path: string): Promise<string>
@@ -644,6 +664,8 @@ export interface SpaceApi {
   rebuildScenes(sceneIds: string[]): Promise<void>
 
   onFilesChanged(listener: (tree: FileTree) => void): Unsubscribe
+  /** The boards list after a save, create, rename, trash or a change on disk (at most every 250 ms). */
+  onBoardsChanged(listener: (list: BoardList) => void): Unsubscribe
   onBoardChanged(listener: (change: BoardChange) => void): Unsubscribe
   onMenuCommand(listener: (command: MenuCommand) => void): Unsubscribe
   /** The window is about to close: call flushStarted() at once, save, then call flushDone() with the boards that could not be saved. */
@@ -708,6 +730,7 @@ export const IPC = {
   pickFolder: 'space:pick-folder',
   openFolder: 'space:open-folder',
   listFiles: 'space:list-files',
+  getBoards: 'space:get-boards',
   readBoard: 'space:read-board',
   readRecovery: 'space:read-recovery',
   writeBoard: 'space:write-board',
@@ -731,6 +754,7 @@ export const IPC = {
   setCamera: 'space:set-camera',
   setLastBoard: 'space:set-last-board',
   filesChanged: 'space:files-changed',
+  boardsChanged: 'space:boards-changed',
   boardChanged: 'space:board-changed',
   menuCommand: 'space:menu-command',
   flushRequest: 'space:flush-request',

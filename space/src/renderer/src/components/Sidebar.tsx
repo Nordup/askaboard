@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { BookOpen, ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Search, SquarePen, Trash } from 'lucide-react'
-import type { GuideOverrides, RecentFolder } from '@shared/space-api'
+import { shortAgo } from '@shared/board-digest'
+import type { BoardListEntry, GuideOverrides, RecentFolder } from '@shared/space-api'
 import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
 import { RenameInput } from './RenameInput'
 import { SetupMenu } from './SetupMenu'
 import { SidebarToggle } from './SidebarToggle'
 import { revealLabel, savedOnLabel, shortcut } from '../platform'
-
-export interface BoardEntry {
-  path: string
-  name: string
-  /** The folder of the board, when it is not the default `boards/` folder. */
-  dir: string | null
-}
 
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
@@ -24,7 +18,8 @@ interface SidebarProps {
   /** The learner's home folder, so the folder menu shows the path as `~/…`. */
   homeDir: string
   recent: RecentFolder[]
-  boards: BoardEntry[]
+  /** Newest edit first (main/folder.ts boardList). */
+  boards: BoardListEntry[]
   openBoard: string | null
   renaming: string | null
   onOpenFolder(): void
@@ -58,6 +53,9 @@ interface SidebarProps {
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
+/** The list shows this many boards until "Show N more". */
+const COLLAPSED_BOARDS = 8
+const MINUTE_MS = 60_000
 const ROW_ICON = { size: 16, strokeWidth: 1.75 }
 
 /** The path with `~` for the home folder. */
@@ -74,8 +72,23 @@ export function Sidebar(props: SidebarProps) {
   const footerRef = useRef<HTMLButtonElement>(null)
   const setupRowRef = useRef<HTMLButtonElement>(null)
 
+  /** "Show N more" was clicked: for the session of this folder. */
+  const [expanded, setExpanded] = useState(false)
+  /** The clock of the row times: one tick a minute. */
+  const [now, setNow] = useState(() => Date.now())
+
   // A menu belongs to the sidebar: it closes when the sidebar hides or the folder changes.
   useEffect(() => setMenu(null), [hidden, folderRoot])
+  useEffect(() => setExpanded(false), [folderRoot])
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), MINUTE_MS)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Collapsed: the first boards, and also the open board and a board in rename when they are further down.
+  const collapsible = boards.length > COLLAPSED_BOARDS
+  const shown = !collapsible || expanded ? boards : boards.filter((board, index) => index < COLLAPSED_BOARDS || board.path === openBoard || board.path === renaming)
+  const hiddenCount = boards.length - shown.length
 
   const folderMenu = (anchor: HTMLElement): void => {
     if (!folderRoot) return
@@ -108,7 +121,7 @@ export function Sidebar(props: SidebarProps) {
     })
   }
 
-  const boardMenu = (board: BoardEntry, x: number, y: number): void => {
+  const boardMenu = (board: BoardListEntry, x: number, y: number): void => {
     setMenu({
       x,
       y,
@@ -178,11 +191,10 @@ export function Sidebar(props: SidebarProps) {
             </div>
           ) : (
             <ul className="board-list">
-              {boards.map((board) => (
+              {shown.map((board) => (
                 <li key={board.path}>
                   {renaming === board.path ? (
                     <div className="board-row board-row--editing">
-                      <LayoutDashboard className="board-row__icon" {...ICON} />
                       <RenameInput
                         initial={board.name}
                         onCommit={(name) => props.onRename(board.path, name)}
@@ -198,32 +210,42 @@ export function Sidebar(props: SidebarProps) {
                       onClick={() => props.onOpenBoard(board.path)}
                       onDoubleClick={() => props.onStartRename(board.path)}
                       onKeyDown={(event) => {
-                        if (event.key === 'Enter') props.onOpenBoard(board.path)
+                        // Enter on the row; Enter on its ellipsis button opens the menu only.
+                        if (event.key === 'Enter' && event.target === event.currentTarget) props.onOpenBoard(board.path)
                       }}
                       onContextMenu={(event) => {
                         event.preventDefault()
                         boardMenu(board, event.clientX, event.clientY)
                       }}
                     >
-                      <LayoutDashboard className="board-row__icon" {...ICON} />
                       <span className="board-row__name">{board.name}</span>
                       {board.dir && <span className="board-row__dir">{board.dir}</span>}
-                      <button
-                        className="board-row__more icon-button"
-                        aria-label={`${board.name} actions`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          const rect = event.currentTarget.getBoundingClientRect()
-                          boardMenu(board, rect.left, rect.bottom + 4)
-                        }}
-                        onDoubleClick={(event) => event.stopPropagation()}
-                      >
-                        <Ellipsis size={14} strokeWidth={2} />
-                      </button>
+                      <span className="board-row__end">
+                        <span className="board-row__time">{shortAgo(board.editedAt, now)}</span>
+                        <button
+                          className="board-row__more"
+                          aria-label={`${board.name} actions`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            const rect = event.currentTarget.getBoundingClientRect()
+                            boardMenu(board, rect.left, rect.bottom + 4)
+                          }}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                        >
+                          <Ellipsis size={14} strokeWidth={2} />
+                        </button>
+                      </span>
                     </div>
                   )}
                 </li>
               ))}
+              {collapsible && (hiddenCount > 0 || expanded) && (
+                <li>
+                  <button className="board-row board-row--action board-row--quiet" onClick={() => setExpanded(!expanded)}>
+                    <span className="board-row__name">{expanded ? 'Show less' : `Show ${hiddenCount} more`}</span>
+                  </button>
+                </li>
+              )}
             </ul>
           )}
         </section>

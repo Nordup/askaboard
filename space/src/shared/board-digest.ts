@@ -69,6 +69,20 @@ export function ago(ms: number, now: number): string {
   return new Date(ms).toISOString().slice(0, 10)
 }
 
+/** A short age for a list (the sidebar's boards): "now" under a minute, then "5m", "3h", "2d", "3w", "4mo", "1y" (whole units, rounded down). */
+export function shortAgo(ms: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - ms) / 60_000)
+  if (minutes < 1) return 'now'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+  if (days < 30) return `${Math.floor(days / 7)}w`
+  if (days < 365) return `${Math.floor(days / 30)}mo`
+  return `${Math.floor(days / 365)}y`
+}
+
 // ---------- Places ----------
 
 /** A rect in whole board points: each edge rounded, the size from the rounded edges. Every place and every region argument use it, so they agree. */

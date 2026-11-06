@@ -194,12 +194,14 @@ async function snapshot(initial = false): Promise<Snapshot> {
   const folder = session
     ? await (async () => {
         const tree = await session.listFiles()
+        const boards = await session.boardList()
         const last = store.getLastBoard(session.root)
         const lastExists = last ? await session.resolvePath(last).then(() => true, () => false) : false
         return {
           root: session.root,
           name: session.name,
           tree,
+          boards,
           lastBoard: lastExists ? last : null,
           setUp: await isSetUp(session),
           setupDontAsk: store.getSetupDontAsk(session.root)
@@ -230,6 +232,9 @@ async function openFolder(path: string): Promise<void> {
     },
     boardChanged: (change) => {
       if (session === next) send(IPC.boardChanged, change)
+    },
+    boardsChanged: (list) => {
+      if (session === next) send(IPC.boardsChanged, list)
     }
   })
   // Keep the brief block in AGENTS.md current (an edited block stays as it is).
@@ -372,6 +377,7 @@ function registerIpc(): void {
     return snapshot()
   })
   handle(IPC.listFiles, () => requireSession().listFiles())
+  handle(IPC.getBoards, () => requireSession().boardList())
   handle(IPC.importAsset, (src: unknown) => {
     if (typeof src !== 'string' || !src.trim()) throw new Error('An image src is required.')
     return requireSession().importAsset(src)

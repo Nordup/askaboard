@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
-  BOARDS_DIR,
   boardName,
-  isBoardPath,
   newItemId,
   parseBoard,
   reconcileBoard,
@@ -17,7 +15,7 @@ import {
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
-import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FailedSave, FileNode, FileTree, GuideOverrides, ShellState, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, BoardList, BoardListEntry, Camera, FailedSave, FileTree, GuideOverrides, ShellState, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { dropTracker, moveTracker } from './agent/groups'
@@ -28,7 +26,7 @@ import { HOME_ZOOM } from './board/geometry'
 import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
-import { Sidebar, type BoardEntry } from './components/Sidebar'
+import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast } from './components/Toast'
 import { ToolPalette } from './components/ToolPalette'
@@ -92,28 +90,14 @@ function entryBytes({ doc, history, log }: CacheEntry): number {
   return boardBytes(nodes)
 }
 
-function collectBoards(nodes: FileNode[], out: BoardEntry[] = []): BoardEntry[] {
-  for (const node of nodes) {
-    if (node.kind === 'dir') collectBoards(node.children ?? [], out)
-    else if (isBoardPath(node.name)) {
-      const dir = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : ''
-      out.push({ path: node.path, name: boardName(node.path), dir: dir === BOARDS_DIR ? null : dir || '/' })
-    }
-  }
-  return out
-}
-
-function sortBoards(boards: BoardEntry[]): BoardEntry[] {
-  // Boards in boards/ first, then the others by path.
-  return [...boards].sort((a, b) => {
-    if (!a.dir !== !b.dir) return a.dir ? 1 : -1
-    return a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' })
-  })
-}
+const NO_BOARDS: BoardListEntry[] = []
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  /** The folder's files: only for the setup offer (AGENTS.md). The boards come from boardList. */
   const [tree, setTree] = useState<FileTree | null>(null)
+  /** The boards list as the main process sends it (newest edit first): the one copy, for the sidebar, the auto-open and agents. */
+  const [boardList, setBoardList] = useState<BoardList | null>(null)
   const [open, setOpen] = useState<OpenBoard | null>(null)
   const [boardError, setBoardError] = useState<{ path: string; message: string } | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
@@ -135,7 +119,7 @@ export function App() {
   const clearToast = useCallback(() => setToast(null), [])
   const showError = (text: string): void => setToast({ text, kind: 'error' })
   const folder = snapshot?.folder ?? null
-  const boards = useMemo(() => sortBoards(collectBoards(tree?.nodes ?? [])), [tree])
+  const boards = boardList?.boards ?? NO_BOARDS
 
   const boardRef = useRef<BoardHandle>(null)
   const cacheRef = useRef(new Map<string, CacheEntry>())
@@ -147,6 +131,12 @@ export function App() {
   const preferredBoardRef = useRef<string | null>(null)
   /** The folder the renderer shows: reads and new boards belong to it. */
   const rootRef = useRef<string | null>(null)
+
+  /** Take a boards list from main: only of the folder shown, and only newer than the one shown (a late list is dropped). */
+  const takeBoards = useCallback((list: BoardList) => {
+    if (list.root !== rootRef.current) return
+    setBoardList((current) => (current && current.root === list.root && current.seq >= list.seq ? current : list))
+  }, [])
 
   // ---------- Saving ----------
 
@@ -454,6 +444,7 @@ export function App() {
     setPreviewPath(next.devOpen ?? null)
     preferredBoardRef.current = next.folder?.lastBoard ?? null
     setTree(next.folder?.tree ?? null)
+    setBoardList(next.folder?.boards ?? null)
     setSnapshot(next)
   }, [leaveBoard])
 
@@ -544,13 +535,13 @@ export function App() {
         await writePending((save) => op.op !== 'create' && save.root === rootRef.current && save.path === op.path)
         if (op.op === 'create') {
           const path = await space.createBoard(op.name, op.folder)
-          setTree(await space.listFiles())
+          takeBoards(await space.getBoards())
           return { path, wasOpen: false }
         }
         const from = op.path
         const wasOpen = openRef.current?.path === from
         const target = op.op === 'rename' ? await space.renameBoard(from, op.name) : (await space.deleteBoard(from), null)
-        const tree = await space.listFiles()
+        const list = await space.getBoards()
         if (target === from) return { path: from, wasOpen }
         const entry = cacheRef.current.get(from)
         cacheRef.current.delete(from)
@@ -584,7 +575,7 @@ export function App() {
           }
           setBoardError((error) => (error?.path === from ? null : error))
         }
-        setTree(tree)
+        takeBoards(list)
         return { path: target ?? from, wasOpen }
       })
       saveChainRef.current = run.then(
@@ -598,7 +589,7 @@ export function App() {
         saveSoon()
       }
     },
-    [flushCamera, saveSoon, writePending]
+    [flushCamera, saveSoon, takeBoards, writePending]
   )
 
   const createBoard = useCallback(async () => {
@@ -862,6 +853,7 @@ export function App() {
         setTree(next)
         setPreviewVersion((version) => version + 1)
       }),
+      space.onBoardsChanged(takeBoards),
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
       // Main sends the stories of the board the window shows; reads take them only for that board's path (live/stories.ts).
       // Main sends a board's stories after each new record line; they are for the open board only when its id is theirs.
