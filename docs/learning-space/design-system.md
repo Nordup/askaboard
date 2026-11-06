@@ -418,7 +418,8 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 - The corner at the bottom right, 12 px from the right and from the
   bottom edge (not centred on the tool pill's row; founder 2026-11-07): bare buttons, no pill and no shade (founder 2026-11-07): undo and
   redo (lucide `Undo2`, `Redo2`), an 8 px gap, − % +; 28 px buttons, 15 px
-  icons, a round hover fill. A click on the % zooms to 100% (no menu; ⇧1
+  icons, `--text-tertiary` at rest like every bare icon button
+  (`.icon-button`), `--text-primary` and a round hover fill on hover. A click on the % zooms to 100% (no menu; ⇧1
   and ⇧2 fit the board and the selection, founder 2026-11-06). The tool
   pill (40 px; 30 px buttons, 17 px icons; founder: "a little bit larger"; `iconScale` in `TOOLS`
   evens the optical size of the arrow (1.2) and the line (0.9) with the

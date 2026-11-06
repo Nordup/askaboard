@@ -875,6 +875,17 @@ button:focus-visible {
   pointer-events: auto;
 }
 
+/* Quieter than the tools, as every bare icon button (.icon-button): tertiary at rest, primary on hover. */
+.board-controls__corner .tool,
+.board-controls__corner .zoom-label {
+  color: var(--text-tertiary);
+}
+
+.board-controls__corner .tool:hover,
+.board-controls__corner .zoom-label:hover {
+  color: var(--text-primary);
+}
+
 /* The space between undo and zoom. */
 .board-controls__gap {
   width: var(--corner-group-gap);
