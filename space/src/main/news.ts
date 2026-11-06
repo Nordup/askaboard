@@ -60,7 +60,8 @@ export class BoardNews {
 
   /**
    * Deliver the news for an agent app on the open board: the line, or '' when
-   * nothing is new (or the app has never looked at this board). Marks it delivered.
+   * nothing is new. Marks it delivered. Learner changes need an earlier look at
+   * this board; the view-size sentence does not (the view is window-wide).
    */
   deliver(client: string): Promise<string> {
     return this.serial(client, async () => {
@@ -68,11 +69,9 @@ export class BoardNews {
       const board = this.deps.shownBoard()
       if (!root || !board) return ''
       const state = getAgentLook(client, root, board)
-      const [news, view] = await Promise.all([state ? this.deps.request(state.seq) : null, this.deps.view().catch(() => null)])
-      // The baseline moves at every call, also when nothing is said, so the line means "since your previous tool call".
-      const resized = this.resized(client, view)
-      if (!state) return ''
+      const [news, resized] = await Promise.all([state ? this.deps.request(state.seq) : null, this.viewChange(client)])
       const viewOnly = (): string => (resized ? `Board news for "${boardName(board)}": ${resized}` : '')
+      if (!state) return viewOnly()
       if (!news || news.board !== board) return viewOnly()
       // The board's seq went back (the window reloaded and lost unsaved strokes): start again from now.
       if (news.cursor < state.seq) {
@@ -84,6 +83,22 @@ export class BoardNews {
       setAgentLook(client, root, board, { seq: news.cursor, at: now, lookSeq: state.lookSeq })
       return [formatNews(news, state.at, now), resized].filter(Boolean).join(' ')
     })
+  }
+
+  /** The view-size line only, or '' (for get_changes, which lists the learner's changes itself). Moves the view baseline as deliver() does. */
+  deliverView(client: string): Promise<string> {
+    return this.serial(client, async () => {
+      const root = this.deps.folderRoot()
+      const board = this.deps.shownBoard()
+      if (!root || !board) return ''
+      const resized = await this.viewChange(client)
+      return resized ? `Board news for "${boardName(board)}": ${resized}` : ''
+    })
+  }
+
+  /** Read the view and compare it with the baseline: the view-size sentence, or ''. The baseline moves at every call, also when nothing is said, so the line means "since your previous tool call". */
+  private async viewChange(client: string): Promise<string> {
+    return this.resized(client, await this.deps.view().catch(() => null))
   }
 
   /** The view-size sentence when the board element changed size since this app's previous call, else ''. Sets the baseline. */

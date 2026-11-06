@@ -811,8 +811,8 @@ export class AgentServer {
       this.hooks.activity({ sessionId: session.id, tool: name })
       const start = Date.now()
       // The board news goes out once, before the tool runs (a screenshot then counts as a look after it). Late notes go out when the result is assembled, so one that arrives while the tool runs is in this result.
-      // get_changes gets none: it lists the same changes itself.
-      const news = name === 'get_changes' ? '' : await this.newsLine(session)
+      // get_changes gets only the view-size line: it lists the learner's changes itself.
+      const news = await this.newsLine(session, name === 'get_changes')
       let result: CallToolResult
       let thrown: unknown = null
       const trace: CallTrace = { spans: { news_ms: Date.now() - start } }
@@ -882,11 +882,12 @@ export class AgentServer {
     return parts.join('\n')
   }
 
-  /** Deliver the board news for this session's agent app: the line, or ''. Never throws. */
-  private async newsLine(session: Session): Promise<string> {
+  /** Deliver the board news for this session's agent app (viewOnly: the view-size line only): the line, or ''. Never throws. */
+  private async newsLine(session: Session, viewOnly = false): Promise<string> {
     if (!session.id || session.id === 'catalog') return ''
     try {
-      return await this.news.deliver(this.label(session))
+      const client = this.label(session)
+      return await (viewOnly ? this.news.deliverView(client) : this.news.deliver(client))
     } catch {
       return ''
     }
