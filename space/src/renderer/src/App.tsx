@@ -17,7 +17,7 @@ import {
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
-import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FailedSave, FileNode, FileTree, GuideOverrides, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, Camera, FailedSave, FileNode, FileTree, GuideOverrides, ShellState, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { dropTracker, moveTracker } from './agent/groups'
@@ -36,6 +36,7 @@ import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
+import { isMac } from './platform'
 import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
 import { perfMeter } from './perf-meter'
@@ -702,14 +703,6 @@ export function App() {
     return space.onGuideOverrides(setGuideOverrides)
   }, [folderRoot, refreshGuideOverrides])
 
-  const openFile = useCallback(
-    (node: FileNode) => {
-      if (isBoardPath(node.name)) void openBoard(node.path)
-      else setPreviewPath(node.path)
-    },
-    [openBoard]
-  )
-
   // ---------- Events from the main process ----------
 
   const onBoardChangeRef = useRef<(path: string, deleted: boolean) => Promise<void>>(async () => undefined)
@@ -786,6 +779,43 @@ export function App() {
   const openPath = open?.path ?? null
   useEffect(() => setReadingBoard(openPath), [openPath])
   useEffect(() => setBoardNodes(() => boardRef.current?.liveState().nodes ?? []), [])
+
+  // ---------- Window chrome: the sidebar setting and full screen ----------
+
+  // Main owns both (state.json, the window); the start values come in one sync call, so the first paint has the right layout.
+  const [shellStart] = useState<ShellState>(() => space.getShellState())
+  const [sidebarHidden, setSidebarHidden] = useState(shellStart.sidebarHidden)
+  const [fullScreen, setFullScreen] = useState(shellStart.fullScreen)
+  /** The setting as last asked for, so two quick toggles are two changes before main answers. */
+  const sidebarHiddenRef = useRef(shellStart.sidebarHidden)
+  useEffect(() => {
+    const offs = [
+      space.onSidebarHidden((hidden) => {
+        sidebarHiddenRef.current = hidden
+        setSidebarHidden(hidden)
+      }),
+      space.onFullScreen(setFullScreen)
+    ]
+    return () => offs.forEach((off) => off())
+  }, [])
+  const toggleSidebar = useCallback(() => {
+    sidebarHiddenRef.current = !sidebarHiddenRef.current
+    setSidebarHidden(sidebarHiddenRef.current)
+    space.setSidebarHidden(sidebarHiddenRef.current)
+  }, [])
+
+  // ⌘B (Ctrl+B): a window key, not a menu accelerator, so ⌘B in a text box stays bold (board/content.tsx).
+  useEffect(() => {
+    const down = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.repeat || event.altKey || event.shiftKey || isEditableTarget(event.target)) return
+      if (!(isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return
+      if (event.key.toLowerCase() !== 'b') return
+      event.preventDefault()
+      toggleSidebar()
+    }
+    window.addEventListener('keydown', down)
+    return () => window.removeEventListener('keydown', down)
+  }, [toggleSidebar])
 
   // View > Show performance: main holds the choice; the top bar's pill follows it.
   const [showPerformance, setShowPerformance] = useState(false)
@@ -1126,26 +1156,33 @@ export function App() {
   }
 
   return (
-    <div className="shell">
+    <div
+      className="shell"
+      data-sidebar-hidden={sidebarHidden || undefined}
+      data-fullscreen={fullScreen || undefined}
+      data-window-buttons={(isMac && !fullScreen) || undefined}
+    >
       <Sidebar
+        hidden={sidebarHidden}
+        onToggleSidebar={toggleSidebar}
         folderName={folder?.name ?? null}
         folderRoot={folder?.root ?? null}
+        homeDir={shellStart.homeDir}
         recent={recent}
         boards={boards}
-        tree={tree}
         openBoard={open?.path ?? null}
-        previewPath={previewPath}
-        renaming={renaming}
+        renaming={sidebarHidden ? null : renaming}
         onOpenFolder={() => void openFolderDialog()}
         onOpenRecent={(path) => void openRecent(path)}
         onOpenBoard={(path) => void openBoard(path)}
         onCreateBoard={() => void createBoard()}
+        // search panel: next step
+        onSearch={() => {}}
         onStartRename={setRenaming}
         onRename={(path, name) => void renameBoard(path, name)}
         onCancelRename={() => setRenaming(null)}
         onDeleteBoard={(path) => void deleteBoard(path)}
         onReveal={reveal}
-        onOpenFile={openFile}
         setupOffer={setupOffer}
         setupOpen={!!folder && menuSetup}
         setupVersion={previewVersion}
@@ -1159,8 +1196,14 @@ export function App() {
       />
       <main className="main">
         <TopBar
+          sidebarHidden={sidebarHidden}
+          onToggleSidebar={toggleSidebar}
+          onCreateBoard={folder ? () => void createBoard() : null}
           folderName={folder?.name ?? null}
           boardName={open ? boardName(open.path) : null}
+          renaming={sidebarHidden && !!open && renaming === open.path}
+          onRename={(name) => open && void renameBoard(open.path, name)}
+          onCancelRename={() => setRenaming(null)}
           saveStatus={open ? saveStatus : null}
           zoom={open ? zoom : null}
           onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}

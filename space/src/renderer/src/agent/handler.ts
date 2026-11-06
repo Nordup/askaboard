@@ -27,7 +27,7 @@ import { scenePlayer } from '../live/player'
 import { linkedOverrides, linkedTip, markText, worldOf } from '@shared/world-links'
 import { measureSceneTexts } from '../live/measure'
 import { sceneHost } from '../live/host'
-import { sceneOf } from './placement'
+import { sceneOf, viewOf } from './placement'
 import { boardRead, changeReport, intervalOf, itemRead, shotPart, type ItemAs, type PartArg, type ReadContext } from './reads'
 
 /**
@@ -438,6 +438,11 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
     case 'learnerNews': {
       const params = request.params as AgentMethods['learnerNews']['params']
       return learnerNews(context, params.since)
+    }
+    case 'boardView': {
+      if (!context.openPath || !context.board) return null
+      const [width, height] = context.board.liveState().viewport
+      return { viewport: [width, height], view: rect(viewOf(context.board)) as BoardRect }
     }
     case 'screenshotPlan':
       return withLiveStills(screenshotPlan(context, request.params as AgentMethods['screenshotPlan']['params']))

@@ -127,6 +127,11 @@
   --sidebar-width: 248px;
   --topbar-height: 44px;
   --titlebar-height: 44px;
+  /* The macOS window buttons: the sidebar button's left edge sits right of them (in a window, not full screen) */
+  --traffic-light-reserve: 78px;
+  --sidebar-row-height: 30px; /* every sidebar row: New board, Search boards, a board */
+  --sidebar-footer-height: 44px; /* the folder row at the bottom of the sidebar */
+  --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */
   --palette-height: 48px;
   --pill-height: 26px;
   --pill-gap: 7px; /* between a pill's dot, label and parts */

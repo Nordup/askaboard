@@ -43,9 +43,20 @@ button:focus-visible {
 /* ---------- Shell ---------- */
 
 .shell {
+  /* The sidebar button's left edge: right of the macOS window buttons in a window; 12 px in full screen and off macOS. */
+  --chrome-reserve: var(--space-3);
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   height: 100%;
+}
+
+.shell[data-window-buttons] {
+  --chrome-reserve: var(--traffic-light-reserve);
+}
+
+/* View > Hide Sidebar: one column, at once (no width animation: the board would repaint each frame). */
+.shell[data-sidebar-hidden] {
+  grid-template-columns: 1fr;
 }
 
 .main {
@@ -72,68 +83,31 @@ button:focus-visible {
   border-right: 1px solid var(--border-subtle);
 }
 
-.sidebar__titlebar {
+.sidebar[hidden] {
+  display: none;
+}
+
+/* The top strip: the window buttons and the sidebar button, level with the top bar (same height, same 1 px line below). */
+.sidebar__strip {
+  display: flex;
+  align-items: center;
   height: var(--titlebar-height);
   flex-shrink: 0;
+  padding-left: var(--chrome-reserve);
+  border-bottom: 1px solid transparent;
   -webkit-app-region: drag;
 }
 
-.folder-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: calc(100% - 2 * var(--space-2));
-  margin: 0 var(--space-2) var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  text-align: left;
-  transition: background 120ms ease;
+.sidebar__strip button {
+  -webkit-app-region: no-drag;
 }
 
-.folder-header:hover {
-  background: var(--bg-hover);
-}
-
-.folder-header__chevron {
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--text-tertiary);
-}
-
-.folder-header__icon {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-}
-
-.folder-header__text {
+/* New board, Search boards, Set up for learning: sidebar rows above the boards. */
+.sidebar__actions {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-}
-
-.folder-header__name {
-  color: var(--text-primary);
-  font-weight: 560;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.folder-header__name--empty {
-  color: var(--text-secondary);
-}
-
-.folder-header__path {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  flex-shrink: 0;
+  padding: 0 var(--space-2) var(--space-2);
 }
 
 .sidebar__scroll {
@@ -174,11 +148,61 @@ button:focus-visible {
 .sidebar__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 36px;
-  padding: 0 var(--space-4);
+  flex-shrink: 0;
+  height: var(--sidebar-footer-height);
+  padding: 0 var(--space-2);
   border-top: 1px solid var(--border-subtle);
+}
+
+/* The folder row: the folder name over where it is saved; a click opens the folder menu above it. */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: calc(var(--sidebar-footer-height) - 2 * var(--space-1));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.folder-row:hover,
+.folder-row[aria-expanded='true'] {
+  background: var(--bg-hover);
+}
+
+.folder-row__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.folder-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.folder-row__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.folder-row__sub {
+  overflow: hidden;
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.folder-row__chevron {
+  flex-shrink: 0;
   color: var(--text-tertiary);
 }
 
@@ -234,13 +258,29 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-.topbar__crumb {
-  color: var(--text-tertiary);
+/* With the sidebar hidden: the sidebar button at its place on the screen, then New board, then the board name. */
+.shell[data-sidebar-hidden] .topbar {
+  padding-left: var(--chrome-reserve);
 }
 
-.topbar__sep {
-  color: var(--text-tertiary);
-  opacity: 0.6;
+.topbar__lead {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--space-1);
+  margin-right: var(--space-1);
+}
+
+/* No board open: the folder name, or "Learning Space" without a folder. */
+.topbar__folder {
+  overflow: hidden;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.topbar__rename {
+  flex: 0 1 var(--topbar-rename-width);
 }
 
 .topbar__board {
@@ -934,7 +974,6 @@ button:focus-visible {
 /* ---------- Board list ---------- */
 
 .board-list,
-.tree,
 .recent-list {
   margin: 0;
   padding: 0;
@@ -945,9 +984,9 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 28px;
+  height: var(--sidebar-row-height);
   padding: 0 var(--space-1) 0 var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   cursor: default;
   outline: none;
@@ -1005,6 +1044,27 @@ button:focus-visible {
   opacity: 1;
 }
 
+/* A sidebar row that runs an action (New board, Search boards): a button, icon in secondary, a shortcut hint at the right. */
+.board-row--action {
+  width: 100%;
+  padding: 0 var(--space-2);
+  text-align: left;
+}
+
+.board-row--action .board-row__icon {
+  color: var(--text-secondary);
+}
+
+.board-row--action .board-row__name {
+  flex: 1;
+}
+
+.board-row__hint {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .board-row--editing {
   background: var(--bg-active);
 }
@@ -1023,93 +1083,17 @@ button:focus-visible {
   user-select: text;
 }
 
-/* ---------- File tree ---------- */
-
-.tree__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  height: 26px;
-  padding-right: var(--space-2);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  text-align: left;
-}
-
-.tree__row:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.tree__row--active,
-.tree__row--active:hover {
-  background: var(--bg-active);
-  color: var(--text-primary);
-}
-
-.tree__chevron {
-  display: grid;
-  place-items: center;
-  width: 12px;
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  transition: transform 120ms ease;
-}
-
-.tree__chevron--open {
-  transform: rotate(90deg);
-}
-
-.tree__icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-}
-
-.tree .tree {
-  position: relative;
-}
-
-/* The guide line of a nested list, under the chevron of its folder. */
-.tree .tree::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--tree-guide-x, 14px);
-  width: 1px;
-  background: var(--border-subtle);
-  pointer-events: none;
-}
-
-.tree__empty {
-  display: flex;
-  align-items: center;
-  height: 24px;
-  font-size: var(--text-sm);
-  font-style: italic;
-  color: var(--text-tertiary);
-  user-select: none;
-}
-
-.tree__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ---------- Menu ---------- */
 
 /*
  * One menu system for every popup: Menu.tsx (sidebar folder and board menus),
  * the agent popover and the setup flyout. A menu sets only its position and
- * width; spacing and type come from the custom properties below.
+ * width; spacing and type come from the custom properties below. Menu.tsx opens
+ * below its point, or above it with `above` (an anchor at the bottom, as the
+ * sidebar footer); Escape gives the focus back to the element that had it.
  *
  *   .menu__heading         small uppercase section label
- *   .menu__title/__lede    a title and one muted line
+ *   .menu__title/__lede    a title and one muted line (or two: a second .menu__lede follows closely); long words wrap
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
@@ -1156,12 +1140,18 @@ button:focus-visible {
   padding: 6px 8px 2px;
   color: var(--text-primary);
   font-weight: 560;
+  overflow-wrap: anywhere;
 }
 
 .menu__lede {
   padding: 0 8px 8px;
   color: var(--text-tertiary);
   font-size: var(--menu-meta-font);
+  overflow-wrap: anywhere;
+}
+
+.menu__lede:has(+ .menu__lede) {
+  padding-bottom: 2px;
 }
 
 .menu__item {
@@ -1732,7 +1722,7 @@ button:focus-visible {
 .folder-overrides {
   display: flex;
   flex-direction: column;
-  margin: calc(-1 * var(--space-1)) var(--space-2) var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .agent-pop__overrides {
@@ -1776,15 +1766,7 @@ button:focus-visible {
 
 /* ---------- Set up for learning ---------- */
 
-/* The quiet sidebar row under the folder header (a board row). */
-.setup-row-wrap {
-  padding: 0 var(--space-2) var(--space-2);
-}
-
-.setup-row {
-  width: 100%;
-  text-align: left;
-}
+/* The quiet sidebar row under Search boards (a board row, --action). */
 
 .setup-row__icon {
   flex-shrink: 0;
@@ -1802,6 +1784,11 @@ button:focus-visible {
   margin-right: var(--space-1);
   border-radius: 50%;
   background: var(--accent);
+}
+
+/* The sidebar footer's folder menu: layout only (width: the sidebar's, inside its padding); it opens above the footer. */
+.menu.folder-menu {
+  width: calc(var(--sidebar-width) - 2 * var(--space-2));
 }
 
 /* The "Set up this folder" flyout: layout only (width); the content is shared .menu parts. */

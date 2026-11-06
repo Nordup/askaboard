@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -9,7 +10,7 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { installMenu, setFolderOpen, setReadLinesChecked } from './menu'
+import { devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -148,6 +149,13 @@ const agentServer = new AgentServer({
 
 function send(channel: string, payload?: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+}
+
+/** View > Hide Sidebar: main owns it. A change is saved at once and reaches the menu and the renderer here. */
+function setSidebarHidden(hidden: boolean): void {
+  if (hidden !== store.getSidebarHidden()) store.setSidebarHidden(hidden)
+  setSidebarMenu(hidden)
+  send(IPC.sidebarHidden, hidden)
 }
 
 /** What the menu and the renderer show of Read Lines Aloud. */
@@ -311,6 +319,19 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.devClose, () => {
     if (remoteDebugPort !== null) mainWindow?.close()
+  })
+  ipcMain.on(IPC.devFullScreen, (_event, on: unknown) => {
+    if (remoteDebugPort !== null && typeof on === 'boolean') mainWindow?.setFullScreen(on)
+  })
+  ipcMain.on(IPC.devSidebarMenu, (event, click: unknown) => {
+    event.returnValue = remoteDebugPort !== null ? devSidebarMenu(click === true) : null
+  })
+  ipcMain.on(IPC.getShellState, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, homeDir: homedir() }
+  })
+  ipcMain.on(IPC.setSidebarHidden, (event, hidden: unknown) => {
+    if (event.sender === mainWindow?.webContents && typeof hidden === 'boolean') setSidebarHidden(hidden)
   })
   ipcMain.on(IPC.devCloseAnswer, (_event, button: unknown) => {
     if (remoteDebugPort !== null && typeof button === 'number') answerCloseDialog?.(button)
@@ -552,6 +573,12 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
+  // The sidebar button moves left when the window buttons go (full screen on macOS).
+  const sendFullScreen = (on: boolean): void => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.fullScreen, on)
+  }
+  win.on('enter-full-screen', () => sendFullScreen(true))
+  win.on('leave-full-screen', () => sendFullScreen(false))
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -634,6 +661,8 @@ void app.whenReady().then(async () => {
     setupFolder: () => sendMenuCommand('setup-folder'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),
     selectAll: () => sendMenuCommand('select-all'),
+    sidebarHidden: store.getSidebarHidden(),
+    toggleSidebar: () => setSidebarHidden(!store.getSidebarHidden()),
     showPerformance: store.getShowPerformance(),
     setShowPerformance: (on) => {
       store.setShowPerformance(on)

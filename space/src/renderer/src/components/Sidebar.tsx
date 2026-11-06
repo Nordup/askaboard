@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookOpen, ChevronDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Plus, Trash } from 'lucide-react'
-import type { FileNode, FileTree as FileTreeData, GuideOverrides, RecentFolder } from '@shared/space-api'
-import { FileTree } from './FileTree'
+import { BookOpen, ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Search, SquarePen, Trash } from 'lucide-react'
+import type { GuideOverrides, RecentFolder } from '@shared/space-api'
 import { GuideOverrideNote } from './GuideOverrideNote'
 import { Menu, type MenuEntry } from './Menu'
+import { RenameInput } from './RenameInput'
 import { SetupMenu } from './SetupMenu'
-import { revealLabel, shortcut } from '../platform'
+import { SidebarToggle } from './SidebarToggle'
+import { revealLabel, savedOnLabel, shortcut } from '../platform'
 
 export interface BoardEntry {
   path: string
@@ -15,92 +16,85 @@ export interface BoardEntry {
 }
 
 interface SidebarProps {
+  /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
+  hidden: boolean
+  onToggleSidebar(): void
   folderName: string | null
   folderRoot: string | null
+  /** The learner's home folder, so the folder menu shows the path as `~/…`. */
+  homeDir: string
   recent: RecentFolder[]
   boards: BoardEntry[]
-  tree: FileTreeData | null
   openBoard: string | null
-  previewPath: string | null
   renaming: string | null
   onOpenFolder(): void
   onOpenRecent(path: string): void
   onOpenBoard(path: string): void
   onCreateBoard(): void
+  /** The "Search boards" row (the search panel). */
+  onSearch(): void
   onStartRename(path: string): void
   onRename(path: string, name: string): void
   onCancelRename(): void
   onDeleteBoard(path: string): void
   onReveal(path: string): void
-  onOpenFile(node: FileNode): void
   /** Show the "Set up for learning" row: the folder is not set up and the offer is not dismissed. */
   setupOffer: boolean
   /** The setup menu is open. */
   setupOpen: boolean
   /** Changes when the folder changes on disk, so the setup list reloads. */
   setupVersion: number
-  /** Open the setup menu (the row, the folder menu, File > Set Up Folder for Learning…). */
+  /** Open the setup menu (the row, File > Set Up Folder for Learning…). */
   onSetUpFolder(): void
   onCloseSetup(): void
   onApplySetup(): Promise<void>
   onDontAskSetup(): void
   /** Open the folder's board guide, .learning-space/guide.md. */
   onEditGuide(): void
-  /** The folder's guide and instructions overrides, shown under the header. */
+  /** The folder's guide and instructions overrides, shown under the rows. */
   guideOverrides: GuideOverrides | null
   /** Open an override file (the same flow as Edit Board Guide…). */
   onOpenOverride(path: string): void
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
+const ROW_ICON = { size: 16, strokeWidth: 1.75 }
 
-function RenameInput({ initial, onCommit, onCancel }: { initial: string; onCommit(name: string): void; onCancel(): void }) {
-  const [value, setValue] = useState(initial)
-  const done = useRef(false)
-  const finish = (commit: boolean): void => {
-    if (done.current) return
-    done.current = true
-    const name = value.trim()
-    if (commit && name && name !== initial) onCommit(name)
-    else onCancel()
-  }
-  return (
-    <input
-      className="board-row__input"
-      value={value}
-      autoFocus
-      spellCheck={false}
-      onFocus={(event) => event.currentTarget.select()}
-      onChange={(event) => setValue(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') finish(true)
-        else if (event.key === 'Escape') finish(false)
-      }}
-      onBlur={() => finish(true)}
-    />
-  )
+/** The path with `~` for the home folder. */
+function homePath(path: string, home: string): string {
+  if (!home || !path.startsWith(home)) return path
+  const rest = path.slice(home.length)
+  if (rest === '') return '~'
+  return rest.startsWith('/') || rest.startsWith('\\') ? `~${rest}` : path
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { folderName, folderRoot, recent, boards, tree, openBoard, previewPath, renaming } = props
-  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const headerRef = useRef<HTMLButtonElement>(null)
+  const { hidden, folderName, folderRoot, recent, boards, openBoard, renaming } = props
+  const [menu, setMenu] = useState<{ x: number; y: number; above: boolean; entries: MenuEntry[]; className?: string } | null>(null)
+  const footerRef = useRef<HTMLButtonElement>(null)
   const setupRowRef = useRef<HTMLButtonElement>(null)
 
-  // A new folder starts with its top-level folders open.
-  useEffect(() => {
-    setExpanded(new Set(tree?.nodes.filter((node) => node.kind === 'dir').map((node) => node.path) ?? []))
-    // Only when the folder changes, not on every tree refresh.
-  }, [folderRoot])
+  // A menu belongs to the sidebar: it closes when the sidebar hides or the folder changes.
+  useEffect(() => setMenu(null), [hidden, folderRoot])
 
-  const folderMenu = (x: number, y: number): void => {
+  const folderMenu = (anchor: HTMLElement): void => {
+    if (!folderRoot) return
+    // Above the footer's hairline, left edge with the row.
+    const rect = anchor.getBoundingClientRect()
+    const footerTop = anchor.closest('.sidebar__footer')?.getBoundingClientRect().top ?? rect.top
     const others = recent.filter((entry) => entry.path !== folderRoot)
     setMenu({
-      x,
-      y,
+      x: rect.left,
+      y: footerTop - 4,
+      above: true,
+      className: 'folder-menu',
       entries: [
+        { title: folderName ?? '' },
+        { lede: homePath(folderRoot, props.homeDir) },
+        { lede: 'Your boards are files in this folder.' },
+        { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
         { label: 'Open Learning Folder…', icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
+        { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
         ...(others.length
           ? (['separator', { heading: 'Recent' }] as MenuEntry[]).concat(
               others.map((entry) => ({
@@ -109,14 +103,6 @@ export function Sidebar(props: SidebarProps) {
                 onSelect: () => props.onOpenRecent(entry.path)
               }))
             )
-          : []),
-        ...(folderRoot
-          ? ([
-              'separator',
-              { label: 'Set Up for Learning…', icon: <GraduationCap {...ICON} />, onSelect: props.onSetUpFolder },
-              { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
-              { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') }
-            ] as MenuEntry[])
           : [])
       ]
     })
@@ -126,6 +112,7 @@ export function Sidebar(props: SidebarProps) {
     setMenu({
       x,
       y,
+      above: false,
       entries: [
         { label: 'Rename', icon: <Pencil {...ICON} />, onSelect: () => props.onStartRename(board.path) },
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal(board.path) },
@@ -135,49 +122,42 @@ export function Sidebar(props: SidebarProps) {
     })
   }
 
-  const activePaths = new Set([openBoard, previewPath].filter((path): path is string => !!path))
-
   return (
-    <aside className="sidebar">
-      <div className="sidebar__titlebar" />
+    <aside className="sidebar" hidden={hidden}>
+      <div className="sidebar__strip">
+        <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
+      </div>
 
-      <button
-        ref={headerRef}
-        className="folder-header"
-        title={folderRoot ?? 'Open a learning folder'}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect()
-          folderMenu(rect.left, rect.bottom + 4)
-        }}
-      >
-        <span className="folder-header__icon">
-          <Folder size={14} strokeWidth={1.75} />
-        </span>
-        <span className="folder-header__text">
-          <span className={folderName ? 'folder-header__name' : 'folder-header__name folder-header__name--empty'}>
-            {folderName ?? 'No folder'}
-          </span>
-          <span className="folder-header__path">Learning folder</span>
-        </span>
-        <ChevronDown className="folder-header__chevron" size={14} strokeWidth={1.75} />
-      </button>
-      {folderRoot && props.setupOffer && (
-        <div className="setup-row-wrap">
-          <button
-            ref={setupRowRef}
-            className={props.setupOpen ? 'board-row setup-row board-row--active' : 'board-row setup-row'}
-            aria-expanded={props.setupOpen}
-            onClick={() => (props.setupOpen ? props.onCloseSetup() : props.onSetUpFolder())}
-          >
-            <GraduationCap className="setup-row__icon" {...ICON} />
-            <span className="board-row__name">Set up for learning</span>
-            <span className="setup-row__dot" />
+      {folderRoot && (
+        <nav className="sidebar__actions">
+          <button className="board-row board-row--action" onClick={props.onCreateBoard}>
+            <SquarePen className="board-row__icon" {...ROW_ICON} />
+            <span className="board-row__name">New board</span>
+            <span className="board-row__hint">{shortcut('N')}</span>
           </button>
-        </div>
+          <button className="board-row board-row--action" onClick={props.onSearch}>
+            <Search className="board-row__icon" {...ROW_ICON} />
+            <span className="board-row__name">Search boards</span>
+            <span className="board-row__hint">{shortcut('K')}</span>
+          </button>
+          {props.setupOffer && (
+            <button
+              ref={setupRowRef}
+              className={props.setupOpen ? 'board-row board-row--action setup-row board-row--active' : 'board-row board-row--action setup-row'}
+              aria-expanded={props.setupOpen}
+              onClick={() => (props.setupOpen ? props.onCloseSetup() : props.onSetUpFolder())}
+            >
+              <GraduationCap className="setup-row__icon" {...ROW_ICON} />
+              <span className="board-row__name">Set up for learning</span>
+              <span className="setup-row__dot" />
+            </button>
+          )}
+          <GuideOverrideNote className="folder-overrides" overrides={props.guideOverrides} onOpen={props.onOpenOverride} />
+        </nav>
       )}
       {folderRoot && props.setupOpen && (
         <SetupMenu
-          anchor={props.setupOffer ? setupRowRef.current : headerRef.current}
+          anchor={props.setupOffer ? setupRowRef.current : footerRef.current}
           anchorToggles={props.setupOffer}
           version={props.setupVersion}
           onSetUp={props.onApplySetup}
@@ -185,22 +165,16 @@ export function Sidebar(props: SidebarProps) {
           onDontAsk={props.onDontAskSetup}
         />
       )}
-      {folderRoot && <GuideOverrideNote className="folder-overrides" overrides={props.guideOverrides} onOpen={props.onOpenOverride} />}
 
       <div className="sidebar__scroll">
         <section className="section">
           <header className="section__header">
             <span className="section__title">Boards</span>
-            {folderName && (
-              <button className="icon-button" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
-                <Plus size={14} strokeWidth={2} />
-              </button>
-            )}
           </header>
-          {boards.length === 0 ? (
+          {!folderName ? null : boards.length === 0 ? (
             <div className="section__empty">
               <LayoutDashboard size={13} strokeWidth={1.75} />
-              {folderName ? 'No boards yet' : 'Open a folder first'}
+              No boards yet
             </div>
           ) : (
             <ul className="board-list">
@@ -253,41 +227,50 @@ export function Sidebar(props: SidebarProps) {
             </ul>
           )}
         </section>
-
-        <section className="section">
-          <header className="section__header">
-            <span className="section__title">Files</span>
-          </header>
-          {tree && tree.nodes.length > 0 ? (
-            <>
-              <FileTree
-                nodes={tree.nodes}
-                expanded={expanded}
-                activePaths={activePaths}
-                onToggle={(path) =>
-                  setExpanded((current) => {
-                    const next = new Set(current)
-                    if (next.has(path)) next.delete(path)
-                    else next.add(path)
-                    return next
-                  })
-                }
-                onOpen={props.onOpenFile}
-              />
-              {tree.truncated && <div className="section__empty">Some files are not shown (folder too large)</div>}
-            </>
-          ) : (
-            <div className="section__empty">{folderName ? 'This folder is empty' : 'Open a folder to see its files'}</div>
-          )}
-        </section>
       </div>
 
       <footer className="sidebar__footer">
-        <span>Learning Space</span>
-        <span className="mono">v{window.space.version}</span>
+        <button
+          ref={footerRef}
+          className="folder-row"
+          title={folderRoot ?? undefined}
+          aria-haspopup={folderRoot ? 'menu' : undefined}
+          aria-expanded={folderRoot ? menu?.className === 'folder-menu' : undefined}
+          onClick={(event) => {
+            if (!folderRoot) props.onOpenFolder()
+            else if (menu?.className === 'folder-menu') setMenu(null)
+            else folderMenu(event.currentTarget)
+          }}
+        >
+          <Folder className="folder-row__icon" {...ROW_ICON} />
+          {folderRoot ? (
+            <>
+              <span className="folder-row__text">
+                <span className="folder-row__name">{folderName}</span>
+                <span className="folder-row__sub">{savedOnLabel}</span>
+              </span>
+              <ChevronsUpDown className="folder-row__chevron" {...ICON} />
+            </>
+          ) : (
+            <span className="folder-row__text">
+              <span className="folder-row__name">Open a folder</span>
+            </span>
+          )}
+        </button>
       </footer>
 
-      {menu && <Menu x={menu.x} y={menu.y} entries={menu.entries} onClose={() => setMenu(null)} minWidth={menu.entries.length > 4 ? 220 : 180} />}
+      {menu && (
+        <Menu
+          x={menu.x}
+          y={menu.y}
+          above={menu.above}
+          entries={menu.entries}
+          className={menu.className}
+          toggle={menu.className === 'folder-menu' ? footerRef.current : null}
+          onClose={() => setMenu(null)}
+          minWidth={menu.entries.length > 4 ? 220 : 180}
+        />
+      )}
     </aside>
   )
 }

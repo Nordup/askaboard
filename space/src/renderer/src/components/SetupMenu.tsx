@@ -69,14 +69,17 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
   }, [version])
 
   // A flyout beside the sidebar: 12px right of its edge, top aligned with the anchor, inside the window.
+  // With the sidebar hidden (File > Set Up Folder for Learning…), it opens at the left, under the top bar.
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
     const rect = element.getBoundingClientRect()
-    const base = anchor?.getBoundingClientRect()
-    const sidebar = anchor?.closest('.sidebar')?.getBoundingClientRect()
-    const left = sidebar ? sidebar.right + 12 : base ? base.right + 12 : 8
-    const top = base ? base.top : 8
+    const shown = anchor && anchor.getClientRects().length > 0 ? anchor : null
+    const base = shown?.getBoundingClientRect()
+    const sidebar = shown?.closest('.sidebar')?.getBoundingClientRect()
+    const topbar = document.querySelector('.topbar')?.getBoundingClientRect()
+    const left = sidebar ? sidebar.right + 12 : base ? base.right + 12 : 12
+    const top = base ? base.top : (topbar?.bottom ?? 0) + 12
     setPosition({
       left: Math.max(8, Math.min(left, window.innerWidth - rect.width - 8)),
       top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))

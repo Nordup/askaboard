@@ -74,6 +74,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--radius-pill`
 - Shadow: `--shadow-float`, `--shadow-card`
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
+  `--traffic-light-reserve` (the sidebar button's left edge right of the
+  macOS window buttons), `--sidebar-row-height`, `--sidebar-footer-height`,
+  `--topbar-rename-width`,
   `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
   `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
@@ -110,7 +113,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | Part | Use |
 | --- | --- |
 | `.menu__heading` | Small uppercase section label |
-| `.menu__title` + `.menu__lede` | A title and one muted line |
+| `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap. `Menu.tsx` entries `{ title }` and `{ lede }` |
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover) |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
@@ -126,7 +129,10 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 - A part that is missing goes **into the shared system**, with a line in the
   comment block, so every menu can use it. Never style one menu alone.
 - Menus open next to their anchor: below a top-bar control, or as a flyout
-  12 px to the right of the sidebar, level with the row that opened it.
+  12 px to the right of the sidebar, level with the row that opened it. A
+  menu whose anchor is at the bottom opens above it (`Menu.tsx` `above`: the
+  sidebar footer's folder menu). An anchor that opens and closes the menu
+  passes `toggle`, so a press on it is not an outside press.
 - One primary control per row. A problem is one short line with **Fix** or
   **Retry**, not a paragraph.
 - Escape and a click outside close a menu; focus returns to the anchor.
@@ -163,8 +169,26 @@ item pill).
 - **Setup flyout.** A quiet sidebar row "Set up for learning" with an accent
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
-- **Sidebar.** Folder header, boards list, file tree; rows share one height
-  and type scale.
+- **Sidebar** (left-panel plan, decisions U6, 2026-11-06). Top to bottom: a
+  44 px strip (drag region) with the sidebar button (lucide `PanelLeft`,
+  `.icon-button`, `SidebarToggle.tsx`); the rows New board (`SquarePen`,
+  hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
+  .board-row--action` with `.board-row__hint`; the "Set up for learning" row
+  and the guide-override note; the heading "Boards" and the boards list;
+  the footer (`--sidebar-footer-height`, top hairline): `.folder-row` with
+  `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
+  `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
+  `--radius-md`. The footer opens the folder menu above it
+  (`.menu.folder-menu`, the sidebar's width): title, the path with `~`, "Your
+  boards are files in this folder.", Reveal, Open Learning Folder…, Edit
+  Board Guide…, Recent. No folder: the footer reads "Open a folder".
+- **Sidebar hidden** (⌘B, View > Hide Sidebar; main owns the setting). One
+  column, at once. The sidebar button keeps its place on the screen: left
+  edge at `--traffic-light-reserve` (78 px) on macOS in a window, `--space-3`
+  in full screen and off macOS (`--chrome-reserve` on `.shell`, set by
+  `data-window-buttons`). The top bar then starts with the button and a New
+  board button (`.topbar__lead`), then the board name; a new board's rename
+  field shows in the top bar (`.topbar__rename`).
 - **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and
   menu from mockup v5, 2026-10-29). Left of the agent pill, from the same
   parts and with the same open behaviour: a `.pill.pill--static` whose

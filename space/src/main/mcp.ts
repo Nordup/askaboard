@@ -456,6 +456,7 @@ export class AgentServer {
     )
     this.news = new BoardNews({
       request: (since) => this.bridge.request('learnerNews', { since }, NEWS_TIMEOUT_MS),
+      view: () => this.bridge.request('boardView', {}, NEWS_TIMEOUT_MS),
       folderRoot: () => hooks.folderRoot(),
       shownBoard: () => hooks.shownBoard()
     })

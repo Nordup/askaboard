@@ -10,3 +10,6 @@ export function shortcut(key: string): string {
 
 /** The menu label that shows a file in the system file manager. */
 export const revealLabel = isMac ? 'Reveal in Finder' : platform === 'win32' ? 'Show in Explorer' : 'Open Containing Folder'
+
+/** Where the boards are kept, under the folder name in the sidebar footer. */
+export const savedOnLabel = isMac ? 'Saved on this Mac' : 'Saved on this computer'

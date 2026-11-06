@@ -1,4 +1,5 @@
 import { ago, clusterByPlace, placeText as box, plural, unionRegions } from '@shared/board-digest'
+import { boardName } from '@shared/board-format'
 import type { BoardRect, LearnerNews, NewsItem } from '@shared/space-api'
 import { getAgentLook, setAgentLook } from './state'
 
@@ -24,8 +25,15 @@ import { getAgentLook, setAgentLook } from './state'
 
 type NewsRequest = (since: number) => Promise<LearnerNews | null>
 
+/** The board element's size in CSS px and the learner's view in board points, or null. */
+type BoardView = { viewport: [number, number]; view: BoardRect } | null
+
+/** A change of the board element's size by this many CSS px (width or height) is news (T38). Zoom and pan do not change it. */
+const VIEW_RESIZE_PX = 24
+
 export interface BoardNewsDeps {
   request: NewsRequest
+  view(): Promise<BoardView>
   folderRoot(): string | null
   /** The board the window shows (folder-relative path), or null. */
   shownBoard(): string | null
@@ -34,6 +42,8 @@ export interface BoardNewsDeps {
 export class BoardNews {
   /** Per app label: one delivery at a time, so two concurrent calls cannot both send the same news. */
   private readonly busy = new Map<string, Promise<unknown>>()
+  /** Per app label: the board element's size at the app's previous tool call (in memory only). */
+  private readonly viewports = new Map<string, [number, number]>()
 
   constructor(private readonly deps: BoardNewsDeps) {}
 
@@ -58,19 +68,33 @@ export class BoardNews {
       const board = this.deps.shownBoard()
       if (!root || !board) return ''
       const state = getAgentLook(client, root, board)
+      const [news, view] = await Promise.all([state ? this.deps.request(state.seq) : null, this.deps.view().catch(() => null)])
+      // The baseline moves at every call, also when nothing is said, so the line means "since your previous tool call".
+      const resized = this.resized(client, view)
       if (!state) return ''
-      const news = await this.deps.request(state.seq)
-      if (!news || news.board !== board) return ''
+      const viewOnly = (): string => (resized ? `Board news for "${boardName(board)}": ${resized}` : '')
+      if (!news || news.board !== board) return viewOnly()
       // The board's seq went back (the window reloaded and lost unsaved strokes): start again from now.
       if (news.cursor < state.seq) {
         setAgentLook(client, root, board, { seq: news.cursor, at: state.at, lookSeq: Math.min(state.lookSeq, news.cursor) })
-        return ''
+        return viewOnly()
       }
-      if (!news.added.length && !news.erased.length && !news.items.length && !news.scenePauses?.length) return ''
+      if (!news.added.length && !news.erased.length && !news.items.length && !news.scenePauses?.length) return viewOnly()
       const now = Date.now()
       setAgentLook(client, root, board, { seq: news.cursor, at: now, lookSeq: state.lookSeq })
-      return formatNews(news, state.at, now)
+      return [formatNews(news, state.at, now), resized].filter(Boolean).join(' ')
     })
+  }
+
+  /** The view-size sentence when the board element changed size since this app's previous call, else ''. Sets the baseline. */
+  private resized(client: string, board: BoardView): string {
+    if (!board) return ''
+    const before = this.viewports.get(client)
+    this.viewports.set(client, board.viewport)
+    if (!before) return ''
+    const [width, height] = board.viewport
+    if (Math.abs(width - before[0]) < VIEW_RESIZE_PX && Math.abs(height - before[1]) < VIEW_RESIZE_PX) return ''
+    return `The learner's view changed size (window or sidebar): it is now ${box(board.view)}.`
   }
 
   /** An agent app looked at `board` (cursor = the board seq at the look): everything up to it counts as delivered. */

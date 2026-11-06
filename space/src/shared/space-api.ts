@@ -119,6 +119,16 @@ export interface FailedSave {
   text: string
 }
 
+/** The window chrome the renderer lays out by (main/index.ts owns all three). */
+export interface ShellState {
+  /** View > Hide Sidebar, saved in state.json. */
+  sidebarHidden: boolean
+  /** The window is in full screen (macOS: no window buttons at the top left). */
+  fullScreen: boolean
+  /** The learner's home folder, so a path can show as `~/…`. */
+  homeDir: string
+}
+
 export type MenuCommand = 'open-folder' | 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
 
 /** Call the returned function to stop listening. */
@@ -457,6 +467,8 @@ export interface AgentMethods {
   boardChange: { params: BoardChangeOp; result: BoardChangeResult }
   /** The learner's changes after `since`; null when no board is open. */
   learnerNews: { params: { since: number }; result: LearnerNews | null }
+  /** The board element's size in CSS px and the learner's view in board points (the view-size news, T38); null when no board is open. */
+  boardView: { params: Record<string, never>; result: { viewport: [number, number]; view: BoardRect } | null }
   agentTool: { params: { tool: AgentToolName; args: Record<string, unknown> }; result: unknown }
   /** Check a world's code; error null when it is fine. */
   validateLive: { params: { code: string; params?: Record<string, number>; size?: [number, number]; data?: unknown }; result: { error: string | null } }
@@ -598,6 +610,14 @@ export interface SpaceApi {
   applySetup(): Promise<SetupResult>
   /** Remember (or forget) "Don't ask for this folder". */
   setSetupDontAsk(value: boolean): Promise<void>
+  /** Main window only: the sidebar setting, full screen and the home folder, at once (a sync call, so the first paint is right). */
+  getShellState(): ShellState
+  /** The sidebar button and ⌘B: main saves the setting and answers with onSidebarHidden (main owns it). */
+  setSidebarHidden(hidden: boolean): void
+  /** The sidebar setting after any change: the button, ⌘B or View > Hide Sidebar / Show Sidebar. */
+  onSidebarHidden(listener: (hidden: boolean) => void): Unsubscribe
+  /** The window entered (true) or left (false) full screen. */
+  onFullScreen(listener: (on: boolean) => void): Unsubscribe
   /** View > Show performance, as saved. */
   getShowPerformance(): Promise<boolean>
   /** View > Read Lines Aloud as it stands: with it off, the board plays no voice. */
@@ -632,6 +652,10 @@ export interface SpaceApi {
   devClose(): void
   /** Dev hook: answer the close dialog (0: Try again, 1: Close anyway). */
   devCloseAnswer(button: number): void
+  /** Dev hook: enter or leave full screen, as the green button does. */
+  devFullScreen(on: boolean): void
+  /** Dev hook: the label of the View menu's sidebar item that shows now; with click, choose it first. */
+  devSidebarMenu(click: boolean): string | null
   flushStarted(): void
   flushDone(failed: FailedSave[]): void
 
@@ -712,6 +736,12 @@ export const IPC = {
   flushRequest: 'space:flush-request',
   devClose: 'space:dev-close',
   devCloseAnswer: 'space:dev-close-answer',
+  devFullScreen: 'space:dev-full-screen',
+  devSidebarMenu: 'space:dev-sidebar-menu',
+  getShellState: 'space:get-shell-state',
+  setSidebarHidden: 'space:set-sidebar-hidden',
+  sidebarHidden: 'space:sidebar-hidden',
+  fullScreen: 'space:full-screen',
   flushStarted: 'space:flush-started',
   flushDone: 'space:flush-done',
   getAgentStatus: 'space:get-agent-status',

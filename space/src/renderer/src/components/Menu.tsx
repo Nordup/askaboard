@@ -11,42 +11,54 @@ export interface MenuItem {
   onSelect(): void
 }
 
-export type MenuEntry = MenuItem | 'separator' | { heading: string }
+/** A row, a hairline, a small heading, or a title and its muted lines (.menu__title, .menu__lede) at the top. */
+export type MenuEntry = MenuItem | 'separator' | { heading: string } | { title: string } | { lede: string }
 
 interface MenuProps {
-  /** Viewport position of the menu's top-left corner. */
+  /** Viewport position of the menu's top-left corner; with `above`, of its bottom-left corner. */
   x: number
   y: number
+  /** The menu opens upward from y (an anchor near the bottom of the window, as the sidebar footer). */
+  above?: boolean
   entries: MenuEntry[]
   onClose(): void
   minWidth?: number
+  /** An instance class that sets the menu's width only, for example `folder-menu`. */
+  className?: string
+  /** The button that opens the menu and closes it again: a press on it is not an outside press. */
+  toggle?: HTMLElement | null
 }
 
-/** A small popup menu. Closes on outside pointer down, Escape, blur or a choice. */
-export function Menu({ x, y, entries, onClose, minWidth = 180 }: MenuProps) {
+/** A small popup menu. Closes on outside pointer down, Escape, blur or a choice; Escape gives the focus back to where it was. */
+export function Menu({ x, y, above = false, entries, onClose, minWidth = 180, className, toggle }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState({ left: x, top: y })
+  // Hidden until it is measured, so a menu that opens upward never shows a frame at the wrong place.
+  const [position, setPosition] = useState<{ left: number; top: number; visibility?: 'hidden' }>({ left: x, top: y, visibility: 'hidden' })
+  const opener = useRef<Element | null>(document.activeElement)
 
   // Keep the menu inside the window.
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
     const rect = element.getBoundingClientRect()
+    const top = above ? y - rect.height : y
     setPosition({
       left: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
-      top: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))
+      top: Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))
     })
-  }, [x, y])
+  }, [x, y, above, entries])
 
   useEffect(() => {
     const down = (event: PointerEvent): void => {
-      if (ref.current && !ref.current.contains(event.target as Node)) onClose()
+      const target = event.target as Node
+      if (ref.current && !ref.current.contains(target) && !toggle?.contains(target)) onClose()
     }
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
+        if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus({ preventScroll: true })
       }
     }
     window.addEventListener('pointerdown', down, true)
@@ -57,12 +69,24 @@ export function Menu({ x, y, entries, onClose, minWidth = 180 }: MenuProps) {
       window.removeEventListener('keydown', key, true)
       window.removeEventListener('blur', onClose)
     }
-  }, [onClose])
+  }, [onClose, toggle])
 
   return createPortal(
-    <div ref={ref} className="menu" role="menu" style={{ ...position, minWidth }}>
+    <div ref={ref} className={className ? `menu ${className}` : 'menu'} role="menu" style={{ ...position, minWidth }}>
       {entries.map((entry, index) => {
         if (entry === 'separator') return <div key={index} className="menu__separator" />
+        if ('title' in entry)
+          return (
+            <div key={index} className="menu__title">
+              {entry.title}
+            </div>
+          )
+        if ('lede' in entry)
+          return (
+            <div key={index} className="menu__lede">
+              {entry.lede}
+            </div>
+          )
         if ('heading' in entry)
           return (
             <div key={index} className="menu__heading">

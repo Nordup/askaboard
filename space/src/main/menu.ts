@@ -9,6 +9,9 @@ export interface MenuActions {
   zoom(step: 'in' | 'out' | 'reset'): void
   /** ⌘A: the focused text field's text, or all nodes on the board. */
   selectAll(): void
+  /** View > Hide Sidebar / Show Sidebar: the state at launch, and the toggle (setSidebarMenu follows it later). */
+  sidebarHidden: boolean
+  toggleSidebar(): void
   /** View > Show performance: its state at launch, and the change. */
   showPerformance: boolean
   setShowPerformance(on: boolean): void
@@ -28,6 +31,9 @@ export interface MenuActions {
  */
 const SETUP_ITEM = 'setup-folder'
 const READ_LINES_ITEM = 'read-lines'
+/** Two items, one visible at a time: a menu item's label does not change after the menu is built on macOS. */
+const HIDE_SIDEBAR_ITEM = 'hide-sidebar'
+const SHOW_SIDEBAR_ITEM = 'show-sidebar'
 
 /** Folder-only menu items are enabled while a learning folder is open. */
 export function setFolderOpen(open: boolean): void {
@@ -41,8 +47,27 @@ export function setReadLinesChecked(on: boolean): void {
   if (item) item.checked = on
 }
 
+/** View > Hide Sidebar or Show Sidebar, whichever fits the sidebar now. */
+export function setSidebarMenu(hidden: boolean): void {
+  const menu = Menu.getApplicationMenu()
+  const hide = menu?.getMenuItemById(HIDE_SIDEBAR_ITEM)
+  const show = menu?.getMenuItemById(SHOW_SIDEBAR_ITEM)
+  if (hide) hide.visible = !hidden
+  if (show) show.visible = hidden
+}
+
+/** Dev hook: the sidebar item that shows now; with click, choose it first. */
+export function devSidebarMenu(click: boolean): string | null {
+  const menu = Menu.getApplicationMenu()
+  const item = [menu?.getMenuItemById(HIDE_SIDEBAR_ITEM), menu?.getMenuItemById(SHOW_SIDEBAR_ITEM)].find((entry) => entry?.visible)
+  if (!item) return null
+  if (click) item.click()
+  return [menu?.getMenuItemById(HIDE_SIDEBAR_ITEM), menu?.getMenuItemById(SHOW_SIDEBAR_ITEM)].find((entry) => entry?.visible)?.label ?? null
+}
+
 export function installMenu(actions: MenuActions): void {
   const isMac = process.platform === 'darwin'
+  const sidebarKey: Partial<MenuItemConstructorOptions> = isMac ? {} : { accelerator: 'CmdOrCtrl+B', registerAccelerator: false }
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ role: 'appMenu' as const }] : []),
     {
@@ -71,6 +96,11 @@ export function installMenu(actions: MenuActions): void {
     {
       label: 'View',
       submenu: [
+        // ⌘B is a renderer key (App.tsx), so bold in a text box keeps it: on macOS a menu accelerator would take the key first.
+        // Linux and Windows show the hint only (registerAccelerator: false).
+        { id: HIDE_SIDEBAR_ITEM, label: 'Hide Sidebar', visible: !actions.sidebarHidden, ...sidebarKey, click: () => actions.toggleSidebar() },
+        { id: SHOW_SIDEBAR_ITEM, label: 'Show Sidebar', visible: actions.sidebarHidden, ...sidebarKey, click: () => actions.toggleSidebar() },
+        { type: 'separator' },
         { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', click: () => actions.zoom('in') },
         { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => actions.zoom('out') },
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => actions.zoom('reset') },

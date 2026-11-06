@@ -1,15 +1,26 @@
-import { AlertCircle, Check } from 'lucide-react'
+import { AlertCircle, Check, SquarePen } from 'lucide-react'
 import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
 import { PerfPill } from './PerfPill'
+import { RenameInput } from './RenameInput'
 import { ScenePill } from './ScenePill'
+import { SidebarToggle } from './SidebarToggle'
 import { shortcut } from '../platform'
 
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 interface TopBarProps {
+  /** With the sidebar hidden, the top bar starts with the sidebar button and New board. */
+  sidebarHidden: boolean
+  onToggleSidebar(): void
+  /** New board; null without a folder. */
+  onCreateBoard: (() => void) | null
   folderName: string | null
   boardName: string | null
+  /** The open board's name is a rename field (a new board, with the sidebar hidden). */
+  renaming: boolean
+  onRename(name: string): void
+  onCancelRename(): void
   saveStatus: SaveStatus | null
   /** The zoom as a share of the home zoom (HOME_ZOOM), where 1 is 100%. Null when no board is open. */
   zoom: number | null
@@ -30,22 +41,27 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
   error: 'Not saved'
 }
 
-export function TopBar({ folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance }: TopBarProps) {
+export function TopBar(props: TopBarProps) {
+  const { sidebarHidden, folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance } = props
   return (
     <header className="topbar">
       <div className="topbar__title">
-        {folderName ? (
-          <>
-            <span className="topbar__crumb">{folderName}</span>
-            {boardName && (
-              <>
-                <span className="topbar__sep">/</span>
-                <span className="topbar__board">{boardName}</span>
-              </>
+        {sidebarHidden && (
+          <span className="topbar__lead">
+            <SidebarToggle hidden onToggle={props.onToggleSidebar} />
+            {props.onCreateBoard && (
+              <button className="icon-button icon-button--strong" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
+                <SquarePen size={16} strokeWidth={1.75} />
+              </button>
             )}
-          </>
+          </span>
+        )}
+        {boardName && props.renaming ? (
+          <RenameInput key={boardName} initial={boardName} className="board-row__input topbar__rename" onCommit={props.onRename} onCancel={props.onCancelRename} />
+        ) : boardName ? (
+          <span className="topbar__board">{boardName}</span>
         ) : (
-          <span className="topbar__crumb">Learning Space</span>
+          <span className="topbar__folder">{folderName ?? 'Learning Space'}</span>
         )}
         {saveStatus && (
           <span className={`save-status save-status--${saveStatus}`} aria-live="polite">
