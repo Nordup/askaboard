@@ -86,8 +86,8 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   outer radius less the padding between them (a menu row: 14 − 6 = 8)
 - Shadow (U16, soft and wide, low contrast; ChatGPT app as the reference):
   `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
-  black 0.14) for popups, tooltips, the script panel, toasts and the board
-  pills; `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
+  black 0.14) for popups, tooltips, the script panel and toasts (the board
+  pills have none, U13); `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
   0.16) for the modal panels and the welcome card
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   the title row (see "Title row"): `--window-buttons-end`,
