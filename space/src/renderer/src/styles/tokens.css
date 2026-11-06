@@ -204,7 +204,7 @@
   --panel-margin-y: 32px; /* the least space between a modal panel and the window's top and bottom */
   /* The Settings dialog (U12): a modal panel with a section list and a pane; it shrinks to the window within the margins above */
   --settings-dialog-width: 760px;
-  --settings-dialog-height: 520px;
+  --settings-dialog-height: 600px; /* the key sheet's two columns fit without scrolling (U15) */
   --panel-nav-width: 208px; /* a split panel's section list (.menu__nav) */
   --setting-field-width: 200px; /* a text field as a setting's control (the Gemini key) */
   --radio-size: 14px; /* a choice's radio mark (.menu__radio) */

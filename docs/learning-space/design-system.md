@@ -637,7 +637,7 @@ internal data (a path, an id). One shared tooltip instead
   `components/settings/`, replaced the U8 panel). One centred
   `.menu.menu--panel.menu--split.settings-dialog` over a `.backdrop`
   (`ModalPanel.tsx`): `--settings-dialog-width` × `--settings-dialog-height`
-  (760 × 520 px), at most the window less `--panel-margin-x` /
+  (760 × 600 px, tall enough for the key sheet), at most the window less `--panel-margin-x` /
   `--panel-margin-y` on each side.
   - Opens from Settings… (⌘,; the File menu off macOS), the folder menu's
     last items (a separator, "Settings" ⌘, and "Keyboard shortcuts" ?),
@@ -683,8 +683,9 @@ internal data (a path, an id). One shared tooltip instead
     cap: at least 20 × 20 px, padding 0 5 px, `--radius-sm`, `--bg-active`,
     11 px `--text-primary`, 3 px between caps; a combo is one cap per key
     (⌘ ⇧ ]); "or" and "drag" are plain tertiary words. The one list is
-    `ShortcutsSection.tsx` (from `TOOLS` and `commands.ts`). At 760 × 520 it
-    needs about 80 px more height than the pane has, so it scrolls.
+    `ShortcutsSection.tsx` (from `TOOLS` and `commands.ts`). The dialog is
+    600 px tall so the two columns fit without scrolling; a smaller window
+    shrinks the dialog, and then the sheet scrolls.
   - About: the product name with "Version N", and the license.
 - **Voice notice.** At the cloud voice's daily limit the board's toast
   (`.toast--warn`: lucide `VolumeX` in `--status-warn`) says "Not enough
