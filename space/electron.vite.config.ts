@@ -39,9 +39,17 @@ function stageBundles(): Plugin {
   }
 }
 
+// Usage data (main/analytics.ts): our release builds set the channel; local builds and forks send "dev".
+const TELEMETRY_CHANNELS = ['stable', 'nightly', 'preview', 'dev']
+const telemetryChannel = process.env.LEARNING_SPACE_TELEMETRY_CHANNEL?.trim() || 'dev'
+if (!TELEMETRY_CHANNELS.includes(telemetryChannel)) {
+  throw new Error(`LEARNING_SPACE_TELEMETRY_CHANNEL must be one of ${TELEMETRY_CHANNELS.join(', ')}, got "${telemetryChannel}".`)
+}
+
 export default defineConfig({
   main: {
     resolve: { alias: { '@shared': shared } },
+    define: { __LS_TELEMETRY_CHANNEL__: JSON.stringify(telemetryChannel) },
     plugins: [stageBundles()]
   },
   preload: {

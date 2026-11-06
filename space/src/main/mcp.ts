@@ -24,6 +24,7 @@ import { getAgentLook, getPace, getVoice } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { SessionTrace, writeLearnerEdit } from './trace'
 import { speakLines, voiceAnswers } from './voice'
+import * as analytics from './analytics'
 import type { LearnerEditDelta } from '@shared/learner-edit'
 import {
   IPC,
@@ -438,6 +439,8 @@ export class AgentServer {
   private readonly boardIndex = new BoardIndex()
   /** The session that started each scene (scene id → session id): its trace gets the scene's playback events. */
   private readonly sceneTraces = new Map<string, SessionTrace>()
+  /** Playbacks for scene.played (main/analytics.ts), by scene id: when the shown version started, and whether it has voice. */
+  private readonly playbacks = new Map<string, { start: number | null; withVoice: boolean }>()
   /** The scene records of the boards (scene-store.ts): the only writer. */
   readonly records: SceneStore
   /** The folder, board and board mount whose stage restoreStage last made from the records (restoreMark). */
@@ -463,8 +466,33 @@ export class AgentServer {
     // The board's playback events go to the trace of the session that started the scene, also after that
     // session closed: start returns at once, so a scene can play on after its client is gone.
     ipcMain.on(IPC.sceneEvent, (_event, scene: SceneEvent) => {
-      if (scene) this.sceneTraces.get(scene.scene)?.sceneEvent(scene)
+      if (!scene) return
+      this.sceneTraces.get(scene.scene)?.sceneEvent(scene)
+      this.scenePlayback(scene)
     })
+  }
+
+  /**
+   * scene.played: a playback ends ('end'), or its version is replaced (a replace or a cut commits a new
+   * version, which plays on from there as its own playback). Seconds run from the first frame.
+   */
+  private scenePlayback(event: SceneEvent): void {
+    const voiced = (): boolean => {
+      const entry = this.stage.log.find((logged) => logged.scene === event.scene)
+      return entry ? voiceAnswers(entry.answers).size > 0 : false
+    }
+    if (event.kind === 'first_frame') {
+      this.playbacks.set(event.scene, { start: event.t, withVoice: voiced() })
+      if (this.playbacks.size > 500) this.playbacks.delete(this.playbacks.keys().next().value as string)
+      return
+    }
+    if (event.kind !== 'end' && event.kind !== 'replaced') return
+    const playback = this.playbacks.get(event.scene)
+    const seconds = playback?.start != null ? Math.max(0, Math.round((event.t - playback.start) / 100) / 10) : 0
+    const outcome = event.kind === 'replaced' ? 'replaced' : (event.outcome ?? 'played')
+    analytics.record('scene.played', { outcome, seconds, withVoice: playback?.withVoice ?? voiced() })
+    if (event.kind === 'end') this.playbacks.delete(event.scene)
+    else this.playbacks.set(event.scene, { start: playback?.start != null ? event.t : null, withVoice: voiced() })
   }
 
   /** A scene that this session started (play_scene start): for its playback events. */
@@ -715,7 +743,9 @@ export class AgentServer {
       this.publish()
     }
     server.server.oninitialized = () => {
-      console.log(`mcp: session ${session.id} is ${server.server.getClientVersion()?.name ?? 'an unnamed client'}`)
+      const client = server.server.getClientVersion()
+      console.log(`mcp: session ${session.id} is ${client?.name ?? 'an unnamed client'}`)
+      analytics.record('agent.connected', { clientName: analytics.agentClientName(client?.name), clientVersion: typeof client?.version === 'string' ? client.version.slice(0, 40) : null })
       this.traceOf(session)
       this.publish()
       // An agent connected: its first screenshot or preview should not wait for the snapshot window.
@@ -795,6 +825,9 @@ export class AgentServer {
       }
       const prefix = [news, this.takeLateNotes(session)].filter((line) => line).join('\n')
       if (prefix) result = { ...result, content: [{ type: 'text', text: prefix }, ...result.content] }
+      if (session.id !== 'catalog') {
+        analytics.record('mcp.tool.invoked', { tool: name, ok: thrown === null && !result.isError, durationMs: Date.now() - start, clientName: analytics.agentClientName(session.server.server.getClientVersion()?.name) })
+      }
       this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown, trace.spans)
       return result
     }
@@ -1438,6 +1471,7 @@ Use it when the learner asks for another board, or when the work belongs on a bo
           if ('error' in target) return failure(new Error(target.error))
           path = target.path
         }
+        analytics.agentOpensBoard(folder.root, path)
         const out = await this.bridge.request('openBoard', { path, look: null, scenes: this.stageScenes() })
         this.touchCursor(session, { board: { path: out.board }, cursor: out.cursor })
         const head = made ? `Created ${path}, a new empty board, and opened it for the learner.\n` : ''
@@ -2255,7 +2289,12 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       if (this.boardScene(name)) return failure(new Error(`No draft named "${name}": the scene "${name}" is on the board already and has no new version. replay plays it again; to change it, write_scene "${name}" first, then start.`))
       return failure(this.unknownScene(name, 'draft'))
     }
-    if (draft.entry.sweepError) return failure(new Error(`The draft "${name}" cannot start: ${draft.entry.sweepError}. Nothing played, and the draft is kept. Change it with write_scene.`))
+    const withVoice = voiceAnswers(draft.entry.answers).size > 0
+    const notPlayed = (outcome: 'failed' | 'cancelled'): void => analytics.record('scene.played', { outcome, seconds: 0, withVoice })
+    if (draft.entry.sweepError) {
+      notPlayed('failed')
+      return failure(new Error(`The draft "${name}" cannot start: ${draft.entry.sweepError}. Nothing played, and the draft is kept. Change it with write_scene.`))
+    }
     const control = async (args: Record<string, unknown>): Promise<Record<string, unknown>> => (await this.board('sceneControl', args)) as Record<string, unknown>
     let outcome: CallToolResult | { result: SceneResult & { ends_in_s: number }; rerun: string | null; replaced: boolean; others?: unknown[]; stage?: string }
     const tQueue = Date.now()
@@ -2330,11 +2369,15 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
         })
       )
     } catch (error) {
+      notPlayed(error instanceof SceneCancelled ? 'cancelled' : 'failed')
       if (error instanceof SceneProgramError) return failure(new Error(`The draft "${name}" ran again because ${draftStale(draft, this.stage, null) ?? 'the board changed'} since write_scene, and its program failed now: ${error.message}\nNothing was drawn, and the draft is kept. Change it with write_scene.`))
       if (error instanceof SceneCancelled) return failure(error)
       throw error
     }
-    if ('content' in outcome) return outcome
+    if ('content' in outcome) {
+      notPlayed('failed')
+      return outcome
+    }
     // The draft is used up (a newer version that became ready since stays).
     if (this.draftsOf(board).get(name) === draft) this.draftsOf(board).delete(name)
     const { result } = outcome

@@ -46,3 +46,21 @@ is not a fix, and `step_back` on mini is the standing proof. Name it in the
 `update_board` **ack**, not only in the tool list: that string is read at the one
 moment the model has just acted on an id, which is exactly when "if you are
 unsure an id is still on the board, call `get_board_scene` first" lands.
+
+## Servers
+
+### Clean up the stopped AuGuide stack on the Hetzner box
+
+On 2026-11-06 the AuGuide stack (guide-api, Redis, Caddy) on the GBrain
+Hetzner box (`135.181.38.113`, user `nordup`) was stopped with
+`docker compose down`, so the launch backend can use ports 80 and 443. The
+founder does not plan to use it again.
+
+- Backup: `~/backups/auguide-20261106/` (the `~/auguide` and
+  `~/auguide-library` folders, plus the four `auguide_*` Docker volumes).
+- Still on disk: `~/auguide`, `~/auguide-library`, the `auguide_*` volumes
+  and the images. The disk had 28 GB free, so nothing was deleted.
+- Delete these when the disk gets short or when something goes wrong with
+  them. To restart it instead: `docker compose -p auguide -f
+  docker-compose.hetzner.yml --env-file env/compose.env up -d` in
+  `~/auguide/infrastructure/deploy`.

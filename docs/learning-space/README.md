@@ -82,6 +82,8 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
    - [`streaming-scenes-plan.md`](streaming-scenes-plan.md) — how scenes stream to the board, with the founder's words and the measures. Read it before you change sampling, frames or the player.
    - [`competitors.md`](competitors.md) — studies of products near Learning
      Space, with sources: Clicky (2026-10-29).
+   - [`in-app-agent-idea.md`](in-app-agent-idea.md) — the idea to try after
+     the launch (2026-11-06): the agent works inside the app, as in T3 Code.
    - [`tutor-vision.md`](tutor-vision.md) — the founder's second message
      (2026-10-24), in the same form: the problems in the agent–canvas loop
      and the tutor the founder wants.

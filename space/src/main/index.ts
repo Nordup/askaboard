@@ -20,6 +20,8 @@ import { installShim, writeRelayState } from './agent-home'
 import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
+import * as analytics from './analytics'
+import { hasVoiceKey } from './voice'
 import { resourcePath } from './resources'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
@@ -216,12 +218,18 @@ async function snapshot(initial = false): Promise<Snapshot> {
  * switch (App.tsx switchFolder), after it saved the folder it leaves: every route
  * (the menu, the dialog, the recent list) goes that way.
  */
-async function openFolder(path: string): Promise<void> {
+/** How the open folder was opened, for folder.opened (main/analytics.ts). */
+type FolderVia = 'launch' | 'dialog' | 'recent' | 'menu'
+let folderVia: FolderVia = 'launch'
+
+async function openFolder(path: string, via: FolderVia): Promise<void> {
   const opened = await FolderSession.open(path)
   const next = sessions.get(opened.root) ?? opened
   sessions.set(next.root, next)
   session?.stopWatching()
   session = next
+  folderVia = via
+  analytics.record('folder.opened', { via, setUp: false })
   store.rememberFolder(next.root)
   setFolderOpen(true)
   void cleanFolder(next, agentServer.records).catch((error) => console.error(`storage: ${String(error)}`))
@@ -276,7 +284,7 @@ async function openInitialFolder(): Promise<void> {
       continue
     }
     try {
-      await openFolder(candidate)
+      await openFolder(candidate, 'launch')
       console.log(`opened folder ${session?.root}`)
       return
     } catch (error) {
@@ -376,7 +384,7 @@ function registerIpc(): void {
   handle(IPC.pickFolder, () => pickFolder())
   handle(IPC.openFolder, async (path: unknown) => {
     if (typeof path !== 'string' || (path !== pickedFolder && !store.isRecent(path))) throw new Error('That folder is not in the recent list.')
-    await openFolder(path)
+    await openFolder(path, path === pickedFolder ? 'dialog' : 'recent')
     return snapshot()
   })
   handle(IPC.listFiles, () => requireSession().listFiles())
@@ -401,7 +409,12 @@ function registerIpc(): void {
   })
   // The file side of the one board-change operation (renderer App.tsx changeBoard): the
   // agent server's drafts, change cursors, stage and board cache move or end with the file.
-  handle(IPC.createBoard, (name?: unknown, folder?: unknown) => requireSession().createBoard(name, folder))
+  handle(IPC.createBoard, async (name?: unknown, folder?: unknown) => {
+    const current = requireSession()
+    const path = await current.createBoard(name, folder)
+    analytics.boardCreated(current.root, path)
+    return path
+  })
   handle(IPC.renameBoard, async (path: string, newName: string) => {
     const current = requireSession()
     const target = await current.renameBoard(path, newName)
@@ -429,6 +442,7 @@ function registerIpc(): void {
   handle(IPC.setupPlan, () => setupPlan(requireSession()))
   handle(IPC.applySetup, async () => {
     const result = await applySetup(requireSession())
+    analytics.record('folder.opened', { via: folderVia, setUp: true })
     console.log(`setup: created ${result.created.join(', ') || 'nothing'}`)
     return result
   })
@@ -471,6 +485,7 @@ function registerIpc(): void {
   ipcMain.on(IPC.setLastBoard, (_event, root: unknown, path: unknown) => {
     if (typeof root !== 'string' || !sessions.has(root)) return
     store.setLastBoard(root, typeof path === 'string' ? path : null)
+    if (typeof path === 'string') analytics.boardShown(root, path)
   })
   // The board window's renderer asks for its port to the stage (frames of scenes); only the main window gets one.
   ipcMain.on(IPC.framesPort, (event) => {
@@ -663,7 +678,7 @@ void app.whenReady().then(async () => {
       }
       // No window (macOS keeps the app): nothing is open that must be saved.
       void pickFolder()
-        .then((path) => (path ? openFolder(path) : undefined))
+        .then((path) => (path ? openFolder(path, 'menu') : undefined))
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
@@ -691,9 +706,11 @@ void app.whenReady().then(async () => {
   registerAssetProtocol()
   registerLiveItemProtocol(() => session)
   // Disk work runs beside the first paint, not before it.
+  analytics.start()
   firstFolder = openInitialFolder().then(() => {
     setFolderOpen(session !== null)
     agentServer.start()
+    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: hasVoiceKey() ? 'own_key' : 'off' })
   })
   void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   void cleanTraces().catch((error) => console.error(`storage: ${String(error)}`))

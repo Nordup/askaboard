@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { record } from './analytics'
 import { agentHomeDir } from './agent-home'
 
 /**
@@ -341,6 +342,17 @@ async function readPlaces(path: string, wav: string, count: number): Promise<{ s
  * throws; every other failure is a reason.
  */
 export async function speakLines(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<SpokenLines> {
+  const start = Date.now()
+  const spoken = await speakLinesOnce(root, lines, choice, signal)
+  // voice.requested (main/analytics.ts): a cancel throws above and is not counted.
+  const outcome = 'reason' in spoken ? (spoken.reason === NO_KEY_REASON ? 'no_key' : 'failed') : spoken.cached ? 'cached' : 'ok'
+  record('voice.requested', { source: outcome === 'cached' ? 'cache' : 'own_key', outcome, audioSeconds: 'reason' in spoken ? 0 : spoken.seconds, requestMs: Date.now() - start })
+  return spoken
+}
+
+const NO_KEY_REASON = 'no GEMINI_API_KEY in the environment or in ~/.learning-space/.env'
+
+async function speakLinesOnce(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<SpokenLines> {
   const unique = [...new Set(lines)]
   const text = unique.join(LINE_JOIN)
   const { style } = PACES[choice.pace]
@@ -358,7 +370,7 @@ export async function speakLines(root: string, lines: readonly string[], choice:
     if (file) await touch(wavPath)
     else {
       const key = readKey()
-      if (!key) return { reason: 'no GEMINI_API_KEY in the environment or in ~/.learning-space/.env' }
+      if (!key) return { reason: NO_KEY_REASON }
       file = await requestAudio(key, text, choice.voice, style, signal)
       await mkdir(join(root, CLIP_DIR), { recursive: true })
       // A learning folder is often a git repository, and a clip is megabytes that the same text makes again.

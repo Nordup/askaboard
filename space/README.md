@@ -150,6 +150,48 @@ file. Edit the templates to change what new folders get. The brief block in
 `AGENTS.md` is the one exception: the app refreshes it when the folder opens,
 unless the learner edited it.
 
+## Usage data
+
+The app sends product usage events to our own server at
+`135-181-38-113.sslip.io`. The server keeps a copy of each event and forwards
+it to PostHog (EU). The code is `src/main/analytics.ts`.
+
+The events:
+
+| Event | Properties |
+| --- | --- |
+| `app.boot.heartbeat` (each start) | the number of recent folders, whether Read Lines Aloud is on, the voice source |
+| `folder.opened` | how it opened (launch, dialog, recent, menu), whether it was set up |
+| `board.opened` | whether it is new, whether you or the agent opened it |
+| `agent.connected` | the agent app (Claude Code, Codex, Cursor, Claude Desktop or other) and its version |
+| `mcp.tool.invoked` | the tool name, success, the duration, the agent app |
+| `scene.played` | how the playback ended, its length in seconds, whether it had a voice |
+| `voice.requested` | the source (your key or the cache), the result, the audio length, the request time |
+| `install.owner_observed` | a hashed account id (see below) |
+
+Each event also has the app version, the release channel, the platform, the
+CPU architecture and the OS version.
+
+The events never include board content, scene text, spoken lines, file names,
+folder paths, tool arguments or error messages.
+
+Each event has a hashed identifier. It is the SHA-256 hash of your Codex
+account id, or of your Claude Code user id, or of a random id for this
+install. The random id is in `~/.learning-space/anonymous-id`. To count the
+installs of one person, the app also sends the SHA-256 hash of your OpenAI
+account id and of your Claude account id when you are signed in. The app
+never sends a raw id.
+
+Your IP address reaches our server and PostHog. They use it to find your
+approximate location.
+
+To turn usage data off, set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in the
+environment of the app. A dev run (`npm run dev`) sends nothing unless you set
+`LEARNING_SPACE_TELEMETRY_ENABLED=true`. `LEARNING_SPACE_TELEMETRY_HOST`
+changes the server. A build sets the channel from
+`LEARNING_SPACE_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
+default is dev).
+
 ## Dev automation
 
 These environment variables work with `npm run dev`:
