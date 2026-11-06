@@ -1,195 +1,385 @@
-/* The hero is a board: the app's canvas colour and dot grid (space/src/renderer/src/board/board.css). */
+/*
+ * The hero (decision D11), after the founder's reference image. Every size is in design units:
+ * --u is one unit of the reference image in CSS px (components/hero/layout.ts). The CSS value
+ * here holds until the engine sets the exact one. Desktop: a 1586 × 848 frame round the
+ * centre; phone (below 720 px): a 390-wide frame from the top.
+ */
 .hero {
+  --hero-h: max(560px, 85.5svh);
+  --u: min(calc(100vw / 1586), calc(var(--hero-h) / 848));
+  --ox: 50%;
+  --oy: 50%;
   position: relative;
-  display: flex;
-  flex-direction: column;
-  height: 100svh;
-  min-height: 600px;
+  height: var(--hero-h);
   overflow: clip;
-  background-color: var(--bg-canvas);
-  background-image: radial-gradient(
-    circle at center,
-    color-mix(in srgb, var(--canvas-dot) calc(var(--grid-alpha) * 100%), transparent) 1px,
-    transparent 1.4px
-  );
+  background-color: var(--bg-app);
+  background-image: radial-gradient(circle at center, var(--canvas-dot) 1px, transparent 1.4px);
   background-size: var(--grid-size) var(--grid-size);
-  cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  /* One finger scrolls the page; ink.ts draws only after a press and hold. */
   touch-action: pan-y pinch-zoom;
+  outline: none;
 }
 
-/* Top bar */
+/* ---------- The top bar (t3.codes) ---------- */
+
 .bar {
   position: absolute;
   inset: 0 0 auto;
-  z-index: 3;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px var(--gutter);
+  height: calc(76 * var(--u));
+  min-height: 52px;
+  padding: 0 max(16px, calc(56 * var(--u)));
+  font-size: clamp(14px, calc(17 * var(--u)), 17px);
 }
 
 .name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: clamp(16px, calc(21 * var(--u)), 21px);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--muted);
   white-space: nowrap;
 }
 
-.mark {
-  color: var(--accent);
-  font-size: 28px;
-  line-height: 1;
+.nameStrong {
+  font-weight: 650;
+  color: var(--text);
 }
 
 .links {
   display: flex;
   align-items: center;
-  gap: 16px;
-  font-size: 14px;
+  gap: clamp(20px, calc(44 * var(--u)), 44px);
   color: var(--muted);
 }
 
-.link,
-.stars,
-.download,
-.name {
-  cursor: pointer;
-}
-
-.link:hover {
+.link:hover,
+.stars:hover {
   color: var(--text);
 }
 
 .stars {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--text);
+  gap: 0.45em;
   white-space: nowrap;
 }
 
-.stars:hover {
-  background: var(--card-2);
-}
-
 .star {
-  color: var(--warn);
+  color: var(--star);
+  font-size: 1.05em;
 }
 
-/* The header sits in the middle; the board (stage.ts) keeps its pieces out of it. */
-.stage {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 72px var(--gutter) 64px;
-  pointer-events: none;
+.count {
+  font-weight: 650;
+  color: var(--text);
 }
+
+/* ---------- The headline ---------- */
 
 .head {
-  grid-area: head;
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--oy) - 113 * var(--u));
   z-index: 1;
-  width: min(600px, 46vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   pointer-events: none;
 }
 
 .title {
   margin: 0;
-  font-size: clamp(36px, 4.4vw + 10px, 80px);
-  font-weight: 500;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-  color: var(--text);
+  font-size: calc(94 * var(--u));
+  line-height: calc(88 * var(--u));
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  color: var(--text-strong);
 }
 
 .sub {
-  margin: 0.9em auto 1.4em;
-  max-width: 30em;
-  font-size: clamp(15px, 0.5vw + 11px, 18px);
-  line-height: 1.5;
-  color: var(--muted);
+  margin: calc(19 * var(--u)) 0 0;
+  font-size: calc(31 * var(--u));
+  line-height: calc(37 * var(--u));
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--text-strong);
 }
 
 .download {
-  display: inline-block;
-  padding: 12px 20px;
-  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(14 * var(--u));
+  margin-top: calc(39 * var(--u));
+  width: calc(340 * var(--u));
+  height: calc(67 * var(--u));
+  border-radius: calc(22 * var(--u));
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 16px;
+  font-size: calc(24 * var(--u));
   font-weight: 500;
+  letter-spacing: -0.005em;
   pointer-events: auto;
+  cursor: pointer;
 }
 
 .download:hover {
-  background: color-mix(in srgb, var(--accent) 88%, var(--text));
+  background: var(--accent-hover);
 }
 
-/* The board under the header, the ink over everything; the hero takes the presses (ink.ts, stage.ts). */
-.board,
-.ink {
+.apple {
+  width: calc(24 * var(--u));
+  height: calc(24 * var(--u));
+  margin-top: calc(-3 * var(--u));
+}
+
+.note {
+  margin: calc(19 * var(--u)) 0 0;
+  font-size: calc(19 * var(--u));
+  line-height: calc(23 * var(--u));
+  color: var(--muted);
+}
+
+/* ---------- The board: windows and loose ink (engine.ts), the visitor's marks ---------- */
+
+.layer {
   position: absolute;
   inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.sprite {
+  --x: var(--dx);
+  --y: var(--dy);
+  --r: var(--dr);
+  --s: var(--ds);
+  /* One design unit of this sprite, in CSS px. */
+  --k: calc(var(--s) * var(--u));
+  position: absolute;
+  left: calc(var(--ox) + var(--x) * var(--u) - var(--w) * var(--k) / 2);
+  top: calc(var(--oy) + var(--y) * var(--u) - var(--h) * var(--k) / 2);
+  width: calc(var(--w) * var(--k));
+  height: calc(var(--h) * var(--k));
+  rotate: calc(var(--r) * 1deg);
+}
+
+.body {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* A window: the app's window chrome (the dark title strip, the macOS window buttons). */
+.window {
+  border: 1px solid var(--border-strong);
+  border-radius: calc(11 * var(--k));
+  background: var(--bg-canvas);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.window .body {
+  height: calc(100% - 28 * var(--k));
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--k));
+  height: calc(28 * var(--k));
+  padding-left: calc(16 * var(--k));
+  background: var(--bg-elevated-2);
+}
+
+.titlebar i {
+  width: calc(12 * var(--k));
+  height: calc(12 * var(--k));
+  border-radius: 50%;
+  background: var(--window-close);
+}
+
+.titlebar i:nth-child(2) {
+  background: var(--window-minimize);
+}
+
+.titlebar i:nth-child(3) {
+  background: var(--window-zoom);
+}
+
+.marks {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   width: 100%;
   height: 100%;
   pointer-events: none;
 }
 
-.board {
-  z-index: 0;
+/* The text tool's field: it takes the keys; the text itself is drawn on the marks canvas. */
+.field {
+  position: absolute;
+  z-index: 3;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.ink {
-  z-index: 2;
+/* The board's cursors (engine.ts sets the cursor per tool and hover). */
+.hero[data-tool='eraser'] {
+  cursor: none;
 }
 
-/* Phones and narrow windows: a band of pieces above the header and one below it. */
+/* ---------- The tool pill: the app's pill (app.css .pill-bar, .tool) at 1.42 × ---------- */
+
+.pill {
+  --p: calc(1.42 * var(--u));
+  position: absolute;
+  left: 50%;
+  top: calc(var(--oy) + (346 - 20 * 1.42) * var(--u));
+  z-index: 4;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--p));
+  height: calc(40 * var(--p));
+  padding: 0 calc(4 * var(--p));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: calc(16 * var(--p));
+  margin: 0 calc(5 * var(--p));
+  background: var(--border-subtle);
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: calc(30 * var(--p));
+  height: calc(30 * var(--p));
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.tool svg {
+  width: calc(17 * var(--p));
+  height: calc(17 * var(--p));
+}
+
+.tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tool[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quiet {
+  color: var(--text-tertiary);
+}
+
+/* ---------- Phones and narrow windows: the 390-wide frame, from the top ---------- */
 @media (max-width: 719px) {
   .hero {
-    height: auto;
-    min-height: 100svh;
+    --u: min(calc(100vw / 390), 1.3px);
+    --oy: 0px;
+    height: calc(980 * var(--u));
+  }
+
+  .sprite {
+    --x: var(--px);
+    --y: var(--py);
+    --r: var(--pr);
+    --s: var(--ps);
+  }
+
+  .sprite[data-phone='off'] {
+    display: none;
+  }
+
+  .bar {
+    height: 56px;
+    padding: 0 16px;
+  }
+
+  .name {
+    font-size: 17px;
   }
 
   .links {
-    gap: 12px;
+    gap: 18px;
+    font-size: 14px;
   }
 
   .link {
     display: none;
   }
 
-  .stage {
-    flex: none;
-    padding: 250px var(--gutter) 420px;
-  }
-
   .head {
-    width: 100%;
+    top: calc(296 * var(--u));
   }
-}
 
-@media (max-width: 399px) {
-  .name {
-    font-size: 14px;
+  .title {
+    font-size: calc(44 * var(--u));
+    line-height: calc(43 * var(--u));
   }
-  .stars {
-    padding: 5px 10px;
-    font-size: 13px;
+
+  .sub {
+    margin-top: calc(14 * var(--u));
+    font-size: calc(17 * var(--u));
+    line-height: calc(22 * var(--u));
+  }
+
+  .download {
+    margin-top: calc(22 * var(--u));
+    width: calc(220 * var(--u));
+    height: calc(48 * var(--u));
+    border-radius: calc(15 * var(--u));
+    font-size: calc(17 * var(--u));
+    gap: calc(9 * var(--u));
+  }
+
+  .apple {
+    width: calc(17 * var(--u));
+    height: calc(17 * var(--u));
+  }
+
+  .note {
+    margin-top: calc(14 * var(--u));
+    font-size: calc(14 * var(--u));
+    line-height: calc(18 * var(--u));
+  }
+
+  .pill {
+    --p: calc(0.86 * var(--u));
+    top: calc(578 * var(--u));
   }
 }

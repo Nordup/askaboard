@@ -98,6 +98,12 @@ share-videos/
 !landing-page/public/**/*.jpeg
 !landing-page/public/**/*.gif
 !landing-page/public/**/*.webp
+# The website's product images (the app screenshot under the hero): product assets.
+!apps/website/public/**/*.png
+!apps/website/public/**/*.jpg
+!apps/website/public/**/*.jpeg
+!apps/website/public/**/*.gif
+!apps/website/public/**/*.webp
 !space/resources/**/*.png
 !space/resources/**/*.jpg
 !space/resources/**/*.jpeg

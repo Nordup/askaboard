@@ -1,43 +1,60 @@
 import { formatStars, getStars } from '@/lib/github'
-import { REPO_URL, SITE_NAME } from '@/lib/site'
-import { Board } from './Board'
+import { REPO_URL } from '@/lib/site'
+import { HeroBoard } from './HeroBoard'
 import styles from './Hero.module.css'
 
+/** The Apple logo of the download button. */
+function AppleLogo() {
+  return (
+    <svg className={styles.apple} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+    </svg>
+  )
+}
+
+/** The hero (decision D11): the top bar as on t3.codes, the headline, and the board round it. */
 export async function Hero() {
   const stars = await getStars()
   return (
-    <section className={styles.hero}>
-      <header className={styles.bar}>
-        <a href="/" className={styles.name} data-clear="name">
-          <span className={`hand ${styles.mark}`}>~</span>
-          {SITE_NAME}
+    <section className={styles.hero} data-hero="">
+      <header className={styles.bar} data-ui="">
+        <a href="/" className={styles.name}>
+          <span className={styles.nameStrong}>Learning</span> Space
         </a>
-        <nav className={styles.links} data-clear="links">
+        <nav className={styles.links}>
           <a href="#download" className={styles.link}>
             Download
           </a>
           <a href={REPO_URL} className={styles.stars}>
-            <span className={styles.star}>★</span>
-            {stars === null ? 'GitHub' : `${formatStars(stars)} GitHub stars`}
+            <span className={styles.star} aria-hidden="true">
+              ★
+            </span>
+            {stars === null ? (
+              'GitHub'
+            ) : (
+              <>
+                <b className={styles.count}>{formatStars(stars)}</b> GitHub stars
+              </>
+            )}
           </a>
         </nav>
       </header>
 
-      <div className={styles.stage}>
-        <div className={styles.head} data-clear="head">
-          <h1 className={styles.title}>
-            Learn anything.
-            <br />
-            Watch it drawn.
-          </h1>
-          <p className={styles.sub}>Your agent explains any topic on a shared board. It draws, animates and talks. Bring the Claude, ChatGPT or Codex you already pay for.</p>
-          <a href="#download" className={styles.download}>
-            Download for Mac
-          </a>
-        </div>
+      <div className={styles.head}>
+        <h1 className={styles.title}>
+          Think it through.
+          <br />
+          See it clearly.
+        </h1>
+        <p className={styles.sub}>A shared canvas for you and your AI.</p>
+        <a href="#download" className={styles.download}>
+          <AppleLogo />
+          Download for Mac
+        </a>
+        <p className={styles.note}>Open source. Bring your own AI.</p>
       </div>
 
-      <Board boardClass={styles.board} inkClass={styles.ink} />
+      <HeroBoard />
     </section>
   )
 }

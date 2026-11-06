@@ -1,0 +1,23 @@
+/* The app screenshot under the hero: 1372 of the reference image's 1586 px, centred, as in the reference. */
+.shot {
+  display: flex;
+  justify-content: center;
+  padding: 0 16px 96px;
+  background: var(--bg-app);
+}
+
+.image {
+  display: block;
+  width: min(86.5vw, 1600px);
+  height: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 15px;
+  box-shadow: var(--shadow-card);
+}
+
+@media (max-width: 719px) {
+  .image {
+    width: 100%;
+    border-radius: 10px;
+  }
+}
