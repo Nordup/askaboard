@@ -72,7 +72,7 @@ export function ShortcutsSection() {
               <span className="menu__keys">
                 {keyParts(row.keys).map((part, index) =>
                   'cap' in part ? (
-                    <kbd key={index} className="menu__key">
+                    <kbd key={index} className={/^[⌘⇧⌥⌃]$/.test(part.cap) ? 'menu__key menu__key--symbol' : 'menu__key'}>
                       {part.cap}
                     </kbd>
                   ) : (

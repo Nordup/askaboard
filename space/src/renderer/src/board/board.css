@@ -132,7 +132,7 @@
   position: absolute;
   pointer-events: none;
   border: 1.5px dashed var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--accent-soft);
   animation-name: board-flash;
   animation-timing-function: ease-out;
@@ -165,7 +165,7 @@
   height: 9px;
   margin: -5px 0 0 -5px;
   border: 1.5px solid var(--accent);
-  border-radius: 2px;
+  border-radius: var(--handle-radius);
   background: var(--bg-canvas);
   pointer-events: auto;
 }

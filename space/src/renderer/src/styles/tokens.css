@@ -118,7 +118,11 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-pill: 999px;
-  --popup-radius: 14px; /* a popup surface: a menu, a popover, the dropdown list (its rows: this less its 6 px padding) */
+  --popup-radius: 14px; /* a popup surface: a menu, a popover, the dropdown list, the script panel (its rows: this less its 6 px padding) */
+  /* By size (U17): a 22–26 px fill (an icon button, a title-row pill, a tooltip, a key cap) takes --radius-md; a 28–34 px
+     row or button takes --row-radius; a surface with content inside (a toast, a code block) --radius-lg. */
+  --row-radius: var(--control-radius); /* a sidebar row, the folder row, a title-row button, a welcome row or button */
+  --handle-radius: 3px; /* a 9 px selection handle on the board */
 
   /* Shadows (U16): soft and wide, low contrast; a light inner line at the top, a wide blur, a small close shadow */
   --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 40px rgba(0, 0, 0, 0.24),
@@ -190,7 +194,7 @@
   --script-panel-footer-pad: 4px 5px 6px 11px;
   --step-bar-height: 3px; /* the reading panel's step bar: one segment per step */
   --step-bar-gap: 3px;
-  --step-bar-radius: 2px;
+  --step-bar-radius: var(--radius-pill);
   --step-bar-hit: 12px; /* the step bar's click and hover band (it looks 3 px high) */
   /* The reading view: the scene's lines scroll past a light that follows the reading point */
   --reading-view-height: 176px; /* fixed, so the footer never moves */
@@ -241,6 +245,14 @@
   --control-height-menu: 24px; /* the same in a popup menu's compact rows (the agent popover, the setup flyout): the rows' 24 px */
   --control-pad-x: 12px;
   --control-radius: 10px;
+  /* The switch (U17): in a setting row beside 30 px controls; a popup menu (the performance popover) takes the menu size */
+  --switch-width: 36px;
+  --switch-height: 20px;
+  --switch-knob: 16px;
+  --switch-width-menu: 26px;
+  --switch-height-menu: 14px;
+  --switch-knob-menu: 10px;
+  --switch-inset: 2px; /* the knob's inset from the track's edge */
 
   /* Settings spacing (U15): the rules every Settings section uses, named for their role, on the 4 px scale */
   --settings-pane-pad-y: var(--space-6); /* the pane's top and bottom, and the section list's */
@@ -257,11 +269,13 @@
   --keys-line-height: 30px;
   --keys-column-min: 220px; /* one column when the pane has no room for two of these */
   --keys-column-gap: var(--space-8);
-  --keys-caps-width: 76px; /* the caps' column, so the names line up (the widest macOS key, Space drag; a longer one pushes its name) */
+  --keys-caps-width: 80px; /* the caps' column, so the names line up (the widest macOS keys, ⌘ ⇧ ] and Space drag, U17; a longer one pushes its name) */
   --keys-name-gap: var(--space-3); /* from the caps to the name */
-  --keycap-size: 20px; /* a key cap's least width and its height */
-  --keycap-pad: 0 5px;
-  --keycap-radius: var(--radius-sm);
+  --keycap-size: 24px; /* a key cap's least width and its height (U17) */
+  --keycap-pad: 0 6px;
+  --keycap-font: 12px; /* a cap's text, and the "or" and "drag" words */
+  --keycap-symbol-font: 13px; /* a modifier glyph (⌘ ⇧ ⌥ ⌃), so it reads as large as a letter */
+  --keycap-radius: var(--radius-md);
   --keycap-gap: 3px; /* between the caps of one combo */
 
   /* Scrollbars (U14): one style for every scroll area (app.css, "Scrollbars"): a 6 px thumb, no track, shown on hover and scroll */

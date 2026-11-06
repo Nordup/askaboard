@@ -82,8 +82,16 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--space-6`, `--space-8`
 - Radius (U16, one notch rounder): `--radius-sm` 6, `--radius-md` 9,
   `--radius-lg` 12, `--radius-xl` 16, `--radius-pill`; `--popup-radius` 14
-  (a menu, a popover, the dropdown list). An inner fill's radius is its
-  outer radius less the padding between them (a menu row: 14 − 6 = 8)
+  (a menu, a popover, the dropdown list, the reading panel). An inner fill's radius is its
+  outer radius less the padding between them (a menu row: 14 − 6 = 8; a
+  modal panel's row: 16 − 6 = 10). By size (U17): a 22–26 px fill (an icon
+  button, a top-bar status item, a tooltip, a key cap, the board-row dots)
+  takes `--radius-md`; a 28–34 px row or button takes `--row-radius` (=
+  `--control-radius`, 10: sidebar rows, the folder row, the title-row
+  buttons, welcome rows and buttons); a surface with content inside (a
+  toast, a code block, the preview image) takes `--radius-lg`. The rename
+  field stays `--radius-sm` (concentric in its row); the selection
+  handles take `--handle-radius` (3); circles and pills stay round
 - Shadow (U16, soft and wide, low contrast; ChatGPT app as the reference):
   `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
   black 0.14) for popups, tooltips, the script panel and toasts (the board
@@ -169,7 +177,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: opaque `--bg-elevated` as every menu (U14), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__select` (in a `.menu__select-root`) and its list `.menu--select` with `.menu__option` (`.menu__option-label`, `.menu__option-check`) | The app's own dropdown (`Select.tsx`, U14); see "Select" below. Never a native `<select>` |
-| `.menu__switch`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
+| `.menu__switch`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle (U17: pill track `--switch-width` × `--switch-height`, 36 × 20, a `--switch-knob` 16 px knob `--switch-inset` 2 px in; in a popup menu, the performance popover, the `-menu` sizes 26 × 14 and 10),  a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
 | `.menu--split` with `.menu__nav` (`.menu__nav-end`) and `.menu__pane` (`.menu__header`) | A modal panel in two parts: a section list (`--panel-nav-width`, a hairline at its right; `.menu__item` rows, the current one `--current`, a hover fill; `.menu__nav-end` pins rows at the bottom) and a pane: a header (the title at `--settings-title-size` in a `--panel-row-height` row, level with the first section row, a close `.icon-button`) over a `.menu__scroll`. Spacing: "Settings spacing" below |
 | `.menu__setting` with `.menu__setting-row`, `.menu__setting-text` (`.menu__name`, `.menu__desc`), `.menu__radio`; `.menu__settings` | A setting: the name, a muted description under it (`--text-tertiary`, meta size, wraps), one `.menu__control` at the right, lines under it; a hairline between settings. A row with `role="radio"` is one choice (a 14 px `.menu__radio`, an accent dot when chosen); `.menu__settings` wraps such a group |
 | `.menu__sheet` with `.menu__sheet-line`, `.menu__keys` (`.menu__key`, `.menu__key-word`) | A key sheet (Settings > Keyboard shortcuts, U15): headings and lines in columns; each line the key caps, then the name |
@@ -275,7 +283,7 @@ buttons, a transparent corner.
 The top bar's status items (agent, scene, performance; still called pills in
 code) share `.pill` in `app.css` (the comment block above `.pill--static`).
 They have no border and no capsule (decision U9; the zoom percent was the model before it left the top bar, U10):
-`--pill-height` (26 px), padding 0 `--space-2`, `--radius-sm`, `--bg-hover`
+`--pill-height` (26 px), padding 0 `--space-2`, `--radius-md`, `--bg-hover`
 on hover, `--bg-active` while the popover is open. The popover opens under
 the item, right-aligned. The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
@@ -351,9 +359,9 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 ## Icon buttons and status dots
 
 `.icon-button` is the one square icon button (`--icon-button-size`, 24 px,
-tertiary, primary on hover); `.icon-button--strong` starts in secondary (a
+`--radius-md`, tertiary, primary on hover); `.icon-button--strong` starts in secondary (a
 panel header's controls); `.icon-button--title` is a title-row button
-(`--title-button-size`, 28 px, `--radius-md`, 16 px icon). A disabled icon
+(`--title-button-size`, 28 px, `--row-radius`, 16 px icon). A disabled icon
 button (the `disabled` attribute; Back with no board before) is
 `--text-tertiary` at `--disabled-opacity` (0.5), with no hover fill. It
 keeps its tooltip: the shared tooltip shows on a disabled control as on
@@ -440,7 +448,7 @@ internal data (a path, an id). One shared tooltip instead
   `:focus-visible`. Never on a press: a pressed control shows none until
   the pointer leaves it. Hides on leave, any key, a click, a scroll or
   wheel, and window blur.
-- Look: `--bg-elevated-2`, 1 px `--border-strong`, `--radius-sm`,
+- Look: `--bg-elevated-2`, 1 px `--border-strong`, `--radius-md`,
   padding 4 px 8 px, `--text-xs` `--text-primary`; the shortcut after
   the label in `--text-tertiary` (`.tooltip__key`, 8 px before it);
   `--shadow-float`. Below the control with a 6 px gap
@@ -473,7 +481,7 @@ internal data (a path, an id). One shared tooltip instead
   right and bottom): `.folder-row` (`--folder-row-height`, 32 px), one
   line: `Folder`, the folder name, and `ChevronsUpDown` (U11: no "Saved
   on this Mac" line). Rows are `--sidebar-row-height` (30 px), radius
-  `--radius-md`. The footer opens the folder menu above it
+  `--row-radius`. The footer opens the folder menu above it
   (`.menu.folder-menu`, the sidebar's width): the path as one quiet
   `.menu__path` line (`~` for home; longer than 32 characters:
   `~/…/<parent>/<folder>`), a separator, Reveal, Open Learning Folder…,
@@ -516,7 +524,7 @@ internal data (a path, an id). One shared tooltip instead
   reading view from mockup v5, 2026-10-29; replaced the script panel of
   2026-10-25). One scene at a time, in a frame over the board:
   `--script-panel-width` (296 px), `--bg-elevated`, 1 px `--border-strong`,
-  `--radius-lg`, `--shadow-float`, top right of the canvas by default. The
+  `--popup-radius` (its header buttons: 14 − 5 = 9, `--radius-md`), `--shadow-float`, top right of the canvas by default. The
   learner drags it by its header; it keeps the place (localStorage, measured
   from the nearer side), stays inside the canvas and ends above the bottom
   row of the board controls.
@@ -526,7 +534,7 @@ internal data (a path, an id). One shared tooltip instead
     (hide).
   - Step bar under the header: padding 0 12 px, gap 3 px
     (`--step-bar-gap`), one segment per step, flex = the step's length,
-    3 px high (`--step-bar-height`), radius 2 px (`--step-bar-radius`),
+    3 px high (`--step-bar-height`), round ends (`--step-bar-radius`, a pill),
     track `--border-subtle`, fill `--accent` while playing and
     `--text-tertiary` when paused or ended. Each segment's click and hover
     band is 12 px high (`--step-bar-hit`); it looks the same. A click plays
@@ -633,7 +641,7 @@ internal data (a path, an id). One shared tooltip instead
     a `.menu__line` `No boards match “…”` and the row `New board “…”` (the
     name main will give the file), which makes the board and opens it, with
     no rename step.
-  - Rows: `.menu__item`, 32 px, `--radius-md`; every row has a 16 px
+  - Rows: `.menu__item`, 32 px, radius 10 (the panel's 16 less the list's 6 px padding); every row has a 16 px
     icon (actions their own, a board row `LayoutDashboard`), its folder as `.menu__sub` for a board outside
     `boards/`, the short time (or the shortcut) as `.menu__hint`. The
     selected row is `.menu__item--current`; the first row starts selected
@@ -692,11 +700,12 @@ internal data (a path, an id). One shared tooltip instead
     with a check). No folder: one row, "No folder open" with Open a folder.
   - Keyboard shortcuts (U15): a `.menu__sheet`. The groups Tools, Edit,
     View flow in two columns (one when the pane has no room for two
-    `--keys-column-min` columns); a line is 30 px: the caps in a 76 px
+    `--keys-column-min` columns); a line is 30 px: the caps in an 80 px
     column, 12 px, then the name (a long name wraps, never an ellipsis). A
-    cap: at least 20 × 20 px, padding 0 5 px, `--radius-sm`, `--bg-active`,
-    11 px `--text-primary`, 3 px between caps; a combo is one cap per key
-    (⌘ ⇧ ]); "or" and "drag" are plain tertiary words. The one list is
+    cap (U17): at least 24 × 24 px (`--keycap-size`), padding 0 6 px, `--radius-md`, `--bg-active`,
+    12 px `--text-primary` (`--keycap-font`; a ⌘ ⇧ ⌥ ⌃ glyph 13 px, `.menu__key--symbol`), 3 px between caps; a combo is one cap per key
+    (⌘ ⇧ ]); "or" and "drag" are plain tertiary 12 px words. At 1280 × 800 the
+    sheet ends 45 px above the pane's bottom. The one list is
     `ShortcutsSection.tsx` (from `TOOLS` and `commands.ts`). The dialog is
     600 px tall so the two columns fit without scrolling; a smaller window
     shrinks the dialog, and then the sheet scrolls.
