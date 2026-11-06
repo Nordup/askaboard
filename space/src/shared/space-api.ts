@@ -147,7 +147,33 @@ export interface ShellState {
   homeDir: string
 }
 
-export type MenuCommand = 'open-folder' | 'new-board' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
+export type MenuCommand = 'open-folder' | 'new-board' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance' | 'open-settings'
+
+// ---------- Settings panel (main/settings.ts) ----------
+
+/** The local voice on this Mac (main/kokoro.ts LocalVoiceState). */
+export type LocalVoiceStatus = { state: 'absent' } | { state: 'installing'; progress: number } | { state: 'installed' } | { state: 'failed'; error: string }
+
+/** What the Settings panel shows. The Gemini key never comes back: only whether one is saved. */
+export interface SettingsSnapshot {
+  /** View > Read Lines Aloud. */
+  readLines: boolean
+  /** Which voice reads the lines: our cloud voice, or the local one on this Mac. */
+  model: 'cloud' | 'local'
+  /** The voice of the chosen model, and that model's voices. */
+  voice: string
+  voices: string[]
+  /** View > Pace, and its choices. */
+  pace: string
+  paces: { id: string; label: string }[]
+  local: LocalVoiceStatus
+  localDownloadMb: number
+  /** A Gemini key is saved in ~/.learning-space/.env. */
+  keySaved: boolean
+}
+
+/** A change from the Settings panel: the fields it sets. voice is the voice of the chosen model. */
+export type SettingsChange = Partial<Pick<SettingsSnapshot, 'readLines' | 'model' | 'voice' | 'pace'>>
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -646,6 +672,19 @@ export interface SpaceApi {
   /** The pill's row "Uncapped frame rate": on, as saved, and launched, the state of Chromium's frame limit since this launch. */
   getUncappedFrames(): Promise<{ on: boolean; launched: boolean }>
   setUncappedFrames(on: boolean): Promise<void>
+  /** The Settings panel (main/settings.ts): its state, and every change after it (also from the View menu and the local voice's install). */
+  getSettings(): Promise<SettingsSnapshot>
+  onSettings(listener: (settings: SettingsSnapshot) => void): Unsubscribe
+  setSettings(change: SettingsChange): Promise<void>
+  installLocalVoice(): Promise<void>
+  removeLocalVoice(): Promise<void>
+  /** A short WAV in the current model, voice and pace. */
+  playVoiceSample(): Promise<Uint8Array>
+  /** Write GEMINI_API_KEY into ~/.learning-space/.env, or remove it. */
+  saveGeminiKey(key: string): Promise<void>
+  removeGeminiKey(): Promise<void>
+  /** The cloud voice is at its daily limit (at most once a day per app run). */
+  onVoiceNotice(listener: (code: 'daily_cap') => void): Unsubscribe
   /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
   /** What the folder's guide and instructions files change for agents now. */
@@ -790,5 +829,14 @@ export const IPC = {
   framesPort: 'space:frames-port',
   openSceneRecords: 'space:open-scene-records',
   sceneStories: 'space:scene-stories',
-  rebuildScenes: 'space:rebuild-scenes'
+  rebuildScenes: 'space:rebuild-scenes',
+  getSettings: 'space:get-settings',
+  settings: 'space:settings',
+  setSettings: 'space:set-settings',
+  installLocalVoice: 'space:install-local-voice',
+  removeLocalVoice: 'space:remove-local-voice',
+  playVoiceSample: 'space:play-voice-sample',
+  saveGeminiKey: 'space:save-gemini-key',
+  removeGeminiKey: 'space:remove-gemini-key',
+  voiceNotice: 'space:voice-notice'
 } as const

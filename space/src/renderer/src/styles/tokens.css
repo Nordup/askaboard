@@ -178,6 +178,7 @@
   --search-panel-height: 460px; /* fixed (the list scrolls; short results leave space under them); at most the window height − 2 × --search-panel-margin-y */
   --search-panel-margin-x: 16px; /* the least space between the panel and the window's sides */
   --search-panel-margin-y: 32px; /* the least space between the panel and the window's top and bottom */
+  --settings-panel-width: 380px; /* the Settings panel (its height follows its rows); the margins above keep it in the window */
   --panel-field-height: 46px; /* a modal panel's field (.menu--panel .menu__field) */
   --panel-row-height: 32px; /* a modal panel's rows (.menu--panel .menu__item) */
 

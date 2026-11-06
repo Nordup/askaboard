@@ -131,6 +131,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu__match` | The part of a label that matches the typed text, in `--accent` |
 | `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--bg-glass` over a blur (`--glass-filter`), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
+| `.menu__switch`, `.menu__select`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small native select, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
 | `.menu__separator` | The hairline between groups |
@@ -396,6 +397,27 @@ bar. Everything in it shares one centre line at 22 px.
     Opening it closes any open menu. A close gives the focus back to the
     element that had it (with the ring only if it had one at open), then
     the row's action runs.
+
+- **Settings panel** (decision U8, 2026-11-06; a simple first version, the
+  founder redesigns it later; `SettingsPanel.tsx`). Settings… (⌘,) in the
+  app menu (File menu off macOS) opens a centred `.menu--panel`
+  (`.menu.settings-panel`, `--settings-panel-width` 380 px, the height of
+  its rows) over a `.backdrop`. Rows are `--panel-row-height`. Heading
+  "Voice": "Read lines aloud" with a `.menu__switch`; a separator; the
+  model rows (`.menu__item`, the chosen one `--current` with a check):
+  "Cloud voice" with the meta "Free, a daily limit", and "On this Mac ·
+  Kokoro" with Install · N MB (`.btn-sm`), a progress bar and percent,
+  "Installed" and a quiet Remove (`.btn-text`), or one `.menu__line--error`
+  with Retry; a separator; "Voice" (a `.menu__select` and a play icon
+  button, a spinner while the sample loads) and "Pace" (a
+  `.menu__select`); a separator; heading "Gemini key": a password
+  `.menu__text` ("Your Gemini API key") and Save, or "Key saved" and
+  Remove. Escape and a backdrop click close it.
+- **Voice notice.** At the cloud voice's daily limit the board's toast
+  (`.toast--warn`: lucide `VolumeX` in `--status-warn`) says "Not enough
+  voice credits left for today." with one text action
+  (`.toast__action`) "Set up local voice", which opens Settings. At most
+  once a day per app run.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).

@@ -449,8 +449,10 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - `npm run dev` (relay build + `electron-vite dev`), `npm run build`
   (type-check, bundle, relay), `npm run build:mcpb`, `npm start`.
-- `GEMINI_API_KEY` (any build, also read from `~/.learning-space/.env`) turns
-  the voice on. Environment switches (dev): `SPACE_FOLDER` (open a folder),
+- The voice goes through our voice server, `LEARNING_SPACE_VOICE_HOST`
+  (default `https://135-181-38-113.sslip.io`); `GEMINI_API_KEY` (any build,
+  also read from `~/.learning-space/.env`) sends it to Gemini directly instead.
+  Environment switches (dev): `SPACE_FOLDER` (open a folder),
   `SPACE_MCP_PORT`, `SPACE_REMOTE_DEBUG` (Chromium debug port + dev hooks),
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
   `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay

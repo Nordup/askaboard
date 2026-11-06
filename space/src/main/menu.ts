@@ -1,4 +1,4 @@
-import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, type MenuItemConstructorOptions } from 'electron'
 import { PACES, VOICES, type PaceName } from './voice'
 
 export interface MenuActions {
@@ -24,6 +24,8 @@ export interface MenuActions {
   setVoice(voice: string): void
   pace: PaceName
   setPace(pace: PaceName): void
+  /** Settings… (⌘,): the renderer opens the Settings panel. */
+  openSettings(): void
 }
 
 /**
@@ -34,6 +36,9 @@ export interface MenuActions {
 const SETUP_ITEM = 'setup-folder'
 const SEARCH_ITEM = 'search-boards'
 const READ_LINES_ITEM = 'read-lines'
+const SETTINGS_ITEM = 'settings'
+const voiceItem = (voice: string): string => `voice:${voice}`
+const paceItem = (pace: string): string => `pace:${pace}`
 /** Two items, one visible at a time: a menu item's label does not change after the menu is built on macOS. */
 const HIDE_SIDEBAR_ITEM = 'hide-sidebar'
 const SHOW_SIDEBAR_ITEM = 'show-sidebar'
@@ -50,6 +55,15 @@ export function setFolderOpen(open: boolean): void {
 export function setReadLinesChecked(on: boolean): void {
   const item = Menu.getApplicationMenu()?.getMenuItemById(READ_LINES_ITEM)
   if (item) item.checked = on
+}
+
+/** View > Voice and Pace show these (a change from the Settings panel). */
+export function setVoiceMenu(voice: string, pace: string): void {
+  const menu = Menu.getApplicationMenu()
+  const voiceEntry = menu?.getMenuItemById(voiceItem(voice))
+  const paceEntry = menu?.getMenuItemById(paceItem(pace))
+  if (voiceEntry) voiceEntry.checked = true
+  if (paceEntry) paceEntry.checked = true
 }
 
 /** View > Hide Sidebar or Show Sidebar, whichever fits the sidebar now. */
@@ -81,8 +95,25 @@ export function devClickMenu(id: string): boolean {
 export function installMenu(actions: MenuActions): void {
   const isMac = process.platform === 'darwin'
   const sidebarKey: Partial<MenuItemConstructorOptions> = isMac ? {} : { accelerator: 'CmdOrCtrl+B', registerAccelerator: false }
+  const settingsItem: MenuItemConstructorOptions = { id: SETTINGS_ITEM, label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => actions.openSettings() }
+  const appMenu: MenuItemConstructorOptions = {
+    label: app.name,
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      settingsItem,
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' }
+    ]
+  }
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    ...(isMac ? [appMenu] : []),
     {
       label: 'File',
       submenu: [
@@ -92,6 +123,7 @@ export function installMenu(actions: MenuActions): void {
         { id: SEARCH_ITEM, label: 'Search Boards…', accelerator: 'CmdOrCtrl+K', enabled: false, click: () => actions.searchBoards() },
         { id: SETUP_ITEM, label: 'Set Up Folder for Learning…', enabled: false, click: () => actions.setupFolder() },
         { type: 'separator' },
+        ...(isMac ? [] : [settingsItem, { type: 'separator' as const }]),
         isMac ? { role: 'close' } : { role: 'quit' }
       ]
     },
@@ -123,8 +155,8 @@ export function installMenu(actions: MenuActions): void {
         { label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
         { type: 'separator' },
         { id: READ_LINES_ITEM, label: 'Read Lines Aloud', type: 'checkbox', checked: actions.readLines, click: (item) => actions.setReadLines(item.checked) },
-        { label: 'Voice', submenu: VOICES.map((voice) => ({ label: voice, type: 'radio' as const, checked: voice === actions.voice, click: () => actions.setVoice(voice) })) },
-        { label: 'Pace', submenu: (Object.keys(PACES) as PaceName[]).map((pace) => ({ label: PACES[pace].label, type: 'radio' as const, checked: pace === actions.pace, click: () => actions.setPace(pace) })) },
+        { label: 'Voice', submenu: VOICES.map((voice) => ({ id: voiceItem(voice), label: voice, type: 'radio' as const, checked: voice === actions.voice, click: () => actions.setVoice(voice) })) },
+        { label: 'Pace', submenu: (Object.keys(PACES) as PaceName[]).map((pace) => ({ id: paceItem(pace), label: PACES[pace].label, type: 'radio' as const, checked: pace === actions.pace, click: () => actions.setPace(pace) })) },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },

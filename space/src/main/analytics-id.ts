@@ -107,3 +107,10 @@ export async function readTelemetryIdentity(): Promise<TelemetryIdentity> {
   const owners = raw.flatMap(([source, value]): TelemetryOwner[] => (value !== undefined && value.trim() !== '' ? [{ source, ownerId: hashTelemetryId(value) }] : []))
   return { distinctId: providerId !== undefined ? hashTelemetryId(providerId) : installId, installId, owners }
 }
+
+let shared: Promise<TelemetryIdentity> | null = null
+
+/** The ids, read once per process: usage data and the voice server (main/voice.ts, its user for the daily cap) share them, also with usage data off. */
+export function telemetryIdentity(): Promise<TelemetryIdentity> {
+  return (shared ??= readTelemetryIdentity())
+}

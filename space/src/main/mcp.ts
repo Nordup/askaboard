@@ -23,7 +23,7 @@ import { siteLabel, type SceneSource } from '@shared/scene-program'
 import { getAgentLook, getPace, getVoice } from './state'
 import type { SnapshotRenderer } from './snapshot'
 import { SessionTrace, writeLearnerEdit } from './trace'
-import { speakLines, voiceAnswers } from './voice'
+import { speakLines, voiceAnswers, type VoiceFailure } from './voice'
 import * as analytics from './analytics'
 import type { LearnerEditDelta } from '@shared/learner-edit'
 import {
@@ -107,6 +107,8 @@ export interface AgentServerHooks {
   folderRoot(): string | null
   /** View > Read Lines Aloud as it stands now. */
   readLines(): boolean
+  /** A scene's voice hit the cloud voice's daily limit: index.ts shows the learner a notice (the tool result stays as it is). */
+  voiceNotice?(code: 'daily_cap'): void
   /** The board the window shows (folder-relative path), or null; for the session trace. */
   shownBoard(): string | null
   /** The open learning folder, for list_boards, open_board and move_board; null when none is open. */
@@ -357,6 +359,8 @@ interface SceneVoiceReport {
   seconds?: number
   cached?: boolean
   reason?: string
+  /** With state failed: daily_cap tells the voice server's cap apart. The agent reads only reason. */
+  code?: VoiceFailure
 }
 
 /** The voice field of write_scene's result: none for a scene with no lines. lines_voiced counts what the draft got. */
@@ -2203,7 +2207,8 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     })
     if ('reason' in spoken) {
       console.warn(`voice: ${name} stays at the reading pace: ${spoken.reason}`)
-      return { report: { state: 'failed', reason: spoken.reason } }
+      if (spoken.code === 'daily_cap') this.hooks.voiceNotice?.('daily_cap')
+      return { report: { state: 'failed', reason: spoken.reason, code: spoken.code } }
     }
     return { answers: spoken.answers, report: { state: 'on', seconds: spoken.seconds, cached: spoken.cached } }
   }

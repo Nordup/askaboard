@@ -3,12 +3,17 @@ import { readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { record } from './analytics'
+import { telemetryIdentity } from './analytics-id'
 import { agentHomeDir } from './agent-home'
+import { LOCAL_MODEL, localVoiceState, speakLocal } from './kokoro'
+import { getLocalVoice, getPace, getVoice, getVoiceModel } from './state'
 
 /**
  * The voice of say() lines (docs/learning-space/voice-lines-plan.md): the only
  * caller of the speech API. The app holds no AI; it reads lines aloud with the
- * learner's own key, which stays in this process.
+ * learner's own key, which stays in this process, and with no key through our
+ * voice server (decision T39), which sends the same request with its own key. With
+ * the local model chosen (Settings), Kokoro makes the audio on this Mac (kokoro.ts, T40).
  *
  * write_scene sends all lines of a scene as one request, as one continuous
  * narration: the API allows few requests a minute, a short line alone comes
@@ -23,6 +28,9 @@ import { agentHomeDir } from './agent-home'
 
 const MODEL = 'gemini-3.8-flash-lite-tts'
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
+/** Our voice server (decision P25): POST /v1/speech. LEARNING_SPACE_VOICE_HOST changes it. */
+const DEFAULT_VOICE_HOST = 'https://135-181-38-113.sslip.io'
+const voiceHost = (): string => (process.env.LEARNING_SPACE_VOICE_HOST?.trim() || DEFAULT_VOICE_HOST).replace(/\/+$/, '')
 /** Between lines in the joined text: plain prose, so the model pauses as it does between any two sentences. */
 const LINE_JOIN = ' '
 /** Clips, from the learning folder's root. renderer/live/voice.ts plays them, and folder.ts readAsset serves only this folder. */
@@ -34,10 +42,11 @@ const RETRY_WAIT_MS = 1000
 const RETRY_ROOM_MS = 10_000
 
 export const VOICES = ['Charon', 'Kore', 'Aoede', 'Leda', 'Puck', 'Orus'] as const
+/** style: the cloud voice's direction; speed: the local voice's speed (Kokoro). */
 export const PACES = {
-  calm: { label: 'Calm', style: 'calm and unhurried teacher' },
-  natural: { label: 'Natural', style: 'a natural, friendly teacher at a normal conversational pace' },
-  brisk: { label: 'Brisk', style: 'an energetic teacher, speaking quickly and clearly' }
+  calm: { label: 'Calm', style: 'calm and unhurried teacher', speed: 0.9 },
+  natural: { label: 'Natural', style: 'a natural, friendly teacher at a normal conversational pace', speed: 1 },
+  brisk: { label: 'Brisk', style: 'an energetic teacher, speaking quickly and clearly', speed: 1.1 }
 } as const
 export type PaceName = keyof typeof PACES
 
@@ -243,8 +252,45 @@ function findLines(wav: Wav, lines: readonly string[]): LinePlace[] | null {
 
 // ---------- The request ----------
 
+/** A failure the app can tell apart: daily_cap, the voice server's daily cap for this user; failed, every other failure. */
+export type VoiceFailure = 'daily_cap' | 'failed'
+
+/** The reason of daily_cap, as the agent reads it. */
+const CAP_REASON = 'Not enough voice credits left for today.'
+
 /** Why a request gave no audio, as the write_scene result says it. */
-class VoiceFailed extends Error {}
+class VoiceFailed extends Error {
+  constructor(
+    message: string,
+    readonly code: VoiceFailure = 'failed'
+  ) {
+    super(message)
+  }
+}
+
+/** Who makes the audio: Kokoro on this Mac when the learner chose it; else Gemini with the learner's own key, else our voice server, which counts the cap by the analytics distinct_id. */
+type Speaker = { source: 'local' } | { source: 'own_key'; key: string } | { source: 'backend'; host: string; user: string }
+
+const speakerName = (speaker: Speaker): string => (speaker.source === 'local' ? 'the local voice' : speaker.source === 'own_key' ? 'the speech API' : 'the voice server')
+
+/** The reason when the learner chose the local voice and it is not installed. */
+const NOT_INSTALLED = 'The local voice is chosen in Settings but is not installed.'
+
+/** The speaker of the current choice, or a failure: the local voice not installed, or no install id for the voice server. */
+async function currentSpeaker(): Promise<Speaker | { reason: string }> {
+  if (getVoiceModel() === 'local') return localVoiceState().state === 'installed' ? { source: 'local' } : { reason: NOT_INSTALLED }
+  const key = readKey()
+  if (key) return { source: 'own_key', key }
+  const user = await voiceUser()
+  return user ? { source: 'backend', host: voiceHost(), user } : { reason: 'the voice server needs an install id, and none could be read or made' }
+}
+
+/** The user of the voice server: the analytics distinct_id, also with usage data off. Null when no id could be read or made. */
+const voiceUser = (): Promise<string | null> =>
+  telemetryIdentity().then(
+    (id) => id.distinctId,
+    () => null
+  )
 
 function sleep(wait: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -270,49 +316,81 @@ function audioOf(answer: unknown): Buffer | null {
   return null
 }
 
+/** The voice server's reason field ({"reason": "rate_limited"}), else the start of the body. */
+function serverReason(body: string): string {
+  try {
+    const reason = (JSON.parse(body) as { reason?: unknown }).reason
+    if (typeof reason === 'string') return reason
+  } catch {
+    // Not JSON: a proxy's page.
+  }
+  return body.slice(0, 200)
+}
+
+/** The audio of the local voice: no limit of time (a long scene takes long on this Mac), only the scene's cancel. */
+async function localAudio(text: string, voice: string, speed: number, signal: AbortSignal): Promise<Buffer> {
+  try {
+    return await speakLocal(text, voice, speed, signal)
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new VoiceFailed(`the local voice failed (${error instanceof Error ? error.message : String(error)})`)
+  }
+}
+
 /** One request, and one retry after a failure that a retry can help: all of it within REQUEST_LIMIT_MS. signal: the scene was cancelled. */
-async function requestAudio(key: string, text: string, voice: string, style: string, signal: AbortSignal): Promise<Buffer> {
-  const body = JSON.stringify({
-    model: MODEL,
-    input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
-    response_format: { type: 'audio' },
-    generation_config: { speech_config: [{ voice }] }
-  })
+async function requestAudio(speaker: Exclude<Speaker, { source: 'local' }>, text: string, voice: string, style: string, signal: AbortSignal): Promise<Buffer> {
+  const name = speakerName(speaker)
+  const [url, headers, body] =
+    speaker.source === 'own_key'
+      ? [
+          ENDPOINT,
+          { 'content-type': 'application/json', 'x-goog-api-key': speaker.key },
+          JSON.stringify({
+            model: MODEL,
+            input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
+            response_format: { type: 'audio' },
+            generation_config: { speech_config: [{ voice }] }
+          })
+        ]
+      : [`${speaker.host}/v1/speech`, { 'content-type': 'application/json', 'x-install-user': speaker.user }, JSON.stringify({ text, voice, style })]
   const deadline = Date.now() + REQUEST_LIMIT_MS
   const limited = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_LIMIT_MS)])
   let failed = ''
   for (let attempt = 0; attempt < 2; attempt++) {
     let wait = RETRY_WAIT_MS
     try {
-      const response = await fetch(ENDPOINT, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body, signal: limited })
+      const response = await fetch(url, { method: 'POST', headers, body, signal: limited })
       if (response.ok) {
-        const audio = audioOf(await response.json())
-        if (!audio) throw new VoiceFailed('the answer of the speech API holds no audio')
+        // The voice server answers the WAV itself; Gemini answers JSON with the audio in base64.
+        const audio = speaker.source === 'own_key' ? audioOf(await response.json()) : Buffer.from(await response.arrayBuffer())
+        if (!audio?.length) throw new VoiceFailed(`the answer of ${name} holds no audio`)
         return audio
       }
       const reason = await response.text()
-      failed = `the speech API answered ${response.status}`
+      if (speaker.source === 'backend' && response.status === 402) throw new VoiceFailed(CAP_REASON, 'daily_cap')
+      failed = `${name} answered ${response.status}`
       if (response.status === 429) {
         wait = retryAfter(response, reason)
         failed += ` and named a wait of ${Math.ceil(wait / 1000)} s`
-      } else if (response.status < 500) throw new VoiceFailed(`${failed}: ${reason.slice(0, 200)}`)
+      } else if (response.status < 500) throw new VoiceFailed(`${failed}: ${speaker.source === 'backend' ? serverReason(reason) : reason.slice(0, 200)}`)
+      else if (speaker.source === 'backend') failed += ` (${serverReason(reason)})`
     } catch (error) {
       if (error instanceof VoiceFailed || signal.aborted) throw error
       if (limited.aborted) {
         failed = ''
         break
       }
-      failed = `the speech API could not be reached (${error instanceof Error ? error.message : String(error)})`
+      failed = `${name} could not be reached (${error instanceof Error ? error.message : String(error)})`
     }
     if (attempt === 1 || Date.now() + wait + RETRY_ROOM_MS >= deadline) break
     await sleep(wait, limited)
   }
-  throw new VoiceFailed(failed || `the speech API gave no audio within ${REQUEST_LIMIT_MS / 1000} s`)
+  throw new VoiceFailed(failed || `${name} gave no audio within ${REQUEST_LIMIT_MS / 1000} s`)
 }
 
 // ---------- A scene's lines ----------
 
-export type SpokenLines = { answers: Map<string, string>; seconds: number; cached: boolean } | { reason: string }
+export type SpokenLines = { answers: Map<string, string>; seconds: number; cached: boolean } | { reason: string; code: VoiceFailure }
 
 async function writeAtomic(path: string, data: Buffer | string): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`
@@ -343,49 +421,79 @@ async function readPlaces(path: string, wav: string, count: number): Promise<{ s
  */
 export async function speakLines(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<SpokenLines> {
   const start = Date.now()
-  const spoken = await speakLinesOnce(root, lines, choice, signal)
+  const { spoken, source } = await speakLinesOnce(root, lines, choice, signal)
   // voice.requested (main/analytics.ts): a cancel throws above and is not counted.
-  const outcome = 'reason' in spoken ? (spoken.reason === NO_KEY_REASON ? 'no_key' : 'failed') : spoken.cached ? 'cached' : 'ok'
-  record('voice.requested', { source: outcome === 'cached' ? 'cache' : 'own_key', outcome, audioSeconds: 'reason' in spoken ? 0 : spoken.seconds, requestMs: Date.now() - start })
+  const outcome = 'reason' in spoken ? (spoken.code === 'daily_cap' ? 'capped' : 'failed') : spoken.cached ? 'cached' : 'ok'
+  record('voice.requested', { source, outcome, audioSeconds: 'reason' in spoken ? 0 : spoken.seconds, requestMs: Date.now() - start })
   return spoken
 }
 
-const NO_KEY_REASON = 'no GEMINI_API_KEY in the environment or in ~/.learning-space/.env'
+const failure = (reason: string, code: VoiceFailure = 'failed'): { reason: string; code: VoiceFailure } => ({ reason, code })
 
-async function speakLinesOnce(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<SpokenLines> {
+/** source: where the audio came from, for voice.requested; cache when no request was made. */
+async function speakLinesOnce(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<{ spoken: SpokenLines; source: 'cache' | Speaker['source'] }> {
   const unique = [...new Set(lines)]
   const text = unique.join(LINE_JOIN)
-  const { style } = PACES[choice.pace]
-  const sha = createHash('sha256').update(JSON.stringify([MODEL, choice.voice, style, text])).digest('hex')
+  const { style, speed } = PACES[choice.pace]
+  // The local voice has its own voices (Settings), so choice.voice (a cloud voice) counts only for the cloud.
+  const local = getVoiceModel() === 'local'
+  const voice = local ? getLocalVoice() : choice.voice
+  // The model is in the key, so a cloud clip and a local clip of the same text never mix.
+  const sha = createHash('sha256').update(JSON.stringify(local ? [LOCAL_MODEL, voice, speed, text] : [MODEL, voice, style, text])).digest('hex')
   const clip = `${CLIP_DIR}/${sha}.wav`
   const wavPath = join(root, clip)
   const placesPath = join(root, CLIP_DIR, `${sha}.json`)
   const answersOf = (places: LinePlace[]): Map<string, string> => new Map(unique.map((line, i) => [voiceRequest(line), JSON.stringify({ clip, ...places[i] } satisfies VoiceAnswer)]))
   const saved = await readPlaces(placesPath, wavPath, unique.length)
-  if (saved) return { answers: answersOf(saved.places), seconds: saved.seconds, cached: true }
+  if (saved) return { spoken: { answers: answersOf(saved.places), seconds: saved.seconds, cached: true }, source: 'cache' }
+  let source: 'cache' | Speaker['source'] = 'cache'
+  let name = local ? 'the local voice' : 'the speech API'
   try {
     // A clip without places: the same text costs no second request, also when its lines could not be found.
     let file: Buffer | null = await readFile(wavPath).catch(() => null)
     const cached = file !== null
     if (file) await touch(wavPath)
     else {
-      const key = readKey()
-      if (!key) return { reason: NO_KEY_REASON }
-      file = await requestAudio(key, text, choice.voice, style, signal)
+      const speaker = await currentSpeaker()
+      if ('reason' in speaker) return { spoken: failure(speaker.reason), source: local ? 'local' : 'backend' }
+      source = speaker.source
+      name = speakerName(speaker)
+      file = speaker.source === 'local' ? await localAudio(text, voice, speed, signal) : await requestAudio(speaker, text, voice, style, signal)
       await mkdir(join(root, CLIP_DIR), { recursive: true })
       // A learning folder is often a git repository, and a clip is megabytes that the same text makes again.
       await writeFile(join(root, CLIP_DIR, '.gitignore'), '*\n')
       await writeAtomic(wavPath, file)
     }
     const wav = parseWav(file)
-    if (!wav) return { reason: 'the audio of the speech API is not a 16-bit WAV' }
+    if (!wav) return { spoken: failure(`the audio of ${name} is not a 16-bit WAV`), source }
     const places = findLines(wav, unique)
-    if (!places) return { reason: 'the lines could not be found in the audio' }
+    if (!places) return { spoken: failure('the lines could not be found in the audio'), source }
     const seconds = ms(wav.pcm.length / (2 * wav.channels * wav.rate))
     await writeAtomic(placesPath, JSON.stringify({ seconds, places }))
-    return { answers: answersOf(places), seconds, cached }
+    return { spoken: { answers: answersOf(places), seconds, cached }, source }
   } catch (error) {
     if (signal.aborted) throw error
-    return { reason: error instanceof Error ? error.message : String(error) }
+    return { spoken: error instanceof VoiceFailed ? failure(error.message, error.code) : failure(error instanceof Error ? error.message : String(error)), source }
+  }
+}
+
+// ---------- The sample ----------
+
+/** The sentence of the Settings sample. */
+const SAMPLE_TEXT = 'This is how the lines of a scene will sound.'
+
+/**
+ * A short sample in the current model, voice and pace, as a 16-bit WAV (Settings, ▶). One small
+ * request for the cloud voice; no cache and no analytics. Throws an Error with one short line.
+ */
+export async function voiceSample(signal: AbortSignal): Promise<Buffer> {
+  const speaker = await currentSpeaker()
+  if ('reason' in speaker) throw new Error(speaker.reason)
+  const { style, speed } = PACES[getPace()]
+  try {
+    return speaker.source === 'local' ? await localAudio(SAMPLE_TEXT, getLocalVoice(), speed, signal) : await requestAudio(speaker, SAMPLE_TEXT, getVoice(), style, signal)
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new Error(error instanceof Error ? error.message : String(error))
   }
 }

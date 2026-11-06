@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Camera, RecentFolder } from '@shared/space-api'
-import { hasVoiceKey, PACES, VOICES, type PaceName } from './voice'
+import { LOCAL_VOICES } from './kokoro'
+import { PACES, VOICES, type PaceName } from './voice'
 
 /**
  * App state in `userData/state.json`: the last folder, the recent list, the
@@ -26,12 +27,16 @@ interface PersistedState {
   sidebarHidden: boolean
   /** The row "Uncapped frame rate" of the performance pill. It counts only while the pill is on. */
   uncappedFrames: boolean
-  /** View > Read Lines Aloud; null: never set, so on when a key exists. */
+  /** View > Read Lines Aloud; null: never set, so on (our voice server needs no key). */
   readLines: boolean | null
   /** View > Voice. */
   voice: string
   /** View > Pace. */
   pace: PaceName
+  /** Settings > Voice: our cloud voice (own key or voice server) or Kokoro on this Mac (kokoro.ts). */
+  voiceModel: 'cloud' | 'local'
+  /** The Kokoro voice of the local model. */
+  localVoice: string
 }
 
 /**
@@ -52,7 +57,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: VOICES[0], pace: 'natural' }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '' }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -70,7 +75,9 @@ export function loadState(): void {
       uncappedFrames: raw.uncappedFrames !== false,
       readLines: typeof raw.readLines === 'boolean' ? raw.readLines : null,
       voice: (VOICES as readonly string[]).includes(raw.voice as string) ? (raw.voice as string) : VOICES[0],
-      pace: raw.pace !== undefined && Object.hasOwn(PACES, raw.pace) ? raw.pace : 'natural'
+      pace: raw.pace !== undefined && Object.hasOwn(PACES, raw.pace) ? raw.pace : 'natural',
+      voiceModel: raw.voiceModel === 'local' ? 'local' : 'cloud',
+      localVoice: LOCAL_VOICES.includes(raw.localVoice as string) ? (raw.localVoice as string) : LOCAL_VOICES[0]
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -203,9 +210,9 @@ export function setUncappedFrames(value: boolean): void {
   saveStateNow()
 }
 
-/** View > Read Lines Aloud as it stands: the saved choice, else on when a key exists. */
+/** View > Read Lines Aloud as it stands: the saved choice, else on. */
 export function readLinesOn(): boolean {
-  return state.readLines ?? hasVoiceKey()
+  return state.readLines ?? true
 }
 
 export function setReadLines(value: boolean): void {
@@ -213,8 +220,9 @@ export function setReadLines(value: boolean): void {
   saveStateNow()
 }
 
+// voice.ts reads this module and this module reads voice.ts: nothing of either may be used while the modules load, so the defaults come at the first read.
 export function getVoice(): string {
-  return state.voice
+  return state.voice || VOICES[0]
 }
 
 export function setVoice(value: string): void {
@@ -228,6 +236,24 @@ export function getPace(): PaceName {
 
 export function setPace(value: PaceName): void {
   state.pace = value
+  saveStateNow()
+}
+
+export function getVoiceModel(): 'cloud' | 'local' {
+  return state.voiceModel
+}
+
+export function setVoiceModel(value: 'cloud' | 'local'): void {
+  state.voiceModel = value
+  saveStateNow()
+}
+
+export function getLocalVoice(): string {
+  return state.localVoice || LOCAL_VOICES[0]
+}
+
+export function setLocalVoice(value: string): void {
+  state.localVoice = LOCAL_VOICES.includes(value) ? value : LOCAL_VOICES[0]
   saveStateNow()
 }
 

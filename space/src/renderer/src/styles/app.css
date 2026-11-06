@@ -561,6 +561,15 @@ button:focus-visible {
   margin: auto;
 }
 
+/* The Settings panel (⌘,): layout only (centred in the window both ways, a fixed width, the height of its rows); the content is shared .menu parts. */
+.menu.settings-panel {
+  inset: 0;
+  width: min(var(--settings-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
+  height: fit-content;
+  max-height: calc(100vh - 2 * var(--search-panel-margin-y));
+  margin: auto;
+}
+
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
 .menu.perf-pop {
   position: absolute;
@@ -1208,6 +1217,9 @@ button:focus-visible {
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
+ *   .menu__select          a small native select in a .menu__control (a voice, a pace)
+ *   .menu__text            a small text field in a .menu__row (a key), before its .btn-sm
+ *   .menu__progress        a 90 × 4 px accent progress bar (.menu__progress-bar sets its width), a % .menu__meta--mono after it
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
@@ -1377,6 +1389,17 @@ button:focus-visible {
   padding-block: 0;
 }
 
+/* A panel that holds the focus itself (the Settings panel, for its keys) shows no ring: its controls show theirs. */
+.menu--panel:focus-visible {
+  outline: none;
+}
+
+/* A panel's plain rows have the height of its items (the Settings panel). */
+.menu--panel .menu__row {
+  min-height: var(--panel-row-height);
+  padding-block: 0;
+}
+
 /* The pointer moves the selection, so a hovered row has no fill of its own: the selected row is the one fill. */
 .menu--panel .menu__item:not(.menu__item--current):hover:not(:disabled) {
   background: none;
@@ -1470,7 +1493,57 @@ button:focus-visible {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
+  gap: var(--space-1);
   min-height: 24px;
+}
+
+.menu__select {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--menu-meta-font);
+}
+
+.menu__text {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--menu-meta-font);
+  user-select: text;
+}
+
+.menu__text:focus-visible {
+  border-color: var(--accent);
+}
+
+.menu__text::placeholder {
+  color: var(--text-tertiary);
+}
+
+.menu__progress {
+  position: relative;
+  width: 90px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-active);
+}
+
+.menu__progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
 }
 
 .menu__switch {
@@ -1924,6 +1997,21 @@ button:focus-visible {
 
 .toast--info svg {
   color: var(--status-live);
+}
+
+/* A notice that asks for a step (the voice's daily limit): a warn icon and one text action after the text. */
+.toast--warn svg {
+  color: var(--status-warn);
+}
+
+.toast__action {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 560;
+}
+
+.toast__action:hover {
+  text-decoration: underline;
 }
 
 /* ---------- Folder guide overrides (.learning-space/guide.md, instructions.md) ---------- */

@@ -73,11 +73,13 @@ Electron runs native Wayland. Differences from macOS:
   panel for one scene (the previous line, the current line, a step bar); it
   fades after the scene and hides into the scene pill in the top bar, which
   lists the board's scenes and shows the scene and step of a selected item.
-- **Voice.** With a Gemini key, the app reads `say` lines aloud, and each line
-  lasts as long as its audio. Without a key, or with View > Read Lines Aloud
-  off, the lines run at a reading pace, silent. View > Voice and View > Pace
-  apply to new scenes. Key: `GEMINI_API_KEY`, or a line in
-  `~/.learning-space/.env`. Clips stay in the folder's `.learning-space/voice/`.
+- **Voice.** The app reads `say` lines aloud, and each line lasts as long as
+  its audio. With no key, the audio comes from our voice server
+  (`LEARNING_SPACE_VOICE_HOST`, decision T39), with a daily cap per user; an own
+  Gemini key (`GEMINI_API_KEY`, or a line in `~/.learning-space/.env`) goes to
+  Gemini directly. When the voice fails, or with View > Read Lines Aloud off,
+  the lines run at a reading pace, silent. View > Voice and View > Pace apply
+  to new scenes. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no

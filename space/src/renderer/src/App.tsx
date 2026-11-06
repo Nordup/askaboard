@@ -30,7 +30,8 @@ import { PreviewPanel } from './components/PreviewPanel'
 import { SearchPanel } from './components/SearchPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
-import { Toast } from './components/Toast'
+import { Toast, type ToastAction } from './components/Toast'
+import { SettingsPanel } from './components/SettingsPanel'
 import { ToolPalette } from './components/ToolPalette'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
@@ -111,7 +112,7 @@ export function App() {
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' } | null>(null)
+  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' | 'warn'; action?: ToastAction } | null>(null)
   /** The "Set up this folder" menu is open (the sidebar row, the folder menu or File > Set Up Folder for Learning…). */
   const [menuSetup, setMenuSetup] = useState(false)
   /** "Don't ask" or a finished setup: no setup row until the folder opens again. */
@@ -831,6 +832,11 @@ export function App() {
   const searchOpenRef = useRef(false)
   searchOpenRef.current = searchOpen
   const closeSearch = useCallback(() => setSearchOpen(false), [])
+  // The Settings panel (Settings…, ⌘,; the voice notice's action): also without a folder. Opening it or the search panel closes the other.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsOpenRef = useRef(false)
+  settingsOpenRef.current = settingsOpen
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
   useEffect(() => setSearchOpen(false), [folder?.root])
 
   // ⌘B (Ctrl+B): a window key, not a menu accelerator, so ⌘B in a text box stays bold (board/content.tsx).
@@ -895,13 +901,32 @@ export function App() {
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
       // Main sends the stories of the board the window shows; reads take them only for that board's path (live/stories.ts).
       // Main sends a board's stories after each new record line; they are for the open board only when its id is theirs.
+      // The cloud voice's daily limit (main sends it at most once a day per run).
+      space.onVoiceNotice(() =>
+        setToast({
+          text: 'Not enough voice credits left for today.',
+          kind: 'warn',
+          action: {
+            label: 'Set up local voice',
+            run: () => {
+              setSearchOpen(false)
+              setSettingsOpen(true)
+            }
+          }
+        })
+      ),
       space.onSceneStories((stories) => {
         if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
       }),
       space.onMenuCommand((command) => {
         // ⌘N, ⌘O and the setup item close the search panel first; the zoom keys do not reach the board under it.
         if (searchOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
-        if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
+        if (settingsOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsOpen(false))
+        if (command === 'open-settings') {
+          flushSync(() => setSearchOpen(false))
+          setSettingsOpen(true)
+        } else if (settingsOpenRef.current && command.startsWith('zoom-')) return
+        else if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
         else if (command === 'open-folder') void openFolderDialogRef.current()
         else if (command === 'new-board') void createBoardRef.current()
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
@@ -1282,7 +1307,7 @@ export function App() {
                 onWidth={(px) => boardRef.current?.applyWidth(px)}
               />
             )}
-            {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}
+            {toast && <Toast message={toast.text} kind={toast.kind} action={toast.action} onDone={clearToast} />}
           </div>
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
@@ -1297,6 +1322,7 @@ export function App() {
           onOpenFolder={openFolderFromSearch}
         />
       )}
+      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
     </div>
   )
 }

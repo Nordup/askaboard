@@ -10,7 +10,8 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
+import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
+import { registerSettings, settingsChanged } from './settings'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -138,6 +139,7 @@ const agentServer = new AgentServer({
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
   readLines: readLinesNow,
+  voiceNotice: showVoiceNotice,
   shownBoard: () => (session ? store.getLastBoard(session.root) : null),
   folder: () => session,
   // This instance owns the port: point the relay at it and refresh its offline tool list.
@@ -163,15 +165,26 @@ function setSidebarHidden(hidden: boolean): void {
 /** What the menu and the renderer show of Read Lines Aloud. */
 let readLinesShown: boolean | null = null
 
-/** Read Lines Aloud as it stands, the one way to read it: with no saved choice it follows the key, which can come or go while the app runs. A change reaches the menu and the renderer here. */
+/** Read Lines Aloud as it stands, the one way to read it. A change reaches the menu and the renderer here. */
 function readLinesNow(): boolean {
   const on = store.readLinesOn()
   if (on !== readLinesShown) {
     readLinesShown = on
     setReadLinesChecked(on)
     send(IPC.readLines, on)
+    settingsChanged()
   }
   return on
+}
+
+/** The day (local date) the daily-limit notice last showed: at most once a day per app run, not on every scene. */
+let voiceNoticeDay: string | null = null
+
+function showVoiceNotice(code: 'daily_cap'): void {
+  const day = new Date().toDateString()
+  if (voiceNoticeDay === day) return
+  voiceNoticeDay = day
+  send(IPC.voiceNotice, code)
 }
 
 // The watcher skips hidden folders, so .learning-space changes reach the UI
@@ -668,6 +681,15 @@ if (uncappedAtLaunch) {
 }
 limitDiskCache()
 registerIpc()
+registerSettings({
+  handle,
+  send,
+  setReadLines: (on) => {
+    store.setReadLines(on)
+    readLinesNow()
+  },
+  menuChanged: () => setVoiceMenu(store.getVoice(), store.getPace())
+})
 
 void app.whenReady().then(async () => {
   installMenu({
@@ -699,9 +721,16 @@ void app.whenReady().then(async () => {
       readLinesNow()
     },
     voice: store.getVoice(),
-    setVoice: store.setVoice,
+    setVoice: (voice) => {
+      store.setVoice(voice)
+      settingsChanged()
+    },
     pace: store.getPace(),
-    setPace: store.setPace
+    setPace: (pace) => {
+      store.setPace(pace)
+      settingsChanged()
+    },
+    openSettings: () => sendMenuCommand('open-settings')
   })
   registerAssetProtocol()
   registerLiveItemProtocol(() => session)
@@ -710,7 +739,7 @@ void app.whenReady().then(async () => {
   firstFolder = openInitialFolder().then(() => {
     setFolderOpen(session !== null)
     agentServer.start()
-    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: hasVoiceKey() ? 'own_key' : 'off' })
+    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: !store.readLinesOn() ? 'off' : store.getVoiceModel() === 'local' ? 'local' : hasVoiceKey() ? 'own_key' : 'backend' })
   })
   void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   void cleanTraces().catch((error) => console.error(`storage: ${String(error)}`))

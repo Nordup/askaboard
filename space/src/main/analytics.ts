@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { app } from 'electron'
-import { readTelemetryIdentity, type TelemetryIdentity } from './analytics-id'
+import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
 
 /**
  * Usage data (decision P24). The delivery copies T3 Code's telemetry/AnalyticsService.ts: an
@@ -177,7 +177,7 @@ function flush(): Promise<void> {
 /** Read the ids, start the flush loop and the quit flush. Call once, when the app is ready. */
 export function start(): void {
   if (!enabled || identity) return
-  identity = readTelemetryIdentity().then(
+  identity = telemetryIdentity().then(
     (id) => {
       resolved = id
       if (!id.distinctId) buffer = []
