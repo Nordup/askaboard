@@ -13,6 +13,9 @@
   --bg-elevated-2: #232327;
   --bg-hover: rgba(255, 255, 255, 0.05);
   --bg-active: rgba(255, 255, 255, 0.08);
+  /* A modal panel (the search panel): --bg-elevated a little see-through, over a blur of what lies behind it (the macOS look) */
+  --bg-glass: rgba(28, 28, 31, 0.86);
+  --glass-filter: blur(20px) saturate(140%);
 
   /* Lines */
   --border-subtle: rgba(255, 255, 255, 0.08);
@@ -128,8 +131,17 @@
   --sidebar-width: 248px;
   --topbar-height: 44px;
   --titlebar-height: 44px;
-  /* The macOS window buttons: the sidebar button's left edge sits right of them (in a window, not full screen) */
-  --traffic-light-reserve: 78px;
+  /*
+   * The title row: the 44 px row across the window (the sidebar strip and the top bar). The macOS window buttons
+   * (main/index.ts trafficLightPosition { x: 16, y: 15 }) are three 14 px circles at a 23 px pitch: x 16 to 76,
+   * centre line 22 px, the row's centre (measured in a window capture, 2026-11-06).
+   */
+  --window-buttons-end: 76px; /* the right edge of the macOS window buttons */
+  --window-buttons-gap: 16px; /* from that edge to the first title-row button */
+  --title-row-inset: var(--space-3); /* the first button's left edge in full screen, on Linux and on Windows */
+  --title-button-size: 28px; /* a title-row icon button's hit area (16 px icon): the sidebar button, New board */
+  --title-button-gap: var(--space-1); /* between neighbouring title-row buttons */
+  --title-icon-size: 16px; /* the icon in a title-row button */
   --sidebar-row-height: 30px; /* every sidebar row: New board, Search boards, a board */
   --sidebar-footer-height: 44px; /* the folder row at the bottom of the sidebar */
   --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */
@@ -162,10 +174,10 @@
   --leading-current: 1.6; /* the reading view's lines */
   /* The search panel (⌘K): a modal panel over the whole window */
   --backdrop: rgba(0, 0, 0, 0.4); /* behind a modal panel, over the whole window */
-  --search-panel-width: 520px; /* at most the window width − 32 px */
-  --search-panel-top: 64px; /* from the window top */
-  --search-panel-margin: 16px; /* the least space between the panel and the window's sides */
-  --search-list-reserve: 160px; /* the list is at most the window height minus this */
+  --search-panel-width: 520px; /* at most the window width − 2 × --search-panel-margin-x */
+  --search-panel-height: 460px; /* fixed (the list scrolls; short results leave space under them); at most the window height − 2 × --search-panel-margin-y */
+  --search-panel-margin-x: 16px; /* the least space between the panel and the window's sides */
+  --search-panel-margin-y: 32px; /* the least space between the panel and the window's top and bottom */
   --panel-field-height: 46px; /* a modal panel's field (.menu--panel .menu__field) */
   --panel-row-height: 32px; /* a modal panel's rows (.menu--panel .menu__item) */
 

@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createPortal, flushSync } from 'react-dom'
-import { FolderOpen, LayoutDashboard, Search, SquarePen } from 'lucide-react'
+import { FolderOpen, Search, SquarePen } from 'lucide-react'
 import { sanitizeBoardName } from '@shared/board-format'
 import { shortAgo } from '@shared/board-digest'
 import type { BoardListEntry } from '@shared/space-api'
+import { markFocus, returnFocus } from '../lib/focus'
 import { openFolderLabel, shortcut } from '../platform'
 
 interface SearchPanelProps {
@@ -56,7 +57,7 @@ function matchBoards(boards: BoardListEntry[], text: string): Row[] {
  * The search panel (decision U7, left-panel plan section 6): a modal panel over the whole window,
  * opened from the sidebar's "Search boards" row and File > Search Boards… (⌘K). App mounts it
  * while it is open. Focus stays in the field; the keys move the selection and run its row; a
- * close gives the focus back to the element that had it.
+ * close gives the focus back as it was (lib/focus.ts: no ring when the pointer opened the panel).
  */
 export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreateNamed, onOpenFolder }: SearchPanelProps) {
   const [query, setQuery] = useState('')
@@ -67,7 +68,7 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
-  const opener = useRef<Element | null>(document.activeElement)
+  const [opener] = useState(markFocus)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   /** The last pointer place over the rows: a mouse move at the same place (Chromium sends one after a scroll) moves no selection. */
@@ -97,15 +98,12 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
   const current = Math.min(selected, rows.length - 1)
 
   // Open: an open menu or popover closes (the backdrop is an outside press for all of them), then the field takes the focus.
-  // Close: the focus goes back to the element that had it.
+  // Close: the focus goes back to the element that had it, with its ring only if it showed one.
   useLayoutEffect(() => {
     backdropRef.current?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     inputRef.current?.focus({ preventScroll: true })
-    const back = opener.current
-    return () => {
-      if (back instanceof HTMLElement && back.isConnected && back !== document.body) back.focus({ preventScroll: true })
-    }
-  }, [])
+    return () => returnFocus(opener)
+  }, [opener])
 
   // While open, no key reaches the board, the tools or the sidebar: a key outside the panel goes back to the field.
   useEffect(() => {
@@ -239,7 +237,8 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
                   }}
                   onClick={() => run(row)}
                 >
-                  <span className="menu__icon">{row.kind === 'board' ? <LayoutDashboard {...ROW_ICON} /> : row.kind === 'create' ? <SquarePen {...ROW_ICON} /> : row.icon}</span>
+                  {/* A board row has no icon: its empty icon cell puts the name in the column of the action labels and the typed text. */}
+                  <span className="menu__icon">{row.kind === 'action' ? row.icon : row.kind === 'create' ? <SquarePen {...ROW_ICON} /> : null}</span>
                   <span className="menu__label">{label(row)}</span>
                   {row.kind === 'board' && row.board.dir && <span className="menu__sub">{row.board.dir}</span>}
                   {row.kind === 'board' ? <span className="menu__hint">{shortAgo(row.board.editedAt, now)}</span> : row.kind === 'action' ? <span className="menu__hint">{row.hint}</span> : null}

@@ -50,7 +50,7 @@ export function TopBar(props: TopBarProps) {
           <span className="topbar__lead">
             <SidebarToggle hidden onToggle={props.onToggleSidebar} />
             {props.onCreateBoard && (
-              <button className="icon-button icon-button--strong" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
+              <button className="icon-button icon-button--strong icon-button--title" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
                 <SquarePen size={16} strokeWidth={1.75} />
               </button>
             )}

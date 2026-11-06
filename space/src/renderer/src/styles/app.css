@@ -43,15 +43,15 @@ button:focus-visible {
 /* ---------- Shell ---------- */
 
 .shell {
-  /* The sidebar button's left edge: right of the macOS window buttons in a window; 12 px in full screen and off macOS. */
-  --chrome-reserve: var(--space-3);
+  /* The first title-row button's left edge: after the macOS window buttons in a window; --title-row-inset in full screen and off macOS. */
+  --chrome-reserve: var(--title-row-inset);
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   height: 100%;
 }
 
 .shell[data-window-buttons] {
-  --chrome-reserve: var(--traffic-light-reserve);
+  --chrome-reserve: calc(var(--window-buttons-end) + var(--window-buttons-gap));
 }
 
 /* View > Hide Sidebar: one column, at once (no width animation: the board would repaint each frame). */
@@ -87,19 +87,28 @@ button:focus-visible {
   display: none;
 }
 
-/* The top strip: the window buttons and the sidebar button, level with the top bar (same height, same 1 px line below). */
+/*
+ * The top strip, level with the top bar (one 44 px title row, one centre line with the window buttons): the window
+ * buttons at the left, the sidebar button at the right end. The button's icon ends in the column of the rows' hints
+ * and times below: the rows' inset and padding, less the space between the icon and its hit area's edge.
+ */
 .sidebar__strip {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   height: var(--titlebar-height);
   flex-shrink: 0;
-  padding-left: var(--chrome-reserve);
-  border-bottom: 1px solid transparent;
+  padding-right: calc(2 * var(--space-2) - (var(--title-button-size) - var(--title-icon-size)) / 2);
   -webkit-app-region: drag;
 }
 
 .sidebar__strip button {
   -webkit-app-region: no-drag;
+}
+
+/* The icon's right edge on the text edge of the hints below (the glyph has a small inset in its box, as the rows' dots). */
+.sidebar__strip .sidebar-toggle svg {
+  margin-right: calc(var(--space-1) / -2);
 }
 
 /* New board, Search boards, Set up for learning: sidebar rows above the boards. */
@@ -229,6 +238,13 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
+/* A title-row button (the sidebar button, New board): a larger hit area, the same 16 px icon. */
+.icon-button--title {
+  width: var(--title-button-size);
+  height: var(--title-button-size);
+  border-radius: var(--radius-md);
+}
+
 /* ---------- Top bar ---------- */
 
 .topbar {
@@ -240,7 +256,8 @@ button:focus-visible {
   flex-shrink: 0;
   padding: 0 var(--space-3) 0 var(--space-4);
   background: var(--bg-app);
-  border-bottom: 1px solid var(--border-subtle);
+  /* The line under the bar is drawn inside it, not as a border: the content box stays 44 px, so the bar's centre line is the title row's (22 px). */
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
   -webkit-app-region: drag;
   container: topbar / inline-size;
 }
@@ -259,17 +276,18 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* With the sidebar hidden: the sidebar button at its place on the screen, then New board, then the board name. */
+/* With the sidebar hidden: the sidebar button and New board after the window buttons (or at the inset), then the board name. */
 .shell[data-sidebar-hidden] .topbar {
   padding-left: var(--chrome-reserve);
 }
 
+/* The title's own gap (8 px) and this margin put the board name 12 px after the last button. */
 .topbar__lead {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  gap: var(--space-1);
-  margin-right: var(--space-1);
+  gap: var(--title-button-gap);
+  margin-right: calc(var(--space-3) - var(--space-2));
 }
 
 /* No board open: the folder name, or "Learning Space" without a folder. */
@@ -535,16 +553,12 @@ button:focus-visible {
   -webkit-app-region: no-drag;
 }
 
-/* The search panel (⌘K): layout only (position, width, the list's max-height); the content is shared .menu parts. */
+/* The search panel (⌘K): layout only (centred in the window both ways, a fixed width and height); the content is shared .menu parts. */
 .menu.search-panel {
-  top: var(--search-panel-top);
-  left: 50%;
-  width: min(var(--search-panel-width), calc(100vw - 2 * var(--search-panel-margin)));
-  transform: translateX(-50%);
-}
-
-.menu.search-panel .menu__scroll {
-  max-height: calc(100vh - var(--search-list-reserve));
+  inset: 0;
+  width: min(var(--search-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
+  height: min(var(--search-panel-height), calc(100vh - 2 * var(--search-panel-margin-y)));
+  margin: auto;
 }
 
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
@@ -1181,14 +1195,17 @@ button:focus-visible {
  *
  *   .menu__heading         small uppercase section label
  *   .menu__title/__lede    a title and one muted line (or two: a second .menu__lede follows closely); long words wrap
- *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
+ *   .menu__path            a quiet one-line path at the top of a menu (tertiary, meta size; the full path in its title)
+ *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right);
+ *                          an empty .menu__icon keeps a row's label in the column of the other rows' labels
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__sub             dim text right after a .menu__label (a board's folder); the .menu__hint goes to the right
  *   .menu__match           the part of a label that matches the typed text (--accent)
- *   .menu--panel           a modal panel over a .backdrop (the search panel): --radius-xl, --border-strong,
- *                          --shadow-card, rows of --panel-row-height; the selection is the one fill (hover moves it)
+ *   .menu--panel           a modal panel over a .backdrop (the search panel): --bg-glass over a blur (--glass-filter),
+ *                          --radius-xl, --border-strong, --shadow-card, rows of --panel-row-height; the selection is
+ *                          the one fill (hover moves it); the instance sets the panel's height
  *   .menu__field/__input   the panel's search field at the top: a 17 px icon, 15 px text, a hairline under it
- *   .menu__scroll          the panel's rows under the field; it scrolls when the instance sets a max-height
+ *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
@@ -1245,6 +1262,16 @@ button:focus-visible {
 
 .menu__lede:has(+ .menu__lede) {
   padding-bottom: var(--space-half);
+}
+
+/* A quiet path line at the top of a menu (the folder menu): one line; Menu.tsx gives the full path as its title. */
+.menu__path {
+  padding: var(--menu-row-pad);
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .menu__item {
@@ -1327,7 +1354,7 @@ button:focus-visible {
   color: var(--accent);
 }
 
-/* A modal panel (the search panel): over a .backdrop; the instance sets its position, width and the list's max-height. */
+/* A modal panel (the search panel): over a .backdrop, a little see-through over a blur; the instance sets its position, width and height. */
 .menu--panel {
   --menu-radius: var(--radius-xl);
   --menu-item-radius: var(--radius-md);
@@ -1336,7 +1363,13 @@ button:focus-visible {
   padding: 0;
   overflow: hidden;
   border-color: var(--border-strong);
+  background: var(--bg-glass);
   box-shadow: var(--shadow-card);
+  backdrop-filter: var(--glass-filter);
+}
+
+.menu--panel .menu__scroll {
+  flex: 1;
 }
 
 .menu--panel .menu__item {

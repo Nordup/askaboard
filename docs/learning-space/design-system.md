@@ -42,7 +42,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 ## Tokens (names, grouped)
 
 - Surfaces: `--bg-app`, `--bg-sidebar`, `--bg-canvas`, `--bg-elevated`,
-  `--bg-elevated-2`, `--bg-hover`, `--bg-active`
+  `--bg-elevated-2`, `--bg-hover`, `--bg-active`; `--bg-glass`
+  (`--bg-elevated` at 0.86 alpha) and `--glass-filter` (blur 20 px,
+  saturate 140 %): a modal panel's see-through surface
 - Borders and canvas: `--border-subtle`, `--border-strong`, `--canvas-dot`,
   `--canvas-dot-pitch`, `--canvas-dot-solid`, `--preview-checker`
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`,
@@ -77,8 +79,10 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--radius-pill`
 - Shadow: `--shadow-float`, `--shadow-card`
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
-  `--traffic-light-reserve` (the sidebar button's left edge right of the
-  macOS window buttons), `--sidebar-row-height`, `--sidebar-footer-height`,
+  the title row (see "Title row"): `--window-buttons-end`,
+  `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
+  `--title-button-gap`, `--title-icon-size`;
+  `--sidebar-row-height`, `--sidebar-footer-height`,
   `--topbar-rename-width`,
   `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
@@ -91,8 +95,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--reading-said`, `--reading-next`, `--reading-light`,
   `--reading-light-ramp`
 - Search panel: `--backdrop` (behind a modal panel), `--search-panel-width`,
-  `--search-panel-top`, `--search-panel-margin`, `--search-list-reserve`;
-  a modal panel's `--panel-field-height` and `--panel-row-height`
+  `--search-panel-height`, `--search-panel-margin-x`,
+  `--search-panel-margin-y`; a modal panel's `--panel-field-height` and
+  `--panel-row-height`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
@@ -119,11 +124,12 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | Part | Use |
 | --- | --- |
 | `.menu__heading` | Small uppercase section label |
-| `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap. `Menu.tsx` entries `{ title }` and `{ lede }` |
-| `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover) |
+| `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap |
+| `.menu__path` | A quiet one-line path at the top of a menu (`--text-tertiary`, meta size, ellipsis); `Menu.tsx` entry `{ path, full }`, the full path as its title |
+| `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover). An empty `.menu__icon` keeps a row without an icon in the labels' column |
 | `.menu__sub` | Dim text right after a `.menu__label` (a board's folder); a `.menu__hint` stays at the right |
 | `.menu__match` | The part of a label that matches the typed text, in `--accent` |
-| `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that scrolls. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
+| `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--bg-glass` over a blur (`--glass-filter`), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
@@ -145,6 +151,12 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 - One primary control per row. A problem is one short line with **Fix** or
   **Retry**, not a paragraph.
 - Escape and a click outside close a menu; focus returns to the anchor.
+- Focus goes back as it was (`lib/focus.ts`, `markFocus` at open,
+  `returnFocus` at close): the focus ring shows again only when the
+  element showed it at open time (the keyboard reached it). A menu or
+  panel that the pointer opened leaves no ring, also after keys in it.
+  Every menu, panel and flyout uses these two functions.
+- Focus styles use `:focus-visible`, never `:focus`.
 
 ## Pills
 
@@ -164,9 +176,34 @@ missing part goes into the same block.
 
 `.icon-button` is the one square icon button (`--icon-button-size`, 24 px,
 tertiary, primary on hover); `.icon-button--strong` starts in secondary (a
-panel header's controls). `.status-dot` is 7 px; `.status-dot--small` is
+panel header's controls); `.icon-button--title` is a title-row button
+(`--title-button-size`, 28 px, `--radius-md`, 16 px icon). `.status-dot` is 7 px; `.status-dot--small` is
 6 px (a panel header). The halo is `--status-dot-ring` wide (2 px; 3 px in an
 item pill).
+
+## Title row
+
+The 44 px row across the top of the window: the sidebar strip and the top
+bar. Everything in it shares one centre line at 22 px.
+
+- The macOS window buttons: `trafficLightPosition { x: 16, y: 15 }`
+  (`main/index.ts`), three 14 px circles at a 23 px pitch, x 16 to 76
+  (`--window-buttons-end`), centre 22 px. Measured in a window capture on
+  2026-11-06; measure again when macOS changes them.
+- The top bar draws its bottom line as an inset shadow, not a border, so
+  its content box is 44 px high.
+- Icon buttons in the row are `.icon-button--title`: a 28 px hit area
+  (`--title-button-size`) with a 16 px icon (`--title-icon-size`).
+- 4 px between neighbouring buttons (`--title-button-gap`).
+- 16 px from the window buttons' right edge to the first button
+  (`--window-buttons-gap`), so it starts at 92 px in a macOS window.
+- 12 px edge inset in full screen, on Linux and on Windows
+  (`--title-row-inset`). `.shell` sets `--chrome-reserve` to one of the
+  two.
+- 12 px (`--space-3`) from the last button to the board name.
+- Sidebar open: the sidebar button sits at the right end of the strip,
+  its icon's right edge in the column of the rows' hints and times.
+- The pills on the right keep their own spacing (`.topbar__right`).
 
 ## Approved screens (reference)
 
@@ -179,8 +216,9 @@ item pill).
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
 - **Sidebar** (left-panel plan, decisions U6, 2026-11-06). Top to bottom: a
-  44 px strip (drag region) with the sidebar button (lucide `PanelLeft`,
-  `.icon-button`, `SidebarToggle.tsx`); the rows New board (`SquarePen`,
+  44 px strip (drag region) with the sidebar button at its right end
+  (lucide `PanelLeft`, `.icon-button--title`, `SidebarToggle.tsx`; see
+  "Title row"); the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
   and the guide-override note; the heading "Boards" and the boards list;
@@ -188,15 +226,19 @@ item pill).
   `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
   `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
   `--radius-md`. The footer opens the folder menu above it
-  (`.menu.folder-menu`, the sidebar's width): title, the path with `~`, "Your
-  boards are files in this folder.", Reveal, Open Learning Folder…, Edit
-  Board Guide…, Recent. No folder: the footer reads "Open a folder".
+  (`.menu.folder-menu`, the sidebar's width): the path as one quiet
+  `.menu__path` line (`~` for home; longer than 32 characters:
+  `~/…/<parent>/<folder>`), a separator, Reveal, Open Learning Folder…,
+  Edit Board Guide…, Recent. No folder name, no lede. No folder: the
+  footer reads "Open a folder". The boards list shows all boards up to
+  15; above 15, the first 10 and "Show N more", and "Show less" when
+  expanded.
 - **Sidebar hidden** (⌘B, View > Hide Sidebar; main owns the setting). One
-  column, at once. The sidebar button keeps its place on the screen: left
-  edge at `--traffic-light-reserve` (78 px) on macOS in a window, `--space-3`
-  in full screen and off macOS (`--chrome-reserve` on `.shell`, set by
-  `data-window-buttons`). The top bar then starts with the button and a New
-  board button (`.topbar__lead`), then the board name; a new board's rename
+  column, at once. The top bar then starts with the sidebar button and a
+  New board button (`.topbar__lead`, 4 px apart): at 92 px on macOS in a
+  window, at 12 px in full screen and off macOS (`--chrome-reserve` on
+  `.shell`, set by `data-window-buttons`; see "Title row"). Then the board
+  name, 12 px after the buttons; a new board's rename
   field shows in the top bar (`.topbar__rename`).
 - **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and
   menu from mockup v5, 2026-10-29). Left of the agent pill, from the same
@@ -321,9 +363,11 @@ item pill).
   action).
   - A `.backdrop` (`--backdrop`, rgba(0, 0, 0, 0.4)) over the whole window;
     it is no drag region, and the native window buttons stay above it. The
-    panel `.menu.menu--panel.search-panel`: 520 px wide (at most the window
-    width − 32 px), 64 px from the window top, centred, `--bg-elevated`,
-    1 px `--border-strong`, `--radius-xl`, `--shadow-card`.
+    panel `.menu.menu--panel.search-panel`: centred in the window both
+    ways, 520 px wide (at most the window width − 32 px), a fixed height of
+    min(460 px, window height − 64 px), `--bg-glass` over
+    `--glass-filter`, 1 px `--border-strong`, `--radius-xl`,
+    `--shadow-card`.
   - Field: 46 px, lucide `Search` 17 px `--text-tertiary`, 15 px text,
     placeholder "Search boards", a hairline under it. It has the focus while
     the panel is open.
@@ -333,12 +377,14 @@ item pill).
   - Typed text (trimmed): only boards whose name contains it
     (case-insensitive), names that start with it first, then by edit time;
     the match in `--accent` (`.menu__match`); up to 50 rows. The list
-    scrolls inside the panel (at most the window height − 160 px). No match:
+    fills the panel and scrolls; short results leave empty space under
+    them. No match:
     a `.menu__line` `No boards match “…”` and the row `New board “…”` (the
     name main will give the file), which makes the board and opens it, with
     no rename step.
-  - Rows: `.menu__item`, 32 px, `--radius-md`; lucide `LayoutDashboard`
-    16 px for a board, its folder as `.menu__sub` for a board outside
+  - Rows: `.menu__item`, 32 px, `--radius-md`; actions keep their 16 px
+    icons, a board row has an empty icon cell (its name in the column of
+    the action labels and the typed text), its folder as `.menu__sub` for a board outside
     `boards/`, the short time (or the shortcut) as `.menu__hint`. The
     selected row is `.menu__item--current`; the first row starts selected
     and is selected again when the text changes.
@@ -348,7 +394,8 @@ item pill).
     backdrop closes. While it is open no board, tool or sidebar key acts,
     and the zoom items do not zoom the board; ⌘N and ⌘O close it and run.
     Opening it closes any open menu. A close gives the focus back to the
-    element that had it, then the row's action runs.
+    element that had it (with the ring only if it had one at open), then
+    the row's action runs.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).

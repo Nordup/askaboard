@@ -53,8 +53,11 @@ interface SidebarProps {
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
-/** The list shows this many boards until "Show N more". */
-const COLLAPSED_BOARDS = 8
+/** Up to FULL_LIST_MAX boards the list shows them all. A longer list shows the first COLLAPSED_BOARDS, then "Show N more" (N ≥ 6). */
+const FULL_LIST_MAX = 15
+const COLLAPSED_BOARDS = 10
+/** The folder menu's path line: a longer path drops its middle folders (CSS ends a still longer one with an ellipsis). */
+const PATH_LINE_MAX = 32
 const MINUTE_MS = 60_000
 const ROW_ICON = { size: 16, strokeWidth: 1.75 }
 
@@ -64,6 +67,15 @@ function homePath(path: string, home: string): string {
   const rest = path.slice(home.length)
   if (rest === '') return '~'
   return rest.startsWith('/') || rest.startsWith('\\') ? `~${rest}` : path
+}
+
+/** One line for the path: `~/…/<parent>/<folder>` when it is longer than PATH_LINE_MAX. */
+function shortPath(path: string): string {
+  if (path.length <= PATH_LINE_MAX) return path
+  const separator = path.includes('/') ? '/' : '\\'
+  const parts = path.split(separator)
+  if (parts.length <= 4) return path
+  return [parts[0], '…', ...parts.slice(-2)].join(separator)
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -86,7 +98,7 @@ export function Sidebar(props: SidebarProps) {
   }, [])
 
   // Collapsed: the first boards, and also the open board and a board in rename when they are further down.
-  const collapsible = boards.length > COLLAPSED_BOARDS
+  const collapsible = boards.length > FULL_LIST_MAX
   const shown = !collapsible || expanded ? boards : boards.filter((board, index) => index < COLLAPSED_BOARDS || board.path === openBoard || board.path === renaming)
   const hiddenCount = boards.length - shown.length
 
@@ -96,15 +108,15 @@ export function Sidebar(props: SidebarProps) {
     const rect = anchor.getBoundingClientRect()
     const footerTop = anchor.closest('.sidebar__footer')?.getBoundingClientRect().top ?? rect.top
     const others = recent.filter((entry) => entry.path !== folderRoot)
+    const path = homePath(folderRoot, props.homeDir)
     setMenu({
       x: rect.left,
       y: footerTop - 4,
       above: true,
       className: 'folder-menu',
       entries: [
-        { title: folderName ?? '' },
-        { lede: homePath(folderRoot, props.homeDir) },
-        { lede: 'Your boards are files in this folder.' },
+        { path: shortPath(path), full: path },
+        'separator',
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
         { label: openFolderLabel, icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
         { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },

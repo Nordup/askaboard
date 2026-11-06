@@ -579,7 +579,7 @@ function createWindow(): BrowserWindow {
     title: 'Learning Space',
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 16 },
+    trafficLightPosition: { x: 16, y: 15 }, // 14 px buttons centred on the 44 px title row (tokens.css --window-buttons-end)
     // Linux and Windows draw the application menu as a bar inside the window, above the app's own top bar.
     // Hidden, it shows on Alt, and its accelerators keep working.
     autoHideMenuBar: process.platform !== 'darwin',

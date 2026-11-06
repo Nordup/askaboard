@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SetupItem, SetupPlan } from '@shared/space-api'
 import { errorMessage } from '../lib/errors'
+import { markFocus, returnFocus } from '../lib/focus'
 
 interface SetupMenuProps {
   /** The element the menu hangs under (the sidebar setup row, or the folder header). */
@@ -52,6 +53,8 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [position, setPosition] = useState({ left: 8, top: 8 })
+  /** How the focus was when the flyout opened: it goes back to the anchor ringed only if it was ringed then. */
+  const [opener] = useState(markFocus)
 
   useEffect(() => {
     let current = true
@@ -93,14 +96,14 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
       if (anchorToggles && anchor?.contains(target)) return
       onClose()
       // Focus goes back to the anchor unless the click lands on something that takes focus.
-      if (!(target instanceof Element && target.closest('button, input, textarea, select, a, [tabindex]'))) anchor?.focus({ preventScroll: true })
+      if (!(target instanceof Element && target.closest('button, input, textarea, select, a, [tabindex]'))) returnFocus(opener, anchor)
     }
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
         onClose()
-        anchor?.focus()
+        returnFocus(opener, anchor)
       }
     }
     window.addEventListener('pointerdown', down, true)
@@ -111,7 +114,7 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
       window.removeEventListener('keydown', key, true)
       window.removeEventListener('blur', onClose)
     }
-  }, [anchor, anchorToggles, onClose])
+  }, [anchor, anchorToggles, onClose, opener])
 
   const nothingToAdd = plan !== null && plan.items.every((item) => item.exists)
 
