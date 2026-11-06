@@ -415,20 +415,18 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 12 px). Icon sizes come from the tokens (`.tool > .lucide`, `.option >
 .lucide`), not from the components.
 
-- The corner at the bottom left, 12 px in, centred on the tool pill's row:
-  bare buttons, no pill (founder 2026-11-07): − % + , an 8 px gap, undo and
-  redo (lucide `Undo` and `Redo`, the U-turn); 28 px buttons, 15 px icons, a
-  round hover fill. A small soft shade of the canvas colour
-  (`--corner-shade`, reaching `--corner-shade-pad` around them) keeps them
-  readable over board material. A click on the % zooms to 100% (no menu; ⇧1
+- The corner at the bottom right, 12 px in, centred on the tool pill's
+  row: bare buttons, no pill and no shade (founder 2026-11-07): undo and
+  redo (lucide `Undo2`, `Redo2`), an 8 px gap, − % +; 28 px buttons, 15 px
+  icons, a round hover fill. A click on the % zooms to 100% (no menu; ⇧1
   and ⇧2 fit the board and the selection, founder 2026-11-06). The tool
   pill (40 px; 30 px buttons, 17 px icons; founder: "a little bit larger"; `iconScale` in `TOOLS`
   evens the optical size of the arrow (1.2) and the line (0.9) with the
   stroke weight kept): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
   between groups (Select and Hand; the shapes; Pen, Text and Eraser),
   centred on the canvas. The row is a grid `1fr auto 1fr` with a 12 px gap
-  and margin, so on a narrow canvas the tool pill moves right and stays
-  12 px after the corner.
+  and margin, so on a narrow canvas the tool pill moves left and stays
+  12 px before the corner.
 - The style pill shows for a tool with style fields, or for a selection
   with the Select tool (`board/style.ts`): colours, fill, width, line,
   arrowheads (one, two, none: icons), pen or marker, text size (S M L XL,

@@ -1,6 +1,6 @@
 import { tip } from './Tooltip'
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo, Trash2, Undo, type LucideIcon } from 'lucide-react'
+import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
 import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, SHAPE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolKeys, WIDTH_STEPS, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
@@ -120,23 +120,6 @@ export function BoardControls(props: BoardControlsProps) {
 
   return (
     <div className="board-controls" ref={rootRef}>
-      <div className="board-controls__corner" role="toolbar" aria-label="Zoom and history">
-        <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
-          <Minus {...ICON} />
-        </button>
-        <ZoomLabel zoom={zoom} onZoom={props.onZoom} />
-        <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
-          <Plus {...ICON} />
-        </button>
-        <span className="board-controls__gap" />
-        <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
-          <Undo {...ICON} />
-        </button>
-        <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
-          <Redo {...ICON} />
-        </button>
-      </div>
-
       <div className="board-controls__center">
         {style && (
           <div className="pill-bar board-controls__style" ref={styleRef} role="toolbar" aria-label="Style">
@@ -176,6 +159,22 @@ export function BoardControls(props: BoardControlsProps) {
             )
           })}
         </div>
+      </div>
+      <div className="board-controls__corner" role="toolbar" aria-label="History and zoom">
+        <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
+          <Undo2 {...ICON} />
+        </button>
+        <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
+          <Redo2 {...ICON} />
+        </button>
+        <span className="board-controls__gap" />
+        <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
+          <Minus {...ICON} />
+        </button>
+        <ZoomLabel zoom={zoom} onZoom={props.onZoom} />
+        <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
+          <Plus {...ICON} />
+        </button>
       </div>
     </div>
   )

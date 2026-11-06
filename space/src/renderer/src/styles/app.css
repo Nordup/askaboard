@@ -832,14 +832,13 @@ button:focus-visible {
 /* ---------- Board controls (decisions U10, U13) ---------- */
 
 /*
- * The bottom row over the canvas: the corner pill (zoom and undo) at the
- * start, centred on the row, and the tool pill in the middle column. With
- * 1fr auto 1fr the tool pill is centred on the canvas while the first column
- * has room; on a narrow canvas the first column takes its own width and the
- * tool pill moves right, one gap after it. The style pill sits above the tool
+ * The bottom row over the canvas: the tool pill in the middle column and the
+ * corner (undo and zoom) at the end, centred on the row. With 1fr auto 1fr
+ * the tool pill is centred on the canvas while the last column has room; on
+ * a narrow canvas the last column takes its own width and the tool pill
+ * moves left, one gap before it. The style pill sits above the tool
  * pill; BoardControls shifts it (--style-shift) to stay a margin inside the
- * canvas. The corner (zoom and undo) is bare buttons over a small soft shade
- * of the canvas, no pill; the style pill is quiet; the tool pill floats
+ * canvas. The corner is bare buttons, no pill; the style pill is quiet; the tool pill floats
  * (--shadow-float). The two pills share one height.
  */
 .board-controls {
@@ -857,26 +856,24 @@ button:focus-visible {
 }
 
 /*
- * The corner: bare buttons (no pill, no border). A small soft shade of the
- * canvas colour sits behind them, so they stay readable over board material;
- * a button shows its round hover fill when the pointer reaches it.
+ * The corner: bare buttons (no pill, no border, no shade) at the end of the
+ * row, in the third column; a button shows its round hover fill when the
+ * pointer reaches it.
  */
 .board-controls__corner {
   --tool-size: var(--corner-button-size);
   --tool-icon-size: var(--corner-icon-size);
+  grid-column: 3;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: var(--space-half);
-  justify-self: start;
+  justify-self: end;
   align-self: center;
-  margin: calc(-1 * var(--corner-shade-pad));
-  padding: var(--corner-shade-pad);
-  border-radius: var(--radius-pill);
-  background: radial-gradient(closest-side, var(--corner-shade), transparent);
   pointer-events: auto;
 }
 
-/* The space between zoom and undo. */
+/* The space between undo and zoom. */
 .board-controls__gap {
   width: var(--corner-group-gap);
   flex-shrink: 0;
@@ -885,6 +882,7 @@ button:focus-visible {
 .board-controls__center {
   position: relative;
   grid-column: 2;
+  grid-row: 1;
 }
 
 /* Each pill sets its own height (.pill-bar has none). The tool pill floats. */

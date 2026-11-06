@@ -161,9 +161,7 @@
   --tool-icon-size: 17px; /* its lucide icon (stroke 1.75) */
   --corner-button-size: 28px; /* a bare corner button (zoom out, zoom in, undo, redo) */
   --corner-icon-size: 15px;
-  --corner-group-gap: 8px; /* between zoom and undo */
-  --corner-shade-pad: 10px; /* the soft shade reaches this far around the corner buttons */
-  --corner-shade: rgba(22, 22, 24, 0.85); /* --bg-canvas, nearly opaque at the centre of the shade */
+  --corner-group-gap: 8px; /* between undo and zoom */
   --style-pill-height: 40px; /* the style pill: as tall as the tool pill */
   --swatch-size: 28px; /* a colour swatch's hit area */
   --swatch-dot: 15px; /* the pen ring inside it (InkGlyph.tsx PenRing) */
