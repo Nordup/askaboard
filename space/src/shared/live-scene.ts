@@ -248,12 +248,20 @@ export interface SceneTrack {
   until?: number
 }
 
-/** A camera move: the learner's view glides to center and zoom over [start, start + dur]. */
+/**
+ * A camera move: the learner's view glides to center and a zoom over [start, start + dur].
+ * The board resolves the zoom when the move plays, for the learner's window (B67, aimCamera).
+ */
 export interface SceneCameraAction {
   start: number
   dur: number
   center: [number, number]
+  /** The zoom for the program's viewport (CTX.viewport). The board uses it only for a move with no fit and no keepZoom: an explicit zoom, or a move made before B67. */
   zoom: number
+  /** camera({fit}): the region with its pad, [x, y, width, height] in board points. The zoom fits it into the learner's window when the move plays. */
+  fit?: [number, number, number, number]
+  /** camera({to}) with no zoom: the move keeps the zoom that the view has when it starts. */
+  keepZoom?: true
   ease: SceneEase
   /** The camera goes to this point of a world and stays on it. world: the stage id, then the node id. */
   follows?: { world: number | string; point: string }

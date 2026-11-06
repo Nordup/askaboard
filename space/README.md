@@ -49,10 +49,17 @@ Electron runs native Wayland. Differences from macOS:
   the board goes to a recovery file and a dialog offers to try again.
 - **Ink with pressure.** Pen, highlighter, stroke eraser, lasso select,
   undo and redo, pan and zoom. A mouse or trackpad stroke gets its width from
-  its speed (B57). 100% is camera zoom 0.85 (B61).
+  its speed (B57). The board's 100% is camera zoom 0.85 (B61): Ctrl/⌘ with =,
+  - and 0. View > Interface Size zooms the whole window per machine
+  (`interfaceSize` in `state.json`, 80–200%): Ctrl/⌘+Alt with =, - and 0;
+  Automatic is 120% when the OS scale is below 1.5, else 100% (B63).
+  A Ctrl or ⌘ mouse-wheel notch zooms 15% with a short glide; a pinch
+  follows the fingers (B65).
 - **One hand for all words.** Typed text and agent text are in the
   'Learning Hand' font, made from the strokes of `write()`
-  (`scripts/lab/make-hand-webfont.mjs`). Text items rotate and scale.
+  (`scripts/lab/make-hand-webfont.mjs`). Text items rotate and scale. Below
+  1.5 device pixels per CSS pixel (Interface Size counts) the board uses a
+  heavier cut with the same metrics (B64).
 - **Editable document.** A board holds ink, frames, text with math, SVG and
   images. The learner can select, move and edit all of them.
 - **Agents see and edit the board over MCP.** Every agent write is one undo

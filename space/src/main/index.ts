@@ -11,6 +11,7 @@ import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
+import { automaticSize, interfaceFactor, stepSize, type InterfaceSize } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -569,12 +570,15 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
 const SNAPSHOT_WARM_MS = 2000
 const STAGE_WARM_MS = 3000
 
+/** The smallest page the layout is made for, in CSS pixels; the window's minimum grows with Interface Size (within the screen). */
+const MIN_PAGE = [960, 600] as const
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 960,
-    minHeight: 600,
+    minWidth: MIN_PAGE[0],
+    minHeight: MIN_PAGE[1],
     show: false,
     title: 'Learning Space',
     backgroundColor: BACKGROUND,
@@ -603,6 +607,12 @@ function createWindow(): BrowserWindow {
   }
   win.on('enter-full-screen', () => sendFullScreen(true))
   win.on('leave-full-screen', () => sendFullScreen(false))
+
+  // View > Interface Size: this window's own page zoom, not the origin's (the snapshot window shares the origin).
+  win.webContents.setZoomMode('isolated')
+  win.webContents.on('did-navigate', () => applyInterfaceSize(win))
+  win.on('move', () => applyInterfaceSize(win)) // 'moved' fires on macOS and Windows only
+  applyInterfaceSize(win)
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -669,7 +679,11 @@ if (uncappedAtLaunch) {
 limitDiskCache()
 registerIpc()
 
-void app.whenReady().then(async () => {
+/** The automatic interface size that the menu shows (the screen module works only once the app is ready). */
+let menuAutomaticSize = 1
+
+/** The app menu with the settings as they stand. It is built again when Interface Size changes, so its radio items and the automatic percent stay true. */
+function buildMenu(): void {
   installMenu({
     openFolder: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -701,8 +715,47 @@ void app.whenReady().then(async () => {
     voice: store.getVoice(),
     setVoice: store.setVoice,
     pace: store.getPace(),
-    setPace: store.setPace
+    setPace: store.setPace,
+    interfaceSize: store.getInterfaceSize(),
+    automaticSize: menuAutomaticSize,
+    setInterfaceSize,
+    stepInterfaceSize: (direction) => setInterfaceSize(stepSize(interfaceFactor(store.getInterfaceSize(), liveMainWindow()), direction))
   })
+  setFolderOpen(session !== null)
+}
+
+const liveMainWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+
+function setInterfaceSize(size: InterfaceSize): void {
+  store.setInterfaceSize(size)
+  buildMenu()
+  applyInterfaceSize(liveMainWindow())
+}
+
+/**
+ * View > Interface Size on the main window: the page zoom from the setting, and the menu's automatic percent. The window
+ * is zoom-isolated (createWindow), so the snapshot window on the same origin stays at 100% and agent screenshots do not change.
+ */
+function applyInterfaceSize(win: BrowserWindow | null): void {
+  const automatic = automaticSize(win)
+  if (automatic !== menuAutomaticSize) {
+    menuAutomaticSize = automatic
+    buildMenu()
+  }
+  if (!win || win.isDestroyed()) return
+  const factor = interfaceFactor(store.getInterfaceSize(), win)
+  if (Math.abs(win.webContents.getZoomFactor() - factor) < 1e-6) return
+  win.webContents.setZoomFactor(factor)
+  const { width, height } = screen.getDisplayMatching(win.getBounds()).workAreaSize
+  win.setMinimumSize(Math.min(Math.round(MIN_PAGE[0] * factor), width), Math.min(Math.round(MIN_PAGE[1] * factor), height))
+}
+
+void app.whenReady().then(async () => {
+  buildMenu()
+  const displaysChanged = (): void => applyInterfaceSize(liveMainWindow())
+  screen.on('display-metrics-changed', displaysChanged)
+  screen.on('display-added', displaysChanged)
+  screen.on('display-removed', displaysChanged)
   registerAssetProtocol()
   registerLiveItemProtocol(() => session)
   // Disk work runs beside the first paint, not before it.

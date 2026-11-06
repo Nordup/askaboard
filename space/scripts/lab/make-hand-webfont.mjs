@@ -2,7 +2,11 @@
 /**
  * Generate src/renderer/src/styles/hand.woff2: the hand of live scenes
  * (src/shared/hand-font.ts) as a real font, so that text a learner types looks
- * like what an agent writes. Run it from space/ after hand-font.ts changes:
+ * like what an agent writes. The same run makes hand-heavy.woff2 ('Learning Hand
+ * Heavy'): the same strokes with a wider line, for screens of low pixel density
+ * (board/content.css picks it). Its metrics are the regular cut's: every advance,
+ * the ascent and the descent, so text lays out the same in both cuts. Run it from
+ * space/ after hand-font.ts changes:
  *
  *   node scripts/lab/make-hand-webfont.mjs
  *
@@ -26,8 +30,12 @@ import wawoff2 from 'wawoff2'
 const here = dirname(fileURLToPath(import.meta.url))
 const SOURCE = join(here, '../../src/shared/hand-font.ts')
 const TARGET = join(here, '../../src/renderer/src/styles/hand.woff2')
+const TARGET_HEAVY = join(here, '../../src/renderer/src/styles/hand-heavy.woff2')
 
 const FAMILY = 'Learning Hand'
+const FAMILY_HEAVY = 'Learning Hand Heavy'
+/** The font files' creation and change time (Unix seconds): fixed, so the same input gives the same bytes. */
+const TIMESTAMP = 1767225600
 const EM = 1000
 const ASCENT = 900
 const DESCENT = -300
@@ -46,6 +54,8 @@ const PRESSURE_SLOW = 0.78 * EM
 const TAPER = 0.5 * EM
 const TAPER_SHARE = 0.18
 const LINE = 0.07 * EM
+/** The heavy cut's line: on a screen of 1 device pixel per CSS pixel, the regular line is about 1 pixel wide and looks thin and grey. */
+const LINE_HEAVY = 0.09 * EM
 const DISC_SIDES = 16
 /** An outline point may leave the true shape by this much (em units). */
 const TOLERANCE = 0.9
@@ -140,7 +150,7 @@ function densify(points) {
 }
 
 /** The idea of humanize(): points with a sideways wobble, and a radius from a pressure with tapered ends. */
-function humanize(line, random) {
+function humanize(line, random, width) {
   const dense = densify(line)
   const lengths = [0]
   for (let i = 1; i < dense.length; i++) lengths.push(lengths[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]))
@@ -156,7 +166,7 @@ function humanize(line, random) {
     const wobble = WOBBLE * (0.7 * Math.sin(s / WOBBLE_SLOW + phase[0]) + 0.3 * Math.sin(s / WOBBLE_FAST + phase[1]))
     const ends = 0.25 + 0.75 * Math.min(1, s / taper, (total - s) / (taper * 1.4))
     const pressure = Math.max(0.08, Math.min(1, base * ends + 0.05 * Math.sin(s / PRESSURE_SLOW + phase[2])))
-    return { x: point[0] - ((b[1] - a[1]) / len) * wobble, y: point[1] + ((b[0] - a[0]) / len) * wobble, r: (LINE * (0.35 + 1.3 * pressure)) / 2 }
+    return { x: point[0] - ((b[1] - a[1]) / len) * wobble, y: point[1] + ((b[0] - a[0]) / len) * wobble, r: (width * (0.35 + 1.3 * pressure)) / 2 }
   })
 }
 
@@ -219,7 +229,7 @@ function thinClosed(contour, tolerance) {
   return [...one.slice(0, -1), ...two.slice(0, -1)]
 }
 
-function outline(strokes, random) {
+function outline(strokes, random, width) {
   const scale = CAP * (1 + (random() - 0.5) * 0.06)
   const dy = (random() - 0.5) * 0.04 * CAP
   const shapes = []
@@ -230,7 +240,7 @@ function outline(strokes, random) {
       line.push([flat[k] * scale - gy * SLANT, gy + dy])
     }
     if (line.length === 1) line.push([line[0][0] + 0.5, line[0][1] + 0.5])
-    const points = humanize(line, random)
+    const points = humanize(line, random, width)
     for (let i = 0; i < points.length; i++) {
       shapes.push(disc(points[i]))
       const q = i ? quad(points[i - 1], points[i]) : null
@@ -307,7 +317,6 @@ function shifted(path, dx) {
  * glyph whose slant or wobble reaches left moves right) and the advance is at least the ink's right edge
  * plus BEARING. So text measured by its advances holds its ink, as the board lays text out by advances.
  */
-const glyphs = [new opentype.Glyph({ name: '.notdef', advanceWidth: 600, path: new opentype.Path() })]
 let outlinePoints = 0
 let inkTop = 0
 let inkBottom = 0
@@ -327,11 +336,13 @@ const tall = []
 const outlines = groupList.map((group) => {
   if (!group.glyph) return null
   const variants = []
+  const heavy = []
   for (let variant = 0; variant < VARIANTS; variant++) {
-    const random = mulberry32(seedOf(group.id) + variant * 7919)
-    const { path, points } = outline(group.glyph.s, random)
+    const seed = seedOf(group.id) + variant * 7919
+    const { path, points } = outline(group.glyph.s, mulberry32(seed), LINE)
     outlinePoints += points
     variants.push(path)
+    heavy.push(outline(group.glyph.s, mulberry32(seed), LINE_HEAVY).path)
   }
   const boxes = variants.map((path) => path.getBoundingBox()).filter((box) => Number.isFinite(box.x1) && box.x2 > box.x1)
   const x0 = boxes.length ? Math.min(...boxes.map((box) => box.x1)) : 0
@@ -344,27 +355,34 @@ const outlines = groupList.map((group) => {
     }
   const dx = boxes.length && x0 < BEARING ? Math.ceil(BEARING - x0) : 0
   const advance = Math.max(Math.round(group.glyph.a * ADVANCE * CAP), boxes.length ? Math.ceil(x1 + dx + BEARING) : 0)
-  return { paths: variants.map((path) => shifted(path, dx)), advance }
+  // The heavy cut takes the regular cut's box (dx and advance): its wider ink may reach a few units further.
+  return { paths: variants.map((path) => shifted(path, dx)), heavy: heavy.map((path) => shifted(path, dx)), advance }
 })
-for (let variant = 0; variant < VARIANTS; variant++) {
-  groupList.forEach((group, index) => {
-    const name = `g${index}${variant ? `.${variant}` : ''}`
-    const unicodes = variant ? [] : group.codes
-    const made = outlines[index]
-    if (!made) {
-      glyphs.push(new opentype.Glyph({ name, unicodes, advanceWidth: Math.round(SPACE), path: new opentype.Path() }))
-      return
-    }
-    glyphs.push(new opentype.Glyph({ name, unicodes, advanceWidth: made.advance, path: made.paths[variant] }))
-  })
-}
 // The line holds the ink: ascent and descent (hhea from the font's ascender and descender, OS/2 typo and win) at least the ink's extent.
 const ascent = Math.max(ASCENT, Math.ceil(inkTop + INK_MARGIN))
 const descent = Math.min(DESCENT, Math.floor(inkBottom - INK_MARGIN))
 if (ascent - descent > LINE_HEIGHT * EM) throw new Error(`the ink (ascent ${ascent}, descent ${descent}) is taller than a line of ${LINE_HEIGHT} em`)
 
-const font = new opentype.Font({ familyName: FAMILY, styleName: 'Regular', unitsPerEm: EM, ascender: ascent, descender: descent, weightClass: 400, glyphs })
-font.tables.os2 = { ...font.tables.os2, sCapHeight: Math.round(CAP), sTypoAscender: ascent, sTypoDescender: descent, sTypoLineGap: 0, usWinAscent: ascent, usWinDescent: -descent }
+/** One cut of the font: the regular cut's metrics, with the outlines of `cut` ('paths' or 'heavy'). */
+function makeFont(familyName, cut) {
+  const glyphs = [new opentype.Glyph({ name: '.notdef', advanceWidth: 600, path: new opentype.Path() })]
+  for (let variant = 0; variant < VARIANTS; variant++) {
+    groupList.forEach((group, index) => {
+      const name = `g${index}${variant ? `.${variant}` : ''}`
+      const unicodes = variant ? [] : group.codes
+      const made = outlines[index]
+      if (!made) {
+        glyphs.push(new opentype.Glyph({ name, unicodes, advanceWidth: Math.round(SPACE), path: new opentype.Path() }))
+        return
+      }
+      glyphs.push(new opentype.Glyph({ name, unicodes, advanceWidth: made.advance, path: made[cut][variant] }))
+    })
+  }
+  const font = new opentype.Font({ familyName, styleName: 'Regular', unitsPerEm: EM, ascender: ascent, descender: descent, weightClass: 400, glyphs, createdTimestamp: TIMESTAMP })
+  font.tables.os2 = { ...font.tables.os2, sCapHeight: Math.round(CAP), sTypoAscender: ascent, sTypoDescender: descent, sTypoLineGap: 0, usWinAscent: ascent, usWinDescent: -descent }
+  font.tables.gsub = gsub
+  return font
+}
 
 // calt: the glyphs of a variant sit in one run, so a set is a range and one substitution is one delta.
 const count = groupList.length
@@ -377,11 +395,30 @@ const after = (variant, lookupListIndex) => ({
   lookaheadCoverage: [],
   lookupRecords: [{ sequenceIndex: 0, lookupListIndex }]
 })
-font.tables.gsub = {
+const gsub = {
   version: 1,
   scripts: [{ tag: 'DFLT', script: { defaultLangSys: { reserveRequired: 0, reqFeatureIndex: 0xffff, featureIndexes: [0] }, langSysRecords: [] } }],
   features: [{ tag: 'calt', feature: { featureParams: 0, lookupListIndexes: [0] } }],
   lookups: [{ lookupType: 6, lookupFlag: 0, subtables: [after(0, 1), after(1, 2)] }, swap(1), swap(2)]
 }
 
-await wawoff2.compress(new Uint8Array(font.toArrayBuffer())).then((data) => writeFileSync(TARGET, data) ?? console.log(`${TARGET}: ${(data.length / 1024).toFixed(0)} KB, ${count} characters × ${VARIANTS}, ${outlinePoints} outline points, ascent ${ascent}, descent ${descent} (${tall.length} letters with stacked marks reach past them)`))
+/** The font's bytes. opentype.js stamps the head table's change time with the clock: the clock reads TIMESTAMP meanwhile. */
+function bytes(font) {
+  const RealDate = globalThis.Date
+  globalThis.Date = class extends RealDate {
+    constructor(...args) {
+      super(...(args.length ? args : [TIMESTAMP * 1000]))
+    }
+  }
+  try {
+    return new Uint8Array(font.toArrayBuffer())
+  } finally {
+    globalThis.Date = RealDate
+  }
+}
+for (const [target, family, cut] of [[TARGET, FAMILY, 'paths'], [TARGET_HEAVY, FAMILY_HEAVY, 'heavy']]) {
+  const data = await wawoff2.compress(bytes(makeFont(family, cut)))
+  writeFileSync(target, data)
+  console.log(`${target}: ${(data.length / 1024).toFixed(0)} KB, ${count} characters × ${VARIANTS}, ascent ${ascent}, descent ${descent}`)
+}
+console.log(`${outlinePoints} outline points in the regular cut; ${tall.length} letters with stacked marks reach past the line`)

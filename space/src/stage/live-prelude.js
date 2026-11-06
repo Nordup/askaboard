@@ -2624,18 +2624,26 @@
     const now = viewAt(T)
     const pad = spec.pad === undefined ? 40 : num(spec.pad, 'camera pad')
     const zoomGiven = spec.zoom === undefined ? null : clampZoom(num(spec.zoom, 'camera zoom'))
-    /** Where the camera goes, read at T. */
+    /**
+     * Where the camera goes, read at T. zoom is for this program's view (CTX.viewport). The
+     * board resolves the move again against the learner's window when it plays (B67, aimCamera
+     * in board/geometry.ts): fit is the region with its pad, and keepZoom keeps the zoom the
+     * view has when the move starts.
+     */
     const aim = () => {
       let zoom = vw() / now.width
       let center = [now.x + now.width / 2, now.y + now.height / 2]
+      let fit = null
       if (spec.fit !== undefined) {
         const r = rectArg(spec.fit, 'camera fit')
-        zoom = clampZoom(Math.min(vw() / Math.max(1, r.width + pad * 2), vh() / Math.max(1, r.height + pad * 2)))
+        fit = [f2(r.x - pad), f2(r.y - pad), f2(Math.max(1, r.width + pad * 2)), f2(Math.max(1, r.height + pad * 2))]
+        zoom = clampZoom(Math.min(vw() / fit[2], vh() / fit[3]))
         center = [r.x + r.width / 2, r.y + r.height / 2]
       }
       if (spec.to !== undefined) center = pointArg(spec.to, 'camera to')
       if (zoomGiven !== null) zoom = zoomGiven
-      return { center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000 }
+      const intent = zoomGiven !== null ? {} : fit ? { fit } : { keepZoom: true }
+      return { center: [f2(center[0]), f2(center[1])], zoom: Math.round(zoom * 1000) / 1000, ...intent }
     }
     const move = { start: f3(T), dur: f3(dur), ...aim(), ease: ease || 'inOut', ...(spec.to instanceof ScenePoint ? { follows: { world: spec.to.entry.id, point: spec.to.name } } : {}) }
     cameraActions.push(move)

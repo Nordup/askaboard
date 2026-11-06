@@ -60,7 +60,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--handle-rotate-reach`, `--handle-rotate-stem`,
   `--handle-rotate-stem-width`
 - The hand on the board: `--ls-hand` in `board/content.css`, the font
-  'Learning Hand' with the UI font as its fallback
+  'Learning Hand' with the UI font as its fallback; below 1.5 dppx,
+  'Learning Hand Heavy' (same metrics, wider line, B64; the ratio
+  includes Interface Size, B63)
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
   `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`;
   preview_scene marks: `--snapshot-view` (the learner's view, 2 px
