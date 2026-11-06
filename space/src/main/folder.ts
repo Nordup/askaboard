@@ -467,9 +467,12 @@ export class FolderSession {
    * A board of the folder holds a world: a live node that runs (decision U19, the trust question at open).
    * Every board is parsed: a text search would miss a kind written with JSON escapes. A board that cannot
    * be read counts as one with a world, so the folder asks; a board that does not parse opens as an error.
+   * A tree that was cut short or had a folder it could not list can miss a board, so the folder asks too.
    */
   async hasWorlds(): Promise<boolean> {
-    for (const { path } of await this.boardFiles()) {
+    const { nodes, truncated, unread } = await this.walkTree()
+    if (truncated || unread) return true
+    for (const path of boardPaths(nodes)) {
       let text: string
       try {
         text = await readFile(join(this.root, path), 'utf8')
