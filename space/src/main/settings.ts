@@ -1,4 +1,5 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { IPC, type SettingsChange, type SettingsSnapshot } from '@shared/space-api'
 import { agentHomeDir } from './agent-home'
@@ -48,11 +49,20 @@ const withoutKey = (text: string): string =>
     .filter((line) => !KEY_LINE.test(line))
     .join('\n')
 
+/**
+ * A new file, made with mode 0600, renamed over the old one: the key is never in a file that others
+ * can read (an existing file keeps its mode on a write), and a crash leaves the old file or the new one.
+ */
 async function writeEnv(text: string): Promise<void> {
   await mkdir(agentHomeDir(), { recursive: true })
-  await writeFile(envPath(), text, { mode: 0o600 })
-  // An existing file keeps its mode on a write.
-  await chmod(envPath(), 0o600)
+  const temp = join(agentHomeDir(), `.env-${randomUUID()}.tmp`)
+  try {
+    await writeFile(temp, text, { mode: 0o600, flag: 'wx' })
+    await rename(temp, envPath())
+  } catch (error) {
+    await rm(temp, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 async function refreshKeySaved(): Promise<void> {
@@ -135,7 +145,8 @@ export function registerSettings(given: SettingsHooks): void {
   handle(IPC.saveGeminiKey, async (key: unknown) => {
     const value = typeof key === 'string' ? key.trim() : ''
     if (!value) throw new Error('Paste a key first.')
-    if (/[\s'"#]/.test(value)) throw new Error('This does not look like a Gemini key.')
+    // One line of the file: no line break, quote, comment or second "=" in it.
+    if (/[\s'"#=]/.test(value)) throw new Error('This does not look like a Gemini key.')
     const rest = withoutKey(await readEnv()).replace(/\n*$/, '')
     await writeEnv(`${rest ? `${rest}\n` : ''}GEMINI_API_KEY=${value}\n`)
     await refreshKeySaved()

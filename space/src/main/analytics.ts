@@ -223,6 +223,11 @@ export function agentClientName(raw: string | undefined): string {
   return 'other'
 }
 
+/** An MCP client's version when it is a plain version number (1.2.3, 2.0.1-beta.4), else null: free text is not sent. */
+export function agentClientVersion(raw: unknown): string | null {
+  return typeof raw === 'string' && /^\d{1,9}(\.\d{1,9}){0,3}([-+][0-9A-Za-z.-]{1,20})?$/.test(raw) ? raw : null
+}
+
 // ---------- board.opened ----------
 
 /** Boards made since they were last shown, and the board an agent's open_board asked for: the next show of that path tells how it opened. */

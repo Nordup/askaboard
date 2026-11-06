@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream, existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { agentHomeDir } from './agent-home'
 
 /**
@@ -200,20 +201,35 @@ async function download(archive: Archive, file: string, signal: AbortSignal, pro
   if (!response.ok || !response.body) throw new InstallFailed(`The download failed (${response.status}). Try again later.`)
   const hash = createHash('sha256')
   const out = createWriteStream(file)
+  // A write error (ENOSPC among them) is the disk's, not the network's: learnerLine reads its code.
+  let writeError: Error | null = null
+  out.once('error', (error) => {
+    writeError = error
+  })
   let bytes = 0
   try {
-    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-      hash.update(chunk)
-      bytes += chunk.length
-      if (!out.write(chunk)) await new Promise<void>((resolve) => out.once('drain', resolve))
-      progress(bytes)
-    }
+    // pipeline ends on the first error of either side or on the signal, and closes both.
+    await pipeline(
+      response.body as unknown as AsyncIterable<Uint8Array>,
+      async function* (source: AsyncIterable<Uint8Array>) {
+        for await (const chunk of source) {
+          bytes += chunk.length
+          // More than the pinned size is never the pinned archive: stop at once.
+          if (bytes > archive.bytes) throw new InstallFailed('The download was damaged. Try again.')
+          hash.update(chunk)
+          progress(bytes)
+          yield chunk
+        }
+      },
+      out,
+      { signal }
+    )
   } catch (error) {
-    out.destroy()
     if (signal.aborted) throw error
+    if (writeError) throw writeError
+    if (error instanceof InstallFailed) throw error
     throw new InstallFailed('The download stopped. Check the internet connection and try again.')
   }
-  await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())))
   if (bytes !== archive.bytes || hash.digest('hex') !== archive.sha256) throw new InstallFailed('The download was damaged. Try again.')
 }
 

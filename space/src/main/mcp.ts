@@ -749,7 +749,7 @@ export class AgentServer {
     server.server.oninitialized = () => {
       const client = server.server.getClientVersion()
       console.log(`mcp: session ${session.id} is ${client?.name ?? 'an unnamed client'}`)
-      analytics.record('agent.connected', { clientName: analytics.agentClientName(client?.name), clientVersion: typeof client?.version === 'string' ? client.version.slice(0, 40) : null })
+      analytics.record('agent.connected', { clientName: analytics.agentClientName(client?.name), clientVersion: analytics.agentClientVersion(client?.version) })
       this.traceOf(session)
       this.publish()
       // An agent connected: its first screenshot or preview should not wait for the snapshot window.
