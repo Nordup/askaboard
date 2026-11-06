@@ -844,12 +844,8 @@ export function App() {
     toggleFocusRef.current = null
     if (mark) returnFocus(mark, document.querySelector<HTMLElement>('.sidebar-toggle'))
   }, [sidebarHidden])
-  /**
-   * The title row's one rule: the sidebar strip exists only where the macOS window buttons need it (a window, not full
-   * screen). The sidebar button is at the strip's right end while the strip shows; otherwise it leads the top bar.
-   */
+  /** The macOS window buttons show (a window, not full screen): the title row's first button starts after them. */
   const windowButtons = isMac && !fullScreen
-  const toggleInStrip = windowButtons && !sidebarHidden
   const toggleSidebar = useCallback(() => {
     if (changeSidebarHidden(!sidebarHiddenRef.current)) space.setSidebarHidden(sidebarHiddenRef.current)
   }, [changeSidebarHidden])
@@ -1279,7 +1275,6 @@ export function App() {
     >
       <Sidebar
         hidden={sidebarHidden}
-        strip={toggleInStrip}
         onToggleSidebar={toggleSidebar}
         folderName={folder?.name ?? null}
         folderRoot={folder?.root ?? null}
@@ -1312,7 +1307,6 @@ export function App() {
       <main className="main">
         <TopBar
           sidebarHidden={sidebarHidden}
-          sidebarButton={!toggleInStrip}
           onToggleSidebar={toggleSidebar}
           onCreateBoard={folder ? () => void createBoard() : null}
           folderName={folder?.name ?? null}

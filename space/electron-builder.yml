@@ -1,0 +1,53 @@
+# macOS packaging (decision D7): `npm run dist:mac` (scripts/dist-mac.mjs)
+# builds one signed .dmg per architecture into release/.
+# The name comes from package.json "productName"; the icon is resources/icon.png.
+
+# PLACEHOLDER: change with the new brand (with productName and the icon).
+appId: app.learningspace.desktop
+
+directories:
+  output: release
+  buildResources: build
+
+# The bundled app (electron-vite output) and package.json. electron-builder adds
+# the production node_modules by itself (the main process loads them at run time).
+files:
+  - out/**/*
+  - package.json
+
+# Read at run time from process.resourcesPath/resources (src/main/resources.ts):
+# the brief, the guide, the learning-folder template, the .mcpb, the live module.
+extraResources:
+  - from: resources
+    to: resources
+
+# The stdio relay runs outside the app: the shim (~/.learning-space/bin/learning-space)
+# hands this file to the app's binary as Node (src/main/agent-home.ts), so it
+# must be a real file, at app.asar.unpacked/out/relay/index.js.
+asarUnpack:
+  - out/relay/**
+
+# No native modules in the production dependencies.
+npmRebuild: false
+
+mac:
+  icon: resources/icon.png
+  category: public.app-category.education
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # No `identity` here: electron-builder finds a "Developer ID Application"
+  # identity in the keychain by itself. scripts/dist-mac.mjs signs ad-hoc ("-")
+  # when there is none. Notarization runs when APPLE_KEYCHAIN_PROFILE is set
+  # (scripts/dist-mac.mjs sets it when the learning-space-notary profile works).
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # No auto-update, so no .blockmap next to the dmg.
+  writeUpdateInfo: false
+
+publish: null

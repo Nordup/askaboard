@@ -146,7 +146,7 @@
   --tooltip-gap: 6px; /* from a control to its tooltip (below it, or above it when there is no room) */
   --tooltip-margin: var(--space-2); /* a tooltip keeps this far inside the window */
   --sidebar-row-height: 30px; /* every sidebar row: New board, Search boards, a board */
-  --folder-row-height: 44px; /* the folder button in the sidebar footer, with --space-2 around it on all four sides */
+  --folder-row-height: 40px; /* the folder button in the sidebar footer: --space-1 under the footer's line, --space-2 on the other sides */
   --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */
   /* The board controls (U10): four pills over the canvas bottom, in the palette look */
   --palette-height: 48px; /* every board control pill */

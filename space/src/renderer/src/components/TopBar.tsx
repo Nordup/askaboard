@@ -11,10 +11,8 @@ import { shortcut } from '../platform'
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 interface TopBarProps {
-  /** With the sidebar hidden, the top bar's lead also holds New board, and the sidebar button reads "Show sidebar". */
+  /** With the sidebar hidden, the top bar starts with the sidebar button and New board (the sidebar's strip holds the button otherwise). */
   sidebarHidden: boolean
-  /** The top bar starts with the sidebar button (no sidebar strip holds it: App.tsx, the title row's rule). */
-  sidebarButton: boolean
   onToggleSidebar(): void
   /** New board; null without a folder. */
   onCreateBoard: (() => void) | null
@@ -38,12 +36,12 @@ interface TopBarProps {
 export function TopBar(props: TopBarProps) {
   const { sidebarHidden, folderName, boardName, saveStatus, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance } = props
   return (
-    <header className={props.sidebarButton ? 'topbar topbar--lead' : 'topbar'}>
+    <header className="topbar">
       <div className="topbar__title">
-        {props.sidebarButton && (
+        {sidebarHidden && (
           <span className="topbar__lead">
-            <SidebarToggle hidden={sidebarHidden} onToggle={props.onToggleSidebar} />
-            {sidebarHidden && props.onCreateBoard && (
+            <SidebarToggle hidden onToggle={props.onToggleSidebar} />
+            {props.onCreateBoard && (
               <button className="icon-button icon-button--strong icon-button--title" {...tip('New board', shortcut('N'))} aria-label="New board" onClick={props.onCreateBoard}>
                 <SquarePen size={16} strokeWidth={1.75} />
               </button>

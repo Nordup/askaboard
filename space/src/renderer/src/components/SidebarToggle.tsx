@@ -2,7 +2,7 @@ import { tip } from './Tooltip'
 import { PanelLeft } from 'lucide-react'
 import { shortcut } from '../platform'
 
-/** The sidebar button: at the right end of the sidebar's strip beside the macOS window buttons, else first in the top bar. */
+/** The sidebar button: at --chrome-reserve in the title row, in the sidebar's strip while it shows, first in the top bar while it is hidden. */
 export function SidebarToggle({ hidden, onToggle }: { hidden: boolean; onToggle(): void }) {
   const label = hidden ? 'Show sidebar' : 'Hide sidebar'
   return (

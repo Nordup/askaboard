@@ -244,21 +244,18 @@ item pill).
 
 ## Title row
 
-The 44 px row across the top of the window: the sidebar strip (macOS
-window only) and the top bar. Everything in it shares one centre line at
-22 px.
+The 44 px row across the top of the window: the sidebar strip (while the
+sidebar shows, in a window, in full screen and off macOS) and the top bar.
+Everything in it shares one centre line at 22 px.
 
-- **One rule places the sidebar button** (`App.tsx`, decision U9): the
-  sidebar strip exists only beside the macOS window buttons
-  (`data-window-buttons`: macOS, not full screen). There, with the sidebar
-  shown, the button is at the strip's right end. Everywhere else (sidebar
-  hidden, full screen, Linux, Windows) the button leads the top bar
-  (`.topbar--lead`), "Hide sidebar" or "Show sidebar". A keyboard toggle
-  keeps the focus on the button in its new place.
-- Without the strip, the sidebar starts at the top: New board's row is
-  centred on the 22 px line (`.sidebar--no-strip`, top padding
-  (`--topbar-height` − `--sidebar-row-height`) / 2). With the strip, New
-  board starts 8 px (`--space-2`) under it.
+- **The sidebar button has one place** (decision U9): its left edge is at
+  `--chrome-reserve` in every state. With the sidebar shown it is in the
+  strip ("Hide sidebar"); with the sidebar hidden it leads the top bar
+  ("Show sidebar"), at the same x. A click on it never moves it. A
+  keyboard toggle keeps the focus on the button in its new home
+  (`App.tsx`).
+- The rest of the strip is empty: no app name, no other icons. New board's
+  row starts 4 px (`--space-1`) under the strip.
 
 - The macOS window buttons: three 14 px circles at a 23 px pitch, x 16 to
   76 window px (`--window-buttons-end`), centre 22 px at 100 %. Measured
@@ -285,10 +282,8 @@ window only) and the top bar. Everything in it shares one centre line at
 - 12 px edge inset in full screen, on Linux and on Windows
   (`--title-row-inset`), from the top bar's left edge (the sidebar's right
   edge while it shows). `.shell` sets `--chrome-reserve` to one of the
-  two; `.topbar--lead` uses it.
+  two; the strip and the top bar with the sidebar hidden use it.
 - 12 px (`--space-3`) from the last button to the board name.
-- In the strip, the sidebar button's icon has its right edge in the
-  column of the rows' hints and times.
 - No save mark in normal work: only a failed save shows, "Not saved" in
   `--ink-pink` with an alert icon, 12 px after the board name
   (`.save-status`, an `aria-live` region that is empty otherwise).
@@ -335,15 +330,15 @@ internal data (a path, an id). One shared tooltip instead
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
 - **Sidebar** (left-panel plan, decisions U6 and U9, 2026-11-06). Top to
-  bottom: in a macOS window only, a 44 px strip (drag region) with the
-  sidebar button at its right end (lucide `PanelLeft`,
-  `.icon-button--title`, `SidebarToggle.tsx`; see "Title row"), 8 px above
+  bottom: a 44 px strip (drag region) with only the sidebar button, its
+  left edge at `--chrome-reserve` (lucide `PanelLeft`,
+  `.icon-button--title`, `SidebarToggle.tsx`; see "Title row"), 4 px above
   the rows; the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
   and the guide-override note; the heading "Boards" and the boards list;
-  the footer (top hairline, 8 px padding on all four sides): `.folder-row`
-  (`--folder-row-height`, 44 px) with
+  the footer (top hairline; padding 4 px at the top, 8 px at the left,
+  right and bottom): `.folder-row` (`--folder-row-height`, 40 px) with
   `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
   `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
   `--radius-md`. The footer opens the folder menu above it
@@ -358,9 +353,8 @@ internal data (a path, an id). One shared tooltip instead
   column, at once. The top bar then starts with the sidebar button and a
   New board button (`.topbar__lead`, 4 px apart): at 92 px on macOS in a
   window, at 12 px in full screen and off macOS (`--chrome-reserve` on
-  `.shell`, set by `data-window-buttons`; see "Title row"). In full screen
-  and off macOS the sidebar button stays there with the sidebar shown,
-  without New board. Then the board
+  `.shell`, set by `data-window-buttons`; see "Title row"), the same x as
+  the button in the strip with the sidebar shown. Then the board
   name, 12 px after the buttons; a new board's rename
   field shows in the top bar (`.topbar__rename`).
 - **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and
