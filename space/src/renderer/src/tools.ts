@@ -93,7 +93,7 @@ export type WidthStep = 'fine' | 'medium' | 'bold'
 
 /**
  * The width steps of the style pill. Each kind of item maps a step to its own width (board points):
- * the pen keeps its widths (decision B69), and a shape draws an even line that is finer than ink.
+ * the pen keeps its widths (decision B69), and a shape draws a finer line in the agents' pen ink.
  */
 export const WIDTH_STEPS: readonly { id: WidthStep; label: string }[] = [
   { id: 'fine', label: 'Fine' },
@@ -104,7 +104,7 @@ export const WIDTH_STEPS: readonly { id: WidthStep; label: string }[] = [
 /** The nominal pen width of each step. A marker stroke is MARKER_SCALE times wider. */
 export const PEN_WIDTHS: Record<WidthStep, number> = { fine: 2, medium: 3.5, bold: 6 }
 
-/** The even line width of a shape (rectangle, ellipse, arrow, line) at each step. */
+/** The nominal line width of a shape (rectangle, ellipse, arrow, line) at each step; pressure varies it as ink. */
 export const SHAPE_WIDTHS: Record<WidthStep, number> = { fine: 1.5, medium: 2.5, bold: 4 }
 
 /** The step whose width in `table` is exactly `width`, or undefined (an agent's or an older shape's width matches none). */

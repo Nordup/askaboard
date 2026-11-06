@@ -238,14 +238,16 @@ combine; `meta.json` records `no_html` and `brief`.
 - **A check click can land on the app's own parts** (2026-11-02). A click on a world's bar at y=709 hit the tool palette (y 703 to 749), and the check read as an input fault. Frame the item clear of the palette first.
 - **A check agent must stop its own apps before it reports** (2026-11-02). Apps started as background shells outlived a finished agent and kept running. Name this in the brief, by exact PID.
 - **Name the exact drive command in a check brief** (2026-11-06). A Haiku check agent read `drive.mjs` and reported that it had no menu command, so Settings was out of reach. It has one (`menu <id>`). Give the command, the menu id and `SPACE_FOLDER` in the brief.
-- **Merge into a main checkout that other sessions edit** (2026-11-06/07).
-  Build in a scratch worktree (`git worktree add --detach`, link
-  `space/node_modules`), merge `main` into it there, then fast-forward the
-  main checkout. A fast-forward refuses files with open edits: for each such
-  file, make the 3-way result (`git merge-file <open copy> <HEAD version>
-  <new version>`), put the HEAD version in place, fast-forward, and write
-  the result back. Never stash or restore another session's edits. Run that
-  in `bash -c`: zsh does not split `$FILES` into words.
+- **Work on main, not in a worktree** (founder, 2026-11-07). Worktree
+  builds made every merge back wait until other sessions committed their
+  open files in main. Edit main, `git add` only your own paths, and never
+  stash or restore another session's edits. Check a change in a scratch dev
+  instance: `npx electron-vite dev -- --user-data-dir=<scratch>` (the flag
+  goes after `--`; `ELECTRON_CLI_ARGS` does not work), its own
+  `SPACE_REMOTE_DEBUG` and MCP port, a scratch `HOME` and folder, and
+  `SPACE_NO_FOCUS=1`. Start electron-vite directly: `npm run dev` rebuilds
+  the relay that the founder's running app uses. A first launch without the
+  flag in the right place used the founder's own settings folder.
 - **A push of main carries other sessions' commits** (2026-11-06). List
   `git log origin/main..HEAD` and name the other sessions' commits to the
   founder before a push; push only what the founder approved.

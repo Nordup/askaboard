@@ -48,8 +48,11 @@ Electron runs native Wayland. Differences from macOS:
   is a board. New boards go to `boards/`. The app autosaves and reloads a
   board when another program changes it on disk. If a save fails at close,
   the board goes to a recovery file and a dialog offers to try again.
-- **Ink with pressure.** Pen, marker, stroke eraser, lasso select,
-  undo and redo, pan and zoom. A mouse or trackpad stroke gets its width from
+- **Ink with pressure.** Pen, marker, eraser, rectangle and lasso select,
+  undo and redo, pan and zoom. Tools for a mouse and a trackpad, with keys
+  as in Excalidraw: Hand, rectangle, ellipse, arrow, line and text, a style
+  pill for colour, width and text, Option-drag to duplicate, a right-click
+  menu, paste of text and images from other apps. A mouse or trackpad stroke gets its width from
   its speed (B57). The board's 100% is camera zoom 0.85 (B61): Ctrl/⌘ with =,
   - and 0. View > Interface Size zooms the whole window per machine
   (`interfaceSize` in `state.json`, 80–200%): Ctrl/⌘+Alt with =, - and 0;

@@ -74,7 +74,9 @@ limits scripts, images and media.
   Unknown kinds and fields are kept untouched.
 - **Code:** `src/shared/board-format.ts` (parse, serialize, seq stamping,
   disk reconciliation).
-- **Node kinds:** `ink` (pen or highlighter stroke, points with pressure;
+- **Node kinds:** `shape` (the learner's rectangle, ellipse, arrow or line:
+  its kind, size and style, drawn as ink by `board/shapes.ts` with the
+  agents' pen recipe, [`agent-ink.md`](agent-ink.md)), `ink` (pen or highlighter stroke, points with pressure;
   a mouse stroke gets its pressure from speed at capture, in
   `board/mouse-ink.ts`), `frame` (a box with children; flex or free layout;
   a group's frame has `hug` and fits its items again after each scene and
@@ -454,7 +456,10 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `src/renderer/src/snapshot/`).
 - Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`,
   `SidebarToggle.tsx`, `TitleLead.tsx` (Back, Forward, the sidebar button), `RenameInput.tsx`,
-  `BoardControls.tsx` (the pills at the bottom of the board), `PreviewPanel.tsx`,
+  `BoardControls.tsx` (the tool and style pills and the undo and zoom
+  buttons at the bottom of the board; the tools and the draw style are in
+  `tools.ts`, the style map in `board/style.ts`, the commands in
+  `board/commands.ts`), `PreviewPanel.tsx`,
   `WelcomeCard.tsx`, `CanvasNotice.tsx`, `Toast.tsx`, `Tooltip.tsx`, `PerfPill.tsx`, `Select.tsx`
   (the app's own dropdown).
 - Scenes: `ScenePill.tsx` (shown in the top bar; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).

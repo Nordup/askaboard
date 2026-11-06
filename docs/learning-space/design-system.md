@@ -195,8 +195,8 @@ All paths are under `space/src/renderer/src/`.
   handles take `--handle-radius` (3); circles and pills stay round
 - Shadow (U16, soft and wide, low contrast; ChatGPT app as the reference):
   `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
-  black 0.14) for popups, tooltips, the script panel and toasts (the board
-  pills have none, U13); `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
+  black 0.14) for popups, tooltips, the script panel, toasts and the board's
+  tool pill (U18; the style pill has none); `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
   0.16) for the modal panels and the welcome card
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   the title row (see "Title row"): `--window-buttons-end`,
@@ -204,9 +204,9 @@ All paths are under `space/src/renderer/src/`.
   `--title-button-gap`;
   `--sidebar-row-height`, `--folder-row-height`,
   `--topbar-rename-width`,
-  the board controls (U10, U13): `--tools-pill-height`, `--tool-size`,
-  `--tool-icon-size`, `--corner-pill-height`, `--corner-button-size`,
-  `--corner-icon-size`, `--corner-divider-height`, `--corner-divider-gap`,
+  the board controls (U10, U13, U18): `--tools-pill-height`, `--tool-size`,
+  `--tool-icon-size`, `--corner-button-size`, `--corner-icon-size`,
+  `--corner-group-gap`,
   `--style-pill-height`, `--swatch-size`, `--swatch-dot`, `--option-size`,
   `--option-icon-size`, `--option-text-pad`, `--option-bar-width`,
   `--option-fill-size`, `--pill-bar-pad`, `--pill-divider-height`,
@@ -436,7 +436,7 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
   fill, width, line; arrow: colour, width, line, heads; line: colour,
   width, line. For a selection it ends with Duplicate, Delete (only when an
   item may change) and More; when the whole pill would be wider than the
-  canvas less 24 px, it shows More alone. The style pill is 36 px (28 px swatches with a 15 px pen ring, 26 px options); each swatch is a small pen ring in the agents' ink (`InkGlyph.tsx PenRing`, [`agent-ink.md`](agent-ink.md) "Ink glyphs"); a chosen colour has the grey circle of every chosen option. The colours are the ones agents draw with most (white, the accent blue, purple, yellow, green, pink: the board palette of `live/colors.ts`; `tools.ts INK_COLORS`). It sits 8 px above the tool pill,
+  canvas less 24 px, it shows More alone. The style pill is 40 px, as tall as the tool pill (28 px swatches with a 15 px pen ring, 26 px options); each swatch is a small pen ring in the agents' ink (`InkGlyph.tsx PenRing`, [`agent-ink.md`](agent-ink.md) "Ink glyphs"); a chosen colour has the grey circle of every chosen option. The colours are app colours (white, the accent blue `#6e8bff`, purple `#b58cff`, yellow, green, pink; `tools.ts INK_COLORS`); agents may still use any colour. It sits 8 px above the tool pill,
   centred on it, and shifts to stay 12 px inside the canvas.
 - Width (Fine, Medium, Bold) is one step for every kind: a shape draws it
   at 1.5, 2.5 or 4 board points, the pen at 2, 3.5 or 6. Text sizes: S 18,
@@ -460,6 +460,34 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
   (⇧2). Both fits glide and never zoom in past 100%.
 - `?` opens Settings > Keyboard shortcuts (see "Settings dialog"): the one
   list of the keys, from `TOOLS` and `board/commands.ts`.
+
+### How the tools behave (B70)
+
+- Select is the default tool. A second press on Select (the button, V or 1)
+  switches its drag between the rectangle and the lasso; the button shows
+  the lasso icon in lasso mode.
+- After one shape the tool goes back to Select, unless Q (the lock) keeps
+  it. Pen, Text and Eraser stay.
+- The first pen press of a session with Select switches to Pen, so a tablet
+  draws at once.
+- Escape with nothing selected goes back to Select. A right-click selects
+  what is under the pointer and opens the board menu.
+
+### Add a tool or a style option
+
+1. A tool is one row in `TOOLS` (`space/src/renderer/src/tools.ts`): id,
+   label, letter and number key, lucide icon (`iconScale` if it looks larger
+   or smaller than the others), its style fields and its group. The tool
+   pill, the keys, the tooltips and the key sheet read this table.
+2. A style option is a field of `DrawStyle` with its option table in
+   `tools.ts`, its order in `FIELD_ORDER` and the kinds that take it in
+   `KIND_FIELDS` (`board/style.ts`); `styleOf` and `restyle` map it onto
+   item fields. `BoardControls.tsx StyleGroup` draws it from the shared
+   parts (`.option`, `.swatch`).
+3. A tool that draws needs its drag kind in `board/Board.tsx` (`boardPress`
+   and the `dragEnds` table, B45).
+4. A command is one row in `board/commands.ts`: the right-click menu, the
+   More menu and the key sheet show it.
 
 ## Icon buttons and status dots
 
