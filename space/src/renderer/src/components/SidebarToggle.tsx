@@ -2,7 +2,7 @@ import { tip } from './Tooltip'
 import { PanelLeft } from 'lucide-react'
 import { shortcut } from '../platform'
 
-/** The sidebar button: at --chrome-reserve in the title row, in the sidebar's strip while it shows, first in the top bar while it is hidden. */
+/** The sidebar button: at --chrome-reserve in the title row, in the sidebar's strip while it shows, third in the title lead (after Back and Forward) in both places (TitleLead.tsx). */
 export function SidebarToggle({ hidden, onToggle }: { hidden: boolean; onToggle(): void }) {
   const label = hidden ? 'Show sidebar' : 'Hide sidebar'
   return (

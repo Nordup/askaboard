@@ -130,7 +130,7 @@
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 80px rgba(0, 0, 0, 0.3),
     0 4px 16px rgba(0, 0, 0, 0.16);
 
-  /* Glass (U16): a popup surface lets a little of the board through. Menus, popovers, the dropdown list, tooltips; never a modal panel. */
+  /* Glass (U16): a popup surface lets a little of the board through. Menus, popovers, the dropdown list; never a modal panel or a tooltip. */
   --bg-glass: rgba(28, 28, 31, 0.93); /* --bg-elevated */
   --bg-glass-2: rgba(35, 35, 39, 0.93); /* --bg-elevated-2 */
   --glass-filter: blur(24px) saturate(140%);
@@ -150,7 +150,6 @@
   --title-row-inset: var(--space-3); /* the first button's left edge in full screen, on Linux and on Windows */
   --title-button-size: 28px; /* a title-row icon button's hit area (16 px icon; Back and Forward 20 px chevrons): Back, Forward, the sidebar button, New board */
   --title-button-gap: var(--space-1); /* between neighbouring title-row buttons */
-  --title-icon-size: 16px; /* the icon in a title-row button */
   --disabled-opacity: 0.5; /* a disabled control: Back or Forward with nowhere to go, a disabled small button */
   --tooltip-gap: 6px; /* from a control to its tooltip (below it, or above it when there is no room) */
   --tooltip-margin: var(--space-2); /* a tooltip keeps this far inside the window */
