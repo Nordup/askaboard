@@ -161,6 +161,13 @@ export type ShapeLine = 'solid' | 'dashed' | 'dotted'
 export type ShapeHeads = 'end' | 'both' | 'none'
 
 export const SHAPE_KINDS: readonly ShapeKind[] = ['rect', 'ellipse', 'arrow', 'line']
+/**
+ * A shape's strokes are made from its size (renderer board/shapes.ts), so their cost grows with it:
+ * a shape is at most this large (board points; the board's whole view at the least zoom), and its
+ * nib at most this wide. A board file with more keeps that shape as foreign data.
+ */
+export const MAX_SHAPE_EXTENT = 10000
+export const MAX_SHAPE_WIDTH = 64
 const SHAPE_FILLS: readonly ShapeFill[] = ['none', 'light', 'solid']
 const SHAPE_LINES: readonly ShapeLine[] = ['solid', 'dashed', 'dotted']
 const SHAPE_HEADS: readonly ShapeHeads[] = ['end', 'both', 'none']
@@ -355,8 +362,12 @@ function validKnown(node: BoardNode): boolean {
         SHAPE_KINDS.includes(raw.shape as ShapeKind) &&
         finite(raw.w) &&
         finite(raw.h) &&
+        Math.abs(raw.w) <= MAX_SHAPE_EXTENT &&
+        Math.abs(raw.h) <= MAX_SHAPE_EXTENT &&
         typeof raw.color === 'string' &&
         finite(raw.width) &&
+        raw.width > 0 &&
+        raw.width <= MAX_SHAPE_WIDTH &&
         SHAPE_FILLS.includes(raw.fill as ShapeFill) &&
         SHAPE_LINES.includes(raw.line as ShapeLine) &&
         SHAPE_HEADS.includes(raw.heads as ShapeHeads) &&

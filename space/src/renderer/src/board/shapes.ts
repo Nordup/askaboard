@@ -10,7 +10,7 @@
  */
 
 import { mulberry32 } from '@shared/live-scene'
-import type { InkPoint, ShapeHeads, ShapeKind, ShapeLine, ShapeNode } from '@shared/board-format'
+import { MAX_SHAPE_EXTENT, type InkPoint, type ShapeHeads, type ShapeKind, type ShapeLine, type ShapeNode } from '@shared/board-format'
 import { inkLocalBounds, pointInPolygon, strokeHitByCircle, strokeInsidePolygon } from './geometry'
 import { humanize } from './hand'
 import type { InkNode, PaintedNode, Point, Region } from './types'
@@ -307,6 +307,9 @@ const r1 = (value: number): number => {
   return Object.is(out, -0) ? 0 : out
 }
 
+/** A size or a vector component on the 0.1 grid, within MAX_SHAPE_EXTENT, so the board file keeps the shape. */
+const extent = (value: number): number => r1(Math.max(-MAX_SHAPE_EXTENT, Math.min(MAX_SHAPE_EXTENT, value)))
+
 /** A new learner shape at a board point, with no size yet; its drag gives it one (shapeTo). */
 export function newShape(id: string, shape: ShapeKind, at: Point, style: ShapeStyle, z: number): ShapeNode {
   const seed = globalThis.crypto.getRandomValues(new Uint32Array(1))[0]
@@ -335,7 +338,7 @@ export function shapeTo(node: ShapeNode, from: Point, to: Point, constrain: bool
   let dy = to[1] - from[1]
   if (node.shape === 'arrow' || node.shape === 'line') {
     if (constrain) [dx, dy] = snapAngle([dx, dy])
-    return { ...node, x: r1(from[0]), y: r1(from[1]), w: r1(dx), h: r1(dy) }
+    return { ...node, x: r1(from[0]), y: r1(from[1]), w: extent(dx), h: extent(dy) }
   }
   if (constrain) {
     const size = Math.max(Math.abs(dx), Math.abs(dy))
@@ -343,8 +346,8 @@ export function shapeTo(node: ShapeNode, from: Point, to: Point, constrain: bool
     dy = (dy < 0 ? -1 : 1) * size
   }
   // The size is rounded once, so a square stays square on the 0.1 grid.
-  const w = r1(Math.abs(dx))
-  const h = r1(Math.abs(dy))
+  const w = extent(Math.abs(dx))
+  const h = extent(Math.abs(dy))
   return { ...node, x: r1(r1(from[0]) - (dx < 0 ? w : 0)), y: r1(r1(from[1]) - (dy < 0 ? h : 0)), w, h }
 }
 
@@ -358,17 +361,18 @@ export function moveEnd(node: ShapeNode, end: 'start' | 'end', delta: Point, con
   if (end === 'end') {
     let vector: Point = [node.w + delta[0], node.h + delta[1]]
     if (constrain) vector = snapAngle(vector)
-    return { ...node, w: r1(vector[0]), h: r1(vector[1]) }
+    return { ...node, w: extent(vector[0]), h: extent(vector[1]) }
   }
   // The end stays: the start moves, and the vector from it to the end follows.
   const endX = node.x + node.w
   const endY = node.y + node.h
   let vector: Point = [node.w - delta[0], node.h - delta[1]]
   if (constrain) vector = snapAngle(vector)
+  vector = [extent(vector[0]), extent(vector[1])]
   return { ...node, x: r1(endX - vector[0]), y: r1(endY - vector[1]), w: r1(vector[0]), h: r1(vector[1]) }
 }
 
 /** A rectangle or an ellipse in a new box; `box` is in the shape's world coordinates, `origin` the world place of its parent's 0, 0. */
 export function shapeInBox(node: ShapeNode, box: Region, origin: Point): ShapeNode {
-  return { ...node, x: r1(box.x - origin[0]), y: r1(box.y - origin[1]), w: r1(box.width), h: r1(box.height) }
+  return { ...node, x: r1(box.x - origin[0]), y: r1(box.y - origin[1]), w: extent(box.width), h: extent(box.height) }
 }
