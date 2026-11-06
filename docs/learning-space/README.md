@@ -20,7 +20,7 @@ an open-source macOS app for people who already pay for an agent app,
 with a new name, a voice server, analytics and a new website (P23, D7).
 Where another doc disagrees, the launch plan wins.
 
-## Status (2026-11-06)
+## Status (2026-11-07)
 
 | Area | State |
 | --- | --- |
@@ -30,7 +30,7 @@ Where another doc disagrees, the launch plan wins.
 | Agent tools in Paper's style, ink groups, relative placement, agent ink, focus | Done |
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
-| One shared design system for menus | Done |
+| One shared design system for menus | Done. How to build new UI in it (where things are, recipes, how to change the look, how to check): [`design-system.md`](design-system.md), "How to build UI here" |
 | The app reads `say()` lines aloud (Gemini TTS; T34, [`voice-lines-plan.md`](voice-lines-plan.md)). Since T39 the voice goes through our voice server by default | Done. The founder approved the agent texts and the sound. All seven Attention scenes are voiced with Charon. A scene written before the voice stays silent until one new `write_scene` |
 | The app cleans up after itself (T35, `space/src/main/storage.ts`): clips, code copies, records of gone boards, traces, caches. A board moved to the Trash takes its data with it | Done. The running app gets it at its next start. Finder's Put Back is not confirmed. On Linux the board and its data go to the freedesktop Trash with `.trashinfo` files (checked 2026-11-02); a restore from Files is not confirmed |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
@@ -62,8 +62,9 @@ Where another doc disagrees, the launch plan wins.
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | Launch backend (2026-11-06, P25): the private repo `../learning-space-backend`, live at `https://135-181-38-113.sslip.io` | Done and deployed. `POST /v1/speech` with a $0.50 daily cap per user (strict: a request that would pass the cap does not start), `POST /batch/` forwards usage data to PostHog US. An outside Codex review is fixed |
 | Usage data (P24, a copy of T3 Code; `space/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../../space/README.md`](../../space/README.md), "Usage data". Dashboard "Learning Space launch" (id 2313367; rebuilt the same day after a mistaken delete) with a weekly email. All events so far are `dev`, which the dashboard hides |
-| Voice for everyone (T39), a local Kokoro voice (T40), a Settings dialog (U8, U12), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. The founder redesigns Settings later |
+| Voice for everyone (T39), a local Kokoro voice (T40), a Settings dialog (U8, U12), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. Settings was redesigned 2026-11-06/07 (row below) |
 | Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
+| App chrome and Settings (2026-11-06/07): a quiet title row (U9), board history Back/Forward ⌘[ ⌘] (U11), one Settings dialog with one settings owner in main (U12), the app's own dropdown, opaque panels, overlay scrollbars and bundled voice samples (U14), Settings spacing rules, one small control, the key sheet (U15), soft shadows, see-through popups, a rounder radius scale by element size, bigger key caps and switch (U16, U17) | Done and pushed (`1de0461`). Checked in dev mode with `drive.mjs` and one outside review of U12. Not checked: the built `.dmg` with the bundled voice samples, the sound of the samples, Linux. |
 | App packaging and signing (macOS, D7, D10) | Built 2026-11-06: `cd space && npm run dist:mac` makes arm64 and x64 `.dmg` files (about 133 and 140 MB) with telemetry channel `stable`. The arm64 app ran from the `.dmg` in a check: welcome card, a scene on the board, the relay answers. Signed ad-hoc for now: this Mac has no "Developer ID Application" certificate (team CDA73N3FRP). The notarytool profile `learning-space-notary` is not stored yet. Not checked: the x64 app, a real Developer ID signature, notarization, a clean Mac. Waits for the new name and icon |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Deeper editing (shapes inside SVG, style inspector) | Much later |

@@ -22,7 +22,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 - The **main process owns the outside world**: the window, the MCP server,
   disk access through one path guard, the snapshot window, the files in
   `~/.learning-space/`, the voice (`src/main/voice.ts`: our voice server, the
-  learner's key or local Kokoro; T34, T39, T40), every user setting (`settings.ts`, the one owner and change path, U12) and
+  learner's key or local Kokoro; T34, T39, T40), every user setting (`settings.ts`, the one owner and change path, U12; the sidebar's shown/hidden state is window state, owned by `index.ts`) and
   usage data (`analytics.ts`, P24).
 - The **learning folder is the only persistent store** of learning content.
   App preferences (recent folders, cameras) live in Electron's `userData`
@@ -139,7 +139,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
 | `board/html.ts` | HTML subset ⇄ nodes, both directions; reports what was dropped. |
 | `agent/groups.ts` | Clusters learner ink into groups `g1`, `g2`, … with stable ids. |
 | `agent/placement.ts` | The board as a scene sees it, obstacles, an empty place near an anchor (`space()`, html() without a place). |
-| `agent/ink.ts` | The hand-drawn pressure profile (taper, wobble) for scene ink, seeded per stroke. The ink points of pen shapes come from the stage (`shared/ink-points.ts`, `shared/path-geometry.ts`, decision B14). |
+| `board/hand.ts` | The hand-drawn look (a slight wobble; for pen ink a pressure profile with a taper) for scene ink and the learner's shapes, so both have one hand. The ink points of pen shapes come from the stage (`shared/ink-points.ts`, `shared/path-geometry.ts`, decision B14). |
 
 ## MCP server
 
@@ -453,9 +453,11 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 - Components live in `src/renderer/src/components/` (the snapshot view in
   `src/renderer/src/snapshot/`).
 - Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`,
-  `SidebarToggle.tsx`, `RenameInput.tsx`, `ToolPalette.tsx`, `PreviewPanel.tsx`,
-  `WelcomeCard.tsx`, `CanvasNotice.tsx`, `Toast.tsx`, `Tooltip.tsx`, `PerfPill.tsx`.
-- Scenes: `ScenePill.tsx` (in `TopBar.tsx`; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).
+  `SidebarToggle.tsx`, `TitleLead.tsx` (Back, Forward, the sidebar button), `RenameInput.tsx`,
+  `BoardControls.tsx` (the pills at the bottom of the board), `PreviewPanel.tsx`,
+  `WelcomeCard.tsx`, `CanvasNotice.tsx`, `Toast.tsx`, `Tooltip.tsx`, `PerfPill.tsx`, `Select.tsx`
+  (the app's own dropdown).
+- Scenes: `ScenePill.tsx` (shown in the top bar; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).
 - Menus, popovers and panels: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
   `GuideOverrideNote.tsx`, `ModalPanel.tsx` (the one modal panel), `SearchPanel.tsx` (⌘K),
   `ConnectAgents.tsx` (the agent popover and Settings > Agents), `settings/` (the Settings

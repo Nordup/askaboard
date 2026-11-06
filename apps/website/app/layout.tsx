@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#161618',
+  themeColor: '#111113',
   width: 'device-width',
   initialScale: 1
 }
@@ -16,11 +16,6 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        {/* The hand font: the regular cut on sharp screens, the heavy cut below 1.5 dppx (globals.css). */}
-        <link rel="preload" href="/fonts/hand.woff2" as="font" type="font/woff2" crossOrigin="" media="(min-resolution: 1.5dppx)" />
-        <link rel="preload" href="/fonts/hand-heavy.woff2" as="font" type="font/woff2" crossOrigin="" media="(max-resolution: 1.49dppx)" />
-      </head>
       <body>{children}</body>
     </html>
   )
