@@ -8,6 +8,7 @@ import { LOCAL_MODEL, localVoiceState, speakLocal } from './kokoro'
 import { resourcePath } from './resources'
 import { getLocalVoice, getPace, getVoice, getVoiceModel } from './state'
 import { PACES, SAMPLE_DIR, SAMPLE_TEXT, sampleFile, speechRequest, voiceHost, type PaceName } from './voice-choices'
+import type { VoiceFailure } from '@shared/space-api'
 
 /**
  * The voice of say() lines (docs/learning-space/voice-lines-plan.md): the only
@@ -228,8 +229,7 @@ function findLines(wav: Wav, lines: readonly string[]): LinePlace[] | null {
 
 // ---------- The request ----------
 
-/** A failure the app can tell apart: daily_cap, the voice server's daily cap for this user; failed, every other failure. */
-export type VoiceFailure = 'daily_cap' | 'failed'
+export type { VoiceFailure }
 
 /** The reason of daily_cap, as the agent reads it. */
 const CAP_REASON = 'Not enough voice credits left for today.'
@@ -238,7 +238,8 @@ const CAP_REASON = 'Not enough voice credits left for today.'
 class VoiceFailed extends Error {
   constructor(
     message: string,
-    readonly code: VoiceFailure = 'failed'
+    /** The voice server's daily cap for this user. */
+    readonly capped = false
   ) {
     super(message)
   }
@@ -346,7 +347,7 @@ async function requestAudio(speaker: Exclude<Speaker, { source: 'local' }>, text
         return audio
       }
       const reason = await response.text()
-      if (speaker.source === 'backend' && response.status === 402) throw new VoiceFailed(CAP_REASON, 'daily_cap')
+      if (speaker.source === 'backend' && response.status === 402) throw new VoiceFailed(CAP_REASON, true)
       failed = `${name} answered ${response.status}`
       if (response.status === 429) {
         wait = retryAfter(response, reason)
@@ -407,8 +408,6 @@ export async function speakLines(root: string, lines: readonly string[], choice:
   return spoken
 }
 
-const failure = (reason: string, code: VoiceFailure = 'failed'): { reason: string; code: VoiceFailure } => ({ reason, code })
-
 /** source: where the audio came from, for voice.requested; cache when no request was made. */
 async function speakLinesOnce(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<{ spoken: SpokenLines; source: 'cache' | Speaker['source'] }> {
   const unique = [...new Set(lines)]
@@ -417,6 +416,8 @@ async function speakLinesOnce(root: string, lines: readonly string[], choice: { 
   // The local voice has its own voices (Settings), so choice.voice (a cloud voice) counts only for the cloud.
   const local = getVoiceModel() === 'local'
   const voice = local ? getLocalVoice() : choice.voice
+  // Every failure names the voice that failed, so the learner's notice tells the cap, the cloud and the local voice apart.
+  const failure = (reason: string, capped = false): { reason: string; code: VoiceFailure } => ({ reason, code: capped ? 'daily_cap' : local ? 'local' : 'cloud' })
   // The model is in the key, so a cloud clip and a local clip of the same text never mix.
   const sha = createHash('sha256').update(JSON.stringify(local ? [LOCAL_MODEL, voice, speed, text] : [MODEL, voice, style, text])).digest('hex')
   const clip = `${CLIP_DIR}/${sha}.wav`
@@ -452,7 +453,7 @@ async function speakLinesOnce(root: string, lines: readonly string[], choice: { 
     return { spoken: { answers: answersOf(places), seconds, cached }, source }
   } catch (error) {
     if (signal.aborted) throw error
-    return { spoken: error instanceof VoiceFailed ? failure(error.message, error.code) : failure(error instanceof Error ? error.message : String(error)), source }
+    return { spoken: error instanceof VoiceFailed ? failure(error.message, error.capped) : failure(error instanceof Error ? error.message : String(error)), source }
   }
 }
 

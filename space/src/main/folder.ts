@@ -14,6 +14,8 @@ const MAX_TEXT_PREVIEW = 1024 * 1024
 const MAX_IMAGE_PREVIEW = 20 * 1024 * 1024
 const MAX_BOARD_BYTES = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 150
+/** How often the watcher looks for a folder that was moved or deleted while open. */
+const FOLDER_POLL_MS = 2000
 /** The boards list goes to the renderer at most this often: a burst of saves sends one list. */
 const BOARD_LIST_DELAY_MS = 250
 const ASSETS_DIR = 'assets'
@@ -137,6 +139,8 @@ export class FolderSession {
   /** Own saves since the last list: path → mtime. */
   private listEdits = new Map<string, number>()
   private listTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set while the folder itself is gone (waitForFolder). */
+  private folderPoll: ReturnType<typeof setInterval> | null = null
 
   private constructor(readonly root: string) {
     this.name = basename(root)
@@ -243,7 +247,10 @@ export class FolderSession {
         if (this.debounce) clearTimeout(this.debounce)
         this.debounce = setTimeout(() => void this.flushWatch(events), WATCH_DEBOUNCE_MS)
       })
-      this.watcher.on('error', (error) => console.error(`watch error: ${String(error)}`))
+      this.watcher.on('error', (error) => {
+        console.error(`watch error: ${String(error)}`)
+        void this.isFolderThere().then((there) => there || this.waitForFolder(events))
+      })
     } catch (error) {
       console.error(`could not watch ${this.root}: ${String(error)}`)
     }
@@ -253,6 +260,8 @@ export class FolderSession {
     this.debounce = null
     const paths = [...this.pending]
     this.pending.clear()
+    // A folder that is gone is not a folder whose boards were deleted: the open board, the tree and the list stay as they are.
+    if (!(await this.isFolderThere())) return this.waitForFolder(events)
     const changed: string[] = []
     for (const rel of paths) if (!(await this.isOwnWrite(rel))) changed.push(rel)
     if (!changed.length) return
@@ -285,6 +294,34 @@ export class FolderSession {
     }
   }
 
+  private isFolderThere(): Promise<boolean> {
+    return stat(this.root).then(
+      (info) => info.isDirectory(),
+      () => false
+    )
+  }
+
+  /**
+   * The folder was moved or deleted while open. Saves fail until it is back (the renderer keeps the edits and retries); when a
+   * folder is at the same path again, the watcher starts again and the tree, the list and its boards that differ reach the renderer.
+   * Boards that are not in it are not sent as deleted: the learner's open board is saved into it.
+   */
+  private waitForFolder(events: FolderEvents): void {
+    if (this.folderPoll || this.events !== events) return
+    console.warn(`watch: ${this.root} was moved or deleted`)
+    this.watcher?.close()
+    this.watcher = null
+    this.folderPoll = setInterval(() => {
+      void this.isFolderThere().then(async (there) => {
+        if (!there || !this.folderPoll || this.events !== events) return
+        console.log(`watch: ${this.root} is back`)
+        this.startWatching(events)
+        for (const path of boardPaths((await this.listFiles()).nodes)) this.pending.add(path)
+        void this.flushWatch(events)
+      })
+    }, FOLDER_POLL_MS)
+  }
+
   /** True when the file at `rel` is still the one our last write made. */
   private async isOwnWrite(rel: string): Promise<boolean> {
     const own = this.ownWrites.get(rel)
@@ -298,6 +335,8 @@ export class FolderSession {
 
   stopWatching(): void {
     this.events = null
+    if (this.folderPoll) clearInterval(this.folderPoll)
+    this.folderPoll = null
     if (this.listTimer) clearTimeout(this.listTimer)
     this.listTimer = null
     this.watcher?.close()
@@ -321,8 +360,18 @@ export class FolderSession {
     return text
   }
 
-  /** Atomic write: a temp dotfile in the same folder, then rename over the target. */
+  /** Atomic write (writeBoardFile). A write that fails because the folder is gone starts the watch for its return, also when no watch event told of it (a move). */
   async writeBoard(rel: string, text: unknown): Promise<void> {
+    try {
+      await this.writeBoardFile(rel, text)
+    } catch (error) {
+      if (this.events && !(await this.isFolderThere())) this.waitForFolder(this.events)
+      throw error
+    }
+  }
+
+  /** Atomic write: a temp dotfile in the same folder, then rename over the target. */
+  private async writeBoardFile(rel: string, text: unknown): Promise<void> {
     if (typeof text !== 'string' || text.length > MAX_BOARD_BYTES) throw new Error('Invalid board content.')
     const full = await this.boardFullPath(rel, { allowMissing: true })
     await mkdir(dirname(full), { recursive: true })

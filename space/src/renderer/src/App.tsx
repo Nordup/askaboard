@@ -17,7 +17,7 @@ import {
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
 import { setTrustAsker, setWorldsTrusted } from './live-pixels/trust'
-import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, BoardList, BoardListEntry, Camera, FailedSave, FileTree, GuideOverrides, ShellState, Snapshot } from '@shared/space-api'
+import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, BoardList, BoardListEntry, Camera, FailedSave, FileTree, GuideOverrides, ShellState, Snapshot, VoiceFailure } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
 import { dropTracker, moveTracker } from './agent/groups'
@@ -41,7 +41,7 @@ import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import type { BoardNav } from './components/TitleLead'
 import { WelcomeCard } from './components/WelcomeCard'
-import { errorMessage } from './lib/errors'
+import { errorMessage, failureText } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
 import { OpenHistory } from './lib/open-history'
 import { isMac } from './platform'
@@ -104,6 +104,13 @@ function entryBytes({ doc, history, log }: CacheEntry): number {
 }
 
 const NO_BOARDS: BoardListEntry[] = []
+
+/** The learner's notice when a scene's voice failed and the scene plays silent. */
+const VOICE_NOTICES: Record<VoiceFailure, string> = {
+  daily_cap: 'Not enough voice credits left for today.',
+  cloud: "The voice isn't available right now.",
+  local: "The local voice isn't working right now."
+}
 
 /** The one rule for the boards list: of the same folder, the list with the higher seq stays; a list of another folder replaces it. */
 const newerList = (current: BoardList | null, list: BoardList): BoardList => (current && current.root === list.root && current.seq >= list.seq ? current : list)
@@ -235,7 +242,7 @@ export function App() {
         const message = errorMessage(error)
         console.error(`save failed for ${save.path}: ${message}`)
         failed = true
-        if (!saveFailingRef.current) showError(`Could not save the board: ${message}`)
+        if (!saveFailingRef.current) showError(failureText("Can't save", error, `Could not save the board: ${message}`))
         saveFailingRef.current = true
         if (mustSave(save)) refused ??= `“${boardName(save.path)}” could not be saved first, so nothing was changed: ${message}`
       }
@@ -524,7 +531,8 @@ export function App() {
    * The one folder switch, for every route (the menu, the dialog, the recent list). It runs in
    * the save chain, so no save or board change interleaves with it:
    *   1. the open editor commits, and the pending save is written to the folder it belongs to;
-   *      a failed save fails the switch (nothing is changed);
+   *      a board that cannot be saved is left as at a close (keepUnsaved below), and only when
+   *      even its copy cannot be kept does the switch fail (nothing is changed);
    *   2. the main process makes the new folder the open one;
    *   3. here the open editor and a held stroke commit, and the new folder replaces the old one.
    * An edit that comes in during step 2, or that step 3 commits, stays pending under the old
@@ -539,8 +547,13 @@ export function App() {
       saveTimerRef.current = null
       unsavedSinceRef.current = null
       const run = saveChainRef.current.then(async () => {
-        await writePending((save) => save.root === leaving)
-        applySnapshot(await space.openFolder(path))
+        const kept = await writePending((save) => save.root === leaving).then(
+          () => [],
+          (error: unknown) => keepUnsaved(leaving, error)
+        )
+        const next = await space.openFolder(path)
+        dropKept(kept)
+        applySnapshot(next)
       })
       saveChainRef.current = run.catch(() => undefined)
       try {
@@ -552,12 +565,41 @@ export function App() {
     [applySnapshot, flushCamera, leaveBoard, saveSoon, writePending]
   )
 
+  /**
+   * Leave the boards of a folder that could not be saved, as the close does (main/recovery.ts):
+   * each one's text is kept, and it comes back when the board opens again. Resolves with the
+   * saves kept; throws `refusal` when a copy cannot be kept (the learner stays, with the save error).
+   */
+  const keepUnsaved = async (root: string | null, refusal: unknown): Promise<PendingSave[]> => {
+    const saves = [...pendingRef.current.values()].filter((save) => save.root === root)
+    const boards = unsavedBoards((save) => save.root === root)
+    if (boards.length < saves.length) throw refusal
+    try {
+      await space.keepUnsaved(boards)
+    } catch (error) {
+      console.error(`unsaved boards not kept: ${errorMessage(error)}`)
+      throw refusal
+    }
+    return saves
+  }
+
+  /** The kept saves are no longer pending: their copies hold them (a newer version stays pending). */
+  const dropKept = (kept: PendingSave[]): void => {
+    for (const save of kept) {
+      const key = saveKey(save.root, save.path)
+      if (pendingRef.current.get(key) === save) pendingRef.current.delete(key)
+    }
+    if (!kept.length || pendingRef.current.size) return
+    saveFailingRef.current = false
+    setSaveStatus('saved')
+  }
+
   const openRecent = useCallback(
     async (path: string) => {
       try {
         await switchFolder(path)
       } catch (error) {
-        showError(errorMessage(error))
+        showError(failureText("Can't open the folder", error))
       }
     },
     [switchFolder]
@@ -568,7 +610,7 @@ export function App() {
       const path = await space.pickFolder()
       if (path) await switchFolder(path)
     } catch (error) {
-      showError(errorMessage(error))
+      showError(failureText("Can't open the folder", error))
     }
   }, [switchFolder])
 
@@ -662,7 +704,7 @@ export function App() {
       await openBoard(path)
       setRenaming(path)
     } catch (error) {
-      showError(errorMessage(error))
+      showError(failureText("Can't make a board", error))
     }
   }, [changeBoard, openBoard, snapshot])
 
@@ -676,7 +718,7 @@ export function App() {
         const path = existing ? existing.path : (await changeBoard({ op: 'create', name })).path
         await openBoard(path)
       } catch (error) {
-        showError(errorMessage(error))
+        showError(failureText("Can't make a board", error))
       }
     },
     [boards, changeBoard, openBoard, snapshot]
@@ -688,7 +730,7 @@ export function App() {
       try {
         await changeBoard({ op: 'rename', path, name })
       } catch (error) {
-        showError(errorMessage(error))
+        showError(failureText("Can't rename the board", error))
       }
     },
     [changeBoard]
@@ -700,7 +742,7 @@ export function App() {
       try {
         await changeBoard({ op: 'trash', path })
       } catch (error) {
-        showError(errorMessage(error))
+        showError(failureText("Can't move the board to the Trash", error))
       }
     },
     [changeBoard]
@@ -731,7 +773,7 @@ export function App() {
           : 'Nothing to add — the folder is already set up'
       setToast({ text, kind: 'info' })
     } catch (error) {
-      showError(`Could not set up the folder: ${errorMessage(error)}`)
+      showError(failureText("Can't set up the folder", error, `Could not set up the folder: ${errorMessage(error)}`))
     }
   }, [refreshGuideOverrides])
 
@@ -927,10 +969,11 @@ export function App() {
   // Settings > General > Show performance (also View > Show performance): main owns it; the top bar's pill follows it.
   const showPerformance = useSetting((settings) => settings.general.showPerformance, false)
 
-  /** The text of each board with unsaved edits, as it is now: the newest version, whatever write failed. */
-  const unsavedBoards = (): FailedSave[] => {
+  /** The text of each board with unsaved edits (of those `of` names), as it is now: the newest version, whatever write failed. */
+  const unsavedBoards = (of: (save: PendingSave) => boolean = () => true): FailedSave[] => {
     const out: FailedSave[] = []
     for (const save of pendingRef.current.values()) {
+      if (!of(save)) continue
       try {
         out.push({ root: save.root, path: save.path, text: serializeBoard(save.doc) })
       } catch (error) {
@@ -970,13 +1013,13 @@ export function App() {
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
       // Main sends the stories of the board the window shows; reads take them only for that board's path (live/stories.ts).
       // Main sends a board's stories after each new record line; they are for the open board only when its id is theirs.
-      // The cloud voice's daily limit (main sends it at most once a day per run).
-      space.onVoiceNotice(() =>
+      // A scene's voice failed and the scene plays silent (main sends each kind at most once a day per run).
+      space.onVoiceNotice((code) =>
         setToast({
-          text: 'Not enough voice credits left for today.',
+          text: VOICE_NOTICES[code],
           kind: 'warn',
           action: {
-            label: 'Set up local voice',
+            label: code === 'local' ? 'Voice settings' : 'Set up local voice',
             run: () => openSettings('voice')
           }
         })

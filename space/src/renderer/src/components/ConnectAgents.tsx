@@ -1,13 +1,14 @@
 import { useCallback, useState, type ReactNode } from 'react'
 import { Check, ExternalLink, Loader2 } from 'lucide-react'
-import type { AgentClientAction, AgentClientId, AgentClientStatus, AgentClientsStatus, ConnectResult } from '@shared/space-api'
+import type { AgentClientAction, AgentClientId, AgentClientStatus, AgentClientsStatus } from '@shared/space-api'
 import { SettingRow } from './settings/parts'
 
 /**
  * "Connect an agent": one row per agent app (main/connect.ts detects them and runs the install), with its one control
  * (Install, Installed, a spinner) and a problem as one line with Fix or Retry, then the manual-setup link. One
  * component in two places: the agent popover's second view (AgentPill.tsx, `layout="menu"`) and Settings > Agents
- * (`layout="settings"`, rows with a description). Each place keeps its own detection (useAgentClients).
+ * (`layout="settings"`, rows with a description). Each place keeps its own detection (useAgentClients); the line after
+ * an action is main's (AgentClientStatus.last, texts in main/connect.ts), so both places show the same one.
  */
 
 export const MANUAL_SETUP_URL = 'https://github.com/Nordup/learning-space-plugins#manual-setup'
@@ -27,9 +28,6 @@ const CLIENT_DESCRIPTIONS: Record<AgentClientId, string> = {
   codex: 'The Learning Space plugin for ChatGPT and Codex'
 }
 
-/** "Restart … to finish" after a plugin change. */
-const RESTART_NAMES: Partial<Record<AgentClientId, string>> = { 'claude-code': 'Claude Code', codex: 'ChatGPT' }
-
 export function isInstalled(client: AgentClientStatus): boolean {
   return client.state === 'plugin' || client.state === 'manual' || client.state === 'both' || client.state === 'connected'
 }
@@ -41,13 +39,13 @@ export function shorten(message: string): string {
 }
 
 /** Detection of the agent apps: refresh runs it again; the last answer stays. */
-export function useAgentClients(): { clients: AgentClientsStatus | null; checking: boolean; error: string | null; refresh(): void } {
+export function useAgentClients(): { clients: AgentClientsStatus | null; checking: boolean; error: string | null; refresh(): Promise<void> } {
   const [clients, setClients] = useState<AgentClientsStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const refresh = useCallback((): void => {
+  const refresh = useCallback((): Promise<void> => {
     setChecking(true)
-    window.space
+    return window.space
       .getAgentClients()
       .then((value) => {
         setClients(value)
@@ -73,22 +71,17 @@ function Problem({ text, fix, onFix }: { text: string; fix: string; onFix(): voi
 
 type Layout = 'menu' | 'settings'
 
-function ConnectRow({ id, client, checking, layout, onChanged }: { id: AgentClientId; client: AgentClientStatus | undefined; checking: boolean; layout: Layout; onChanged(): void }) {
+function ConnectRow({ id, client, checking, layout, onChanged }: { id: AgentClientId; client: AgentClientStatus | undefined; checking: boolean; layout: Layout; onChanged(): Promise<void> }) {
   const [busy, setBusy] = useState(false)
-  const [last, setLast] = useState<{ action: AgentClientAction; result: ConnectResult } | null>(null)
 
   const run = (action: AgentClientAction): void => {
     setBusy(true)
-    setLast(null)
     window.space
       .connectAgentClient(id, action)
-      .then((result) => setLast({ action, result }))
-      .catch((error: unknown) => setLast({ action, result: { ok: false, message: error instanceof Error ? error.message : String(error) } }))
-      .finally(() => {
-        setBusy(false)
-        // Re-detect after every action, also after a failure (a step can half succeed).
-        onChanged()
-      })
+      .catch((error: unknown) => console.error(`connect ${id}: ${error instanceof Error ? error.message : String(error)}`))
+      // Re-detect after every action, also after a failure (a step can half succeed); the new status carries its line.
+      .then(onChanged)
+      .finally(() => setBusy(false))
   }
 
   const installed = client ? isInstalled(client) : false
@@ -109,17 +102,16 @@ function ConnectRow({ id, client, checking, layout, onChanged }: { id: AgentClie
       </button>
     )
 
+  const last = busy ? null : (client?.last ?? null)
   const failed = last && !last.result.ok ? last : null
-  const restart = RESTART_NAMES[id]
-  const done = last?.result.ok && !busy ? last : null
+  const done = last?.result.ok ? last : null
   const lines = (
     <>
-      {!busy && failed && <Problem text={shorten(failed.result.message)} fix="Retry" onFix={() => run(failed.action)} />}
+      {failed && <Problem text={failed.result.message} fix="Retry" onFix={() => run(failed.action)} />}
       {!busy && !failed && client?.state === 'both' && <Problem text="Also added by hand, so tools appear twice" fix="Fix" onFix={() => run('remove-manual')} />}
       {!busy && !failed && client?.state === 'manual' && <Problem text="Added by hand" fix="Fix" onFix={() => run('switch-to-plugin')} />}
       {!busy && !failed && client?.state === 'unknown' && client.detail && <Problem text={shorten(client.detail)} fix="Retry" onFix={onChanged} />}
-      {done && restart && <div className="menu__line">Restart {restart} to finish</div>}
-      {done && !restart && <div className="menu__line">Confirm the install in Claude Desktop</div>}
+      {done && <div className="menu__line">{done.result.message}</div>}
     </>
   )
 
@@ -141,7 +133,7 @@ function ConnectRow({ id, client, checking, layout, onChanged }: { id: AgentClie
 }
 
 /** The rows and the manual-setup link. */
-export function ConnectList({ clients, checking, layout, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; layout: Layout; onChanged(): void }) {
+export function ConnectList({ clients, checking, layout, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; layout: Layout; onChanged(): Promise<void> }) {
   return (
     <>
       {CLIENT_ORDER.map((id) => (

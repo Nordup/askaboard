@@ -31,6 +31,7 @@ const api: SpaceApi = {
 
   readBoard: (root, path) => ipcRenderer.invoke(IPC.readBoard, root, path),
   readRecovery: (root, path) => ipcRenderer.invoke(IPC.readRecovery, root, path),
+  keepUnsaved: (boards) => ipcRenderer.invoke(IPC.keepUnsaved, boards),
   writeBoard: (root, path, text, info) => ipcRenderer.invoke(IPC.writeBoard, root, path, text, info),
   createBoard: (name, folder) => ipcRenderer.invoke(IPC.createBoard, name, folder),
   renameBoard: (path, newName) => ipcRenderer.invoke(IPC.renameBoard, path, newName),

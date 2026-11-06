@@ -3,8 +3,9 @@ import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
-import { IPC, type BoardSaveInfo, type Camera, type FailedSave, type MenuCommand, type Snapshot } from '@shared/space-api'
+import { IPC, type BoardSaveInfo, type Camera, type FailedSave, type MenuCommand, type Snapshot, type VoiceFailure } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
+import { FS_CAUSES, type FsCause } from '@shared/fs-causes'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
@@ -19,7 +20,7 @@ import { refreshBriefBlock } from './brief-block'
 import { cleanFolder, cleanTraces, limitDiskCache, removedBoardData, trimCodeCache } from './storage'
 import { boardIdOf } from './scene-store'
 import { installShim, writeRelayState } from './agent-home'
-import { dropRecovery, keepRecovery, moveRecovery, readRecovery } from './recovery'
+import { dropRecovery, keepUnsaved, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
 import * as analytics from './analytics'
@@ -166,13 +167,13 @@ function setSidebarHidden(hidden: boolean): void {
   send(IPC.sidebarHidden, hidden)
 }
 
-/** The day (local date) the daily-limit notice last showed: at most once a day per app run, not on every scene. */
-let voiceNoticeDay: string | null = null
+/** The day (local date) each kind of voice notice last showed: at most once a day per kind per app run, not on every scene. */
+const voiceNoticeDay = new Map<VoiceFailure, string>()
 
-function showVoiceNotice(code: 'daily_cap'): void {
+function showVoiceNotice(code: VoiceFailure): void {
   const day = new Date().toDateString()
-  if (voiceNoticeDay === day) return
-  voiceNoticeDay = day
+  if (voiceNoticeDay.get(code) === day) return
+  voiceNoticeDay.set(code, day)
   send(IPC.voiceNotice, code)
 }
 
@@ -307,7 +308,19 @@ function fromBoardPage(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
   return !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && event.senderFrame === event.sender.mainFrame
 }
 
-/** Every invoke handler runs through this, so errors reach the renderer as plain messages. */
+/**
+ * The cause of a file-system failure in the learner's words, or null for every other error. Here, because IPC keeps only
+ * the message: the renderer never sees error.code. A missing file counts only when the open folder itself is gone.
+ */
+function fsCause(error: unknown): FsCause | null {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') return FS_CAUSES.readOnly
+  if (code === 'ENOSPC') return FS_CAUSES.full
+  if (code === 'ENOENT' && session && !isDirectory(session.root)) return FS_CAUSES.gone
+  return null
+}
+
+/** Every invoke handler runs through this, so errors reach the renderer as plain messages: a file-system cause (fsCause) alone, else the message. */
 function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R> | R): void {
   ipcMain.handle(channel, async (_event: IpcMainInvokeEvent, ...args: unknown[]) => {
     try {
@@ -315,7 +328,7 @@ function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Pro
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`${channel} failed: ${message}`)
-      throw new Error(message)
+      throw new Error(fsCause(error) ?? message)
     }
   })
 }
@@ -424,6 +437,12 @@ function registerIpc(): void {
 
   handle(IPC.readBoard, (root: unknown, path: string) => sessionOf(root).readBoard(path))
   handle(IPC.readRecovery, (root: unknown, path: string) => readRecovery(sessionOf(root).root, path))
+  handle(IPC.keepUnsaved, async (boards: unknown) => {
+    const valid = Array.isArray(boards) && boards.every((board: Partial<FailedSave> | null) => typeof board?.path === 'string' && typeof board.text === 'string')
+    if (!valid) throw new Error('Boards to keep are required.')
+    const kept = (boards as FailedSave[]).map((board) => ({ root: sessionOf(board.root).root, path: board.path, text: board.text }))
+    if (!(await keepUnsaved(kept))) throw new Error('A copy of the board could not be kept.')
+  })
   handle(IPC.writeBoard, async (root: unknown, path: string, text: string, info?: BoardSaveInfo) => {
     const start = performance.now()
     const folder = sessionOf(root)
@@ -570,13 +589,7 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
   for (;;) {
     const failed = await askToSave(win)
     if (!failed?.length) break
-    const kept = await Promise.all(failed.map((board) => keepRecovery(board.root, board.path, board.text))).then(
-      () => true,
-      (error: unknown) => {
-        console.error(`recovery: could not keep ${failed.map((board) => board.path).join(', ')}: ${String(error)}`)
-        return false
-      }
-    )
+    const kept = await keepUnsaved(failed)
     console.log(`close: could not save ${failed.map((board) => board.path).join(', ')}`)
     // Dev hook: a check answers the sheet (drive.mjs close-answer); the sheet closes as a cancel does.
     const abort = new AbortController()

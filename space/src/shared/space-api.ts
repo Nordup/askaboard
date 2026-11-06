@@ -649,6 +649,8 @@ export interface AgentClientStatus {
   detail: string | null
   /** The primary button for this state, or null when there is nothing to do. */
   action: AgentClientAction | null
+  /** The last action on this app in this app run, so the popover and Settings show the same line; a failure is dropped once the app is installed. */
+  last: { action: AgentClientAction; result: ConnectResult } | null
 }
 
 export interface AgentClientsStatus {
@@ -659,9 +661,12 @@ export interface AgentClientsStatus {
 
 export interface ConnectResult {
   ok: boolean
-  /** A short success text, or the first line of the failed command's error output. */
+  /** The row's line in the learner's words (main/connect.ts is its one source): what to do next, or why it failed. The command's own output goes to the console log only. */
   message: string
 }
+
+/** Why a scene's voice failed, as the learner's notice tells it apart: daily_cap, the voice server's daily cap for this user; cloud, every other failure of the cloud voice; local, a failure of the local voice. */
+export type VoiceFailure = 'daily_cap' | 'cloud' | 'local'
 
 export interface SpaceApi {
   /** The Node `process.platform` value, for example `darwin`. */
@@ -686,8 +691,10 @@ export interface SpaceApi {
 
   /** Reads and writes name their folder (`root`): they go to that folder, whichever folder is open by then. */
   readBoard(root: string, path: string): Promise<string>
-  /** The board text kept when a save failed at close, or null (main/recovery.ts). */
+  /** The board text kept when a board that could not be saved was left (a close, a folder switch), or null (main/recovery.ts). */
   readRecovery(root: string, path: string): Promise<string | null>
+  /** Keep these boards that could not be saved, as at a close, before the renderer leaves them (a folder switch); rejects when a copy cannot be kept. */
+  keepUnsaved(boards: FailedSave[]): Promise<void>
   /**
    * Atomic write (temp file + rename). Only `*.board.json` paths. `info` carries the
    * learner's changes in this save (for the learner-edit log) and the serialise time (for the save log).
@@ -737,8 +744,8 @@ export interface SpaceApi {
   /** Write GEMINI_API_KEY into ~/.learning-space/.env, or remove it. */
   saveGeminiKey(key: string): Promise<void>
   removeGeminiKey(): Promise<void>
-  /** The cloud voice is at its daily limit (at most once a day per app run). */
-  onVoiceNotice(listener: (code: 'daily_cap') => void): Unsubscribe
+  /** A scene's voice failed and the scene plays silent: at most once a day per kind per app run. */
+  onVoiceNotice(listener: (code: VoiceFailure) => void): Unsubscribe
   /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
   /** What the folder's guide and instructions files change for agents now. */
@@ -838,6 +845,7 @@ export const IPC = {
   getBoards: 'space:get-boards',
   readBoard: 'space:read-board',
   readRecovery: 'space:read-recovery',
+  keepUnsaved: 'space:keep-unsaved',
   writeBoard: 'space:write-board',
   createBoard: 'space:create-board',
   renameBoard: 'space:rename-board',

@@ -35,6 +35,7 @@ interface RunResult {
   stdout: string
   stderr: string
   error: string | null
+  timedOut: boolean
 }
 
 function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeout: number): Promise<RunResult> {
@@ -42,7 +43,7 @@ function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeout: numb
     execFile(file, args, { env, timeout, maxBuffer: 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       const code = error ? (typeof error.code === 'number' ? error.code : null) : 0
       const reason = error ? (error.killed ? `timed out after ${Math.round(timeout / 1000)} s` : error.message) : null
-      resolve({ code, stdout: String(stdout), stderr: String(stderr), error: reason })
+      resolve({ code, stdout: String(stdout), stderr: String(stderr), error: reason, timedOut: Boolean(error?.killed) })
     })
   })
 }
@@ -228,17 +229,23 @@ async function found(cli: Cli, tools: Tools): Promise<Found> {
   return { ...plugin, manual: codexHasManual(codexConfigText()) }
 }
 
-function toStatus(cli: Cli, value: Found): AgentClientStatus {
+/** A status as the check finds it; agentClients adds the last action. */
+type Detected = Omit<AgentClientStatus, 'last'>
+
+function toStatus(cli: Cli, value: Found): Detected {
   const base = { id: CLIENT_OF[cli], label: LABELS[cli] }
   if (value.plugin && value.manual) return { ...base, state: 'both', detail: null, action: 'remove-manual' }
   if (value.plugin) return { ...base, state: 'plugin', detail: null, action: null }
-  if (value.error) return { ...base, state: 'unknown', detail: value.error, action: 'install-plugin' }
+  if (value.error) {
+    console.log(`connect: ${cli} check → ${value.error}`)
+    return { ...base, state: 'unknown', detail: `Couldn't check ${LABELS[cli]}. Try again.`, action: 'install-plugin' }
+  }
   if (value.manual) return { ...base, state: 'manual', detail: null, action: 'switch-to-plugin' }
   const detail = value.pluginDisabled ? 'The plugin is installed but disabled.' : null
   return { ...base, state: 'available', detail, action: 'install-plugin' }
 }
 
-async function cliStatus(cli: Cli, tools: Tools): Promise<AgentClientStatus> {
+async function cliStatus(cli: Cli, tools: Tools): Promise<Detected> {
   if (!tools[cli]) {
     const base = { id: CLIENT_OF[cli], label: LABELS[cli], action: null }
     // Without the CLI, only Codex's config file can still be read.
@@ -246,9 +253,9 @@ async function cliStatus(cli: Cli, tools: Tools): Promise<AgentClientStatus> {
       const text = codexConfigText()
       const plugin = codexHasPluginTable(text)
       const manual = codexHasManual(text)
-      if (plugin || manual) return { ...base, state: plugin && manual ? 'both' : plugin ? 'plugin' : 'manual', detail: 'The codex command was not found.' }
+      if (plugin || manual) return { ...base, state: plugin && manual ? 'both' : plugin ? 'plugin' : 'manual', detail: NOT_INSTALLED.codex }
     }
-    return { ...base, state: 'missing', detail: `The ${cli} command was not found.` }
+    return { ...base, state: 'missing', detail: NOT_INSTALLED[cli] }
   }
   return toStatus(cli, await found(cli, tools))
 }
@@ -332,7 +339,7 @@ function claudeAppHasExtension(): boolean {
   }
 }
 
-function claudeAppStatus(dirs: string[]): AgentClientStatus {
+function claudeAppStatus(dirs: string[]): Detected {
   const base = { id: 'claude-app' as const, label: 'Claude Desktop' }
   if (claudeAppHasExtension()) return { ...base, state: 'connected', detail: null, action: null }
   if (!claudeApp(dirs)) {
@@ -344,16 +351,44 @@ function claudeAppStatus(dirs: string[]): AgentClientStatus {
 
 export async function agentClients(): Promise<AgentClientsStatus> {
   const tools = await findTools()
-  const clients = await Promise.all([cliStatus('claude', tools), cliStatus('codex', tools), Promise.resolve(claudeAppStatus(tools.dirs))])
+  const found = await Promise.all([cliStatus('claude', tools), cliStatus('codex', tools), Promise.resolve(claudeAppStatus(tools.dirs))])
+  const clients = found.map((client) => {
+    const last = lastActions.get(client.id) ?? null
+    const installed = client.state === 'plugin' || client.state === 'both' || client.state === 'manual' || client.state === 'connected'
+    return { ...client, last: last && !last.result.ok && installed ? null : last }
+  })
   return { shimPath: shimPath(), clients }
 }
 
 // ---------- Actions ----------
 
-const RESTART_HINT: Record<Cli, string> = {
-  claude: 'Restart Claude Code or run /reload-plugins.',
-  codex: 'Restart Codex (or the Codex app) to load the plugin.'
+// The row's lines, the one source for the popover and Settings (ConnectAgents.tsx shows result.message as it is).
+
+const THIS_COMPUTER = process.platform === 'darwin' ? 'this Mac' : 'this computer'
+/** After a plugin change: the app loads the plugin at its next start. */
+const RESTART_LINE: Record<Cli, string> = { claude: 'Restart Claude Code to finish', codex: 'Restart ChatGPT or Codex to finish' }
+const NOT_INSTALLED: Record<Cli, string> = { claude: `Claude Code isn't installed on ${THIS_COMPUTER}.`, codex: `Codex isn't installed on ${THIS_COMPUTER}.` }
+const TOO_LONG = 'This took too long.'
+const INSTALL_FAILED = "Couldn't install. Try again."
+const REMOVE_FAILED = "Couldn't remove the entry added by hand. Try again."
+const OPENED = 'Confirm the install in Claude Desktop'
+
+/** A failed step: its line goes to the console log, the row says only whether it took too long. */
+interface StepError {
+  line: string
+  timedOut: boolean
 }
+
+const failed = (error: StepError, line: string): ConnectResult => ({ ok: false, message: error.timedOut ? TOO_LONG : line })
+
+/** A failure that is not a step's (a check, a missing file): logged here, and the row gets line. */
+function refused(what: string, reason: string, line: string): ConnectResult {
+  console.log(`connect: ${what} → ${reason}`)
+  return { ok: false, message: line }
+}
+
+/** The last action per app in this run (AgentClientStatus.last). */
+const lastActions = new Map<AgentClientId, { action: AgentClientAction; result: ConnectResult }>()
 
 /** One action per CLI at a time: two config writes must not race. */
 const queues: Record<Cli, Promise<unknown>> = { claude: Promise.resolve(), codex: Promise.resolve() }
@@ -364,16 +399,16 @@ function serial<T>(cli: Cli, task: () => Promise<T>): Promise<T> {
   return next
 }
 
-/** Run one step; null on success, else the error line. */
-async function step(cli: Cli, tools: Tools, args: string[], timeout: number): Promise<string | null> {
+/** Run one step; null on success, else the error (its line is logged here). */
+async function step(cli: Cli, tools: Tools, args: string[], timeout: number): Promise<StepError | null> {
   const result = await run(tools[cli] as string, args, tools.env, timeout)
-  const message = result.code === 0 ? null : failure(result)
-  console.log(`connect: ${cli} ${args.join(' ')} → ${message ?? 'ok'}`)
-  return message
+  const error = result.code === 0 ? null : { line: failure(result), timedOut: result.timedOut }
+  console.log(`connect: ${cli} ${args.join(' ')} → ${error?.line ?? 'ok'}`)
+  return error
 }
 
 /** Add the marketplace when it is missing, then install (or enable) the plugin. */
-async function installPlugin(cli: Cli, tools: Tools): Promise<string | null> {
+async function installPlugin(cli: Cli, tools: Tools): Promise<StepError | null> {
   const listed = await run(tools[cli] as string, ['plugin', 'marketplace', 'list', '--json'], tools.env, STATUS_TIMEOUT_MS)
   if (!(listed.code === 0 && hasMarketplace(parseJson(listed.stdout)))) {
     const error = await step(cli, tools, ['plugin', 'marketplace', 'add', MARKETPLACE_REPO], INSTALL_TIMEOUT_MS)
@@ -385,41 +420,46 @@ async function installPlugin(cli: Cli, tools: Tools): Promise<string | null> {
   return step(cli, tools, ['plugin', 'install', PLUGIN_ID, '--scope', 'user'], INSTALL_TIMEOUT_MS)
 }
 
-async function removeManual(cli: Cli, tools: Tools): Promise<string | null> {
+async function removeManual(cli: Cli, tools: Tools): Promise<StepError | null> {
   if (cli === 'claude') {
     const manual = await claudeManual(tools)
-    if (manual.error) return manual.error
+    if (manual.error) {
+      console.log(`connect: claude mcp get ${SERVER_NAME} → ${manual.error}`)
+      return { line: manual.error, timedOut: /^timed out/.test(manual.error) }
+    }
     if (!manual.manual) return null
     return step(cli, tools, ['mcp', 'remove', SERVER_NAME, '--scope', manual.scope], REMOVE_TIMEOUT_MS)
   }
   // `codex mcp remove` exits 0 when the entry is missing, so read the file back.
   const error = await step(cli, tools, ['mcp', 'remove', SERVER_NAME], REMOVE_TIMEOUT_MS)
   if (error) return error
-  return codexHasManual(codexConfigText()) ? 'The manual entry is still in config.toml.' : null
+  if (!codexHasManual(codexConfigText())) return null
+  console.log('connect: codex: the manual entry is still in config.toml')
+  return { line: 'The manual entry is still in config.toml.', timedOut: false }
 }
 
 async function cliAction(cli: Cli, action: AgentClientAction): Promise<ConnectResult> {
   const tools = await findTools()
-  if (!tools[cli]) return { ok: false, message: `The ${cli} command was not found.` }
+  if (!tools[cli]) return refused(cli, `the ${cli} command was not found`, NOT_INSTALLED[cli])
   return serial(cli, async () => {
     switch (action) {
       case 'install-plugin': {
         const error = await installPlugin(cli, tools)
-        return error ? { ok: false, message: error } : { ok: true, message: `Plugin installed. ${RESTART_HINT[cli]}` }
+        return error ? failed(error, INSTALL_FAILED) : { ok: true, message: RESTART_LINE[cli] }
       }
       case 'switch-to-plugin': {
         const installError = await installPlugin(cli, tools)
-        if (installError) return { ok: false, message: installError }
+        if (installError) return failed(installError, INSTALL_FAILED)
         const removeError = await removeManual(cli, tools)
-        if (removeError) return { ok: false, message: `Plugin installed, but the manual entry stays: ${removeError}` }
-        return { ok: true, message: `Switched to the plugin. ${RESTART_HINT[cli]}` }
+        if (removeError) return failed(removeError, REMOVE_FAILED)
+        return { ok: true, message: RESTART_LINE[cli] }
       }
       case 'remove-manual': {
         const error = await removeManual(cli, tools)
-        return error ? { ok: false, message: error } : { ok: true, message: 'Manual entry removed. Restart the agent to drop the duplicate tools.' }
+        return error ? failed(error, REMOVE_FAILED) : { ok: true, message: RESTART_LINE[cli] }
       }
       default:
-        return { ok: false, message: `${LABELS[cli]} has no "${action}" action.` }
+        return refused(cli, `${LABELS[cli]} has no "${action}" action`, INSTALL_FAILED)
     }
   })
 }
@@ -428,8 +468,6 @@ async function cliAction(cli: Cli, action: AgentClientAction): Promise<ConnectRe
 function mcpbPath(): string {
   return resolve(resourcePath('learning-space.mcpb'))
 }
-
-const OPENED = 'Opened in Claude. Confirm the install there.'
 
 /**
  * The environment for another Electron app: the CLIs' env (no ELECTRON_RUN_AS_NODE), without what this app's
@@ -485,9 +523,9 @@ function launch(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<s
 async function installExtensionLinux(path: string): Promise<ConnectResult> {
   const tools = await findTools()
   const found = claudeApp(tools.dirs)
-  if (!found) return { ok: false, message: 'Claude Desktop was not found.' }
+  if (!found) return refused('claude-app', 'Claude Desktop was not found', `Claude Desktop isn't installed on ${THIS_COMPUTER}.`)
   const gio = found.executable ? null : which('gio', tools.dirs)
-  if (!found.executable && !gio) return { ok: false, message: `Open ${path} from Claude Desktop to install it.` }
+  if (!found.executable && !gio) return refused('claude-app', `no gio to open ${path} with`, INSTALL_FAILED)
   const [file, args] = found.executable ? [found.executable, [path]] : [gio as string, ['launch', found.path, path]]
   const env = otherAppEnv(tools.env)
   if (dryRunOpen) {
@@ -498,31 +536,35 @@ async function installExtensionLinux(path: string): Promise<ConnectResult> {
   }
   const error = await launch(file, args, env)
   console.log(`connect: ${file} ${args.join(' ')} → ${error ?? 'started'}`)
-  return error ? { ok: false, message: error } : { ok: true, message: OPENED }
+  return error ? { ok: false, message: INSTALL_FAILED } : { ok: true, message: OPENED }
 }
 
 async function installExtension(): Promise<ConnectResult> {
   const path = mcpbPath()
-  if (!existsSync(path)) return { ok: false, message: 'The extension file is missing (run npm run build:mcpb).' }
+  if (!existsSync(path)) return refused('claude-app', `the extension file ${path} is missing (npm run build:mcpb makes it)`, INSTALL_FAILED)
   if (process.platform === 'linux') return installExtensionLinux(path)
   if (dryRunOpen) {
     console.log(`connect: dry run, would open ${path}`)
     return { ok: true, message: OPENED }
   }
   const error = await shell.openPath(path)
-  return error ? { ok: false, message: error } : { ok: true, message: OPENED }
+  return error ? refused('claude-app', `open ${path}: ${error}`, INSTALL_FAILED) : { ok: true, message: OPENED }
 }
 
 export async function connectAgentClient(id: AgentClientId, action: AgentClientAction): Promise<ConnectResult> {
+  const result = await clientAction(id, action)
+  lastActions.set(id, { action, result })
+  return result
+}
+
+function clientAction(id: AgentClientId, action: AgentClientAction): Promise<ConnectResult> {
   switch (id) {
     case 'claude-code':
       return cliAction('claude', action)
     case 'codex':
       return cliAction('codex', action)
     case 'claude-app':
-      return action === 'install-extension' ? installExtension() : { ok: false, message: `Claude Desktop has no "${action}" action.` }
-    default:
-      return { ok: false, message: `Unknown agent app "${String(id)}".` }
+      return action === 'install-extension' ? installExtension() : Promise.resolve(refused('claude-app', `Claude Desktop has no "${action}" action`, INSTALL_FAILED))
   }
 }
 

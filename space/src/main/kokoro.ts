@@ -102,8 +102,25 @@ let current: LocalVoiceState | null = null
 const listeners = new Set<(state: LocalVoiceState) => void>()
 
 export function localVoiceState(): LocalVoiceState {
-  current ??= existsSync(join(installDir(), MARKER)) ? { state: 'installed' } : { state: 'absent' }
+  if (!current) {
+    removeStaleTemps()
+    current = existsSync(join(installDir(), MARKER)) ? { state: 'installed' } : { state: 'absent' }
+  }
   return current
+}
+
+/** The temp folder of the install that runs now in this process (its name in kokoroDir). */
+let staging: string | null = null
+
+/**
+ * An install that stopped with the app (a quit, a crash) leaves its temp folder, a part of a download
+ * among it. The first state read of each run removes every temp folder (a hidden name) but the one of
+ * an install that runs now. The install folder itself has no dot.
+ */
+function removeStaleTemps(): void {
+  void readdir(kokoroDir())
+    .then((names) => Promise.all(names.filter((name) => name.startsWith('.') && name !== staging).map((name) => rm(join(kokoroDir(), name), { recursive: true, force: true }))))
+    .catch(() => {})
 }
 
 function setState(next: LocalVoiceState): void {
@@ -142,7 +159,8 @@ export function installLocalVoice(): Promise<void> {
 
 async function install(signal: AbortSignal): Promise<void> {
   setState({ state: 'installing', progress: 0 })
-  const temp = join(kokoroDir(), `.${VERSION}.${randomUUID()}.tmp`)
+  staging = `.${VERSION}.${randomUUID()}.tmp`
+  const temp = join(kokoroDir(), staging)
   try {
     await mkdir(temp, { recursive: true })
     const total = ARCHIVES.reduce((sum, archive) => sum + archive.bytes, 0)
@@ -179,6 +197,8 @@ async function install(signal: AbortSignal): Promise<void> {
     }
     console.error(`local voice: install failed: ${error instanceof Error ? error.message : String(error)}`)
     setState({ state: 'failed', error: learnerLine(error) })
+  } finally {
+    staging = null
   }
 }
 

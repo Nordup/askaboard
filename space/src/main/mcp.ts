@@ -107,8 +107,8 @@ export interface AgentServerHooks {
   folderRoot(): string | null
   /** View > Read Lines Aloud as it stands now. */
   readLines(): boolean
-  /** A scene's voice hit the cloud voice's daily limit: index.ts shows the learner a notice (the tool result stays as it is). */
-  voiceNotice?(code: 'daily_cap'): void
+  /** A scene's voice failed and the scene plays silent: index.ts shows the learner a notice (the tool result stays as it is). */
+  voiceNotice?(code: VoiceFailure): void
   /** The board the window shows (folder-relative path), or null; for the session trace. */
   shownBoard(): string | null
   /** The open learning folder, for list_boards, open_board and move_board; null when none is open. */
@@ -359,7 +359,7 @@ interface SceneVoiceReport {
   seconds?: number
   cached?: boolean
   reason?: string
-  /** With state failed: daily_cap tells the voice server's cap apart. The agent reads only reason. */
+  /** With state failed: which voice failed, for the learner's notice. The agent reads only reason. */
   code?: VoiceFailure
 }
 
@@ -2207,7 +2207,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
     })
     if ('reason' in spoken) {
       console.warn(`voice: ${name} stays at the reading pace: ${spoken.reason}`)
-      if (spoken.code === 'daily_cap') this.hooks.voiceNotice?.('daily_cap')
+      this.hooks.voiceNotice?.(spoken.code)
       return { report: { state: 'failed', reason: spoken.reason, code: spoken.code } }
     }
     return { answers: spoken.answers, report: { state: 'on', seconds: spoken.seconds, cached: spoken.cached } }

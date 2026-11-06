@@ -52,6 +52,17 @@ function log(message: string): void {
   process.stderr.write(`learning-space relay: ${message}\n`)
 }
 
+/**
+ * The reader of stdout went away (a client that stopped reading, `| head`): every later write fails
+ * with EPIPE or ERR_STREAM_DESTROYED. Every write to stdout ends up here, whichever code made it, so
+ * the process ends quietly with code 0. Other stdout errors stay uncaught, as before.
+ */
+let stdoutClosed = (): void => process.exit(0)
+process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code !== 'EPIPE' && error.code !== 'ERR_STREAM_DESTROYED') throw error
+  stdoutClosed()
+})
+
 const stateDir = join(homedir(), '.learning-space')
 
 interface ToolsCache {
@@ -122,6 +133,8 @@ class Relay {
   private readonly pending = new Map<RequestId, string>()
   private handshakeCount = 0
   private closed = false
+  /** stdout is closed: no answer can reach the client any more. */
+  private clientGone = false
   /** Client messages still in progress (stdin can close before their answers are out). */
   private busy = 0
 
@@ -136,6 +149,10 @@ class Relay {
     process.stdin.on('close', () => void this.shutdown())
     process.on('SIGTERM', () => void this.shutdown())
     process.on('SIGINT', () => void this.shutdown())
+    stdoutClosed = () => {
+      this.clientGone = true
+      void this.shutdown()
+    }
     await this.client.start()
   }
 
@@ -144,7 +161,7 @@ class Relay {
     this.closed = true
     // Let answers to the last requests reach the client first (at most 10 s).
     const deadline = Date.now() + 10_000
-    while ((this.busy > 0 || this.pending.size > 0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
+    while (!this.clientGone && (this.busy > 0 || this.pending.size > 0) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50))
     const upstream = this.upstream
     this.upstream = null
     if (upstream) {

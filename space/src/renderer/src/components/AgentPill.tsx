@@ -121,7 +121,7 @@ function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; c
 
 // ---------- View 2: Connect an agent ----------
 
-function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; onBack(): void; onChanged(): void }) {
+function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; onBack(): void; onChanged(): Promise<void> }) {
   return (
     <>
       <button className="menu__item" data-nav="back" onClick={onBack}>
