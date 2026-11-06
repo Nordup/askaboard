@@ -10,7 +10,7 @@ own words in `docs/learning-space/` come first.
 **Now (2026-11-06/07): the launch.** Read
 [`docs/learning-space/launch-plan.md`](docs/learning-space/launch-plan.md)
 first: an open-source macOS app, a new name and brand, a voice server,
-Mixpanel analytics and a new website.
+PostHog analytics and a new website.
 
 **Start at [`docs/learning-space/README.md`](docs/learning-space/README.md).**
 It gives the status, the reading order and a glossary. Before you change
@@ -21,8 +21,9 @@ any text that agents read (the brief, instructions, tool descriptions), read
 
 | Path | What | Status |
 | --- | --- | --- |
-| `space/` | Learning Space: Electron canvas app with no AI inside; agents connect over MCP | **Main product.** Docs in `docs/learning-space/` |
+| `space/` | Learning Space: Electron canvas app with no AI inside (except the voice, decision P1); agents connect over MCP | **Main product.** Docs in `docs/learning-space/` |
 | `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/learning-space-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension. Keep it a Codex plugin: no `plugin.json` or `mcp.json` at the plugin root (decision I30) | Active, separate repo |
+| `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://135-181-38-113.sslip.io` until the brand domain. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
 | `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved |

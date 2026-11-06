@@ -5,8 +5,8 @@ canvas. The core loop: the agent explains on the board with animations while
 the learner talks with it (decision P15). An external agent (Claude Code,
 Claude Desktop, ChatGPT and Codex) connects over MCP, sees the board, and
 creates and edits material on it; the learner can also write and draw by
-hand. The app has no AI inside, except an optional speech call with the
-learner's own key (T34). All learning
+hand. The app has no AI inside, except the voice that reads scene lines
+aloud (P1: our voice server, the learner's own key, or a local model). All learning
 lives in one local folder that the learner owns.
 
 It is the third form of this project (iPad app → web client → Learning
@@ -20,7 +20,7 @@ an open-source macOS app for people who already pay for an agent app,
 with a new name, a voice server, analytics and a new website (P23, D7).
 Where another doc disagrees, the launch plan wins.
 
-## Status (2026-11-03)
+## Status (2026-11-06)
 
 | Area | State |
 | --- | --- |
@@ -31,7 +31,7 @@ Where another doc disagrees, the launch plan wins.
 | Folder setup (`AGENTS.md` template), editable folder guide | Done |
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
 | One shared design system for menus | Done |
-| The app reads `say()` lines aloud (Gemini TTS, the learner's key; T34, [`voice-lines-plan.md`](voice-lines-plan.md)) | Done. The founder approved the agent texts and the sound. All seven Attention scenes are voiced with Charon. A scene written before the voice stays silent until one new `write_scene` |
+| The app reads `say()` lines aloud (Gemini TTS; T34, [`voice-lines-plan.md`](voice-lines-plan.md)). Since T39 the voice goes through our voice server by default | Done. The founder approved the agent texts and the sound. All seven Attention scenes are voiced with Charon. A scene written before the voice stays silent until one new `write_scene` |
 | The app cleans up after itself (T35, `space/src/main/storage.ts`): clips, code copies, records of gone boards, traces, caches. A board moved to the Trash takes its data with it | Done. The running app gets it at its next start. Finder's Put Back is not confirmed. On Linux the board and its data go to the freedesktop Trash with `.trashinfo` files (checked 2026-11-02); a restore from Files is not confirmed |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
 | Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
@@ -60,7 +60,11 @@ Where another doc disagrees, the launch plan wins.
 | Linux (2026-11-02/03, decision D6) | The app runs on Linux from source, one code base with macOS: [`../../space/README.md`](../../space/README.md), "On Linux". Checked on Manjaro (GNOME, Wayland, AMD GPU) with Claude Code and Codex sessions that drew scenes. A covered Wayland window gets no display frames, so scene events (end, pause steps, the queue, the voice) now run on a timer (B62). Check instances run under XWayland. Not checked: a pen tablet, KDE, X11 sessions. The plugin repo's 0.1.3 (Linux in the `.mcpb` manifest) waits for a push. |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
-| App packaging and signing (macOS) | Now: the launch (D7) |
+| Launch backend (2026-11-06, P25): the private repo `../learning-space-backend`, live at `https://135-181-38-113.sslip.io` | Done and deployed. `POST /v1/speech` with a $0.50 daily cap per user (strict: a request that would pass the cap does not start), `POST /batch/` forwards usage data to PostHog US. An outside Codex review is fixed |
+| Usage data (P24, a copy of T3 Code; `space/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../../space/README.md`](../../space/README.md), "Usage data". Open: the PostHog dashboard (DAU, WAU, retention) needs the founder's `/mcp` login to PostHog |
+| Voice for everyone (T39), a local Kokoro voice (T40), a first Settings panel (U8), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. The founder redesigns Settings later |
+| Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
+| App packaging and signing (macOS) | Not started: the launch (D7). Needs the founder's Apple Developer ID, notarization credentials, the build tool and the new name. The release build must set `LEARNING_SPACE_TELEMETRY_CHANNEL=stable` |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Deeper editing (shapes inside SVG, style inspector) | Much later |
 

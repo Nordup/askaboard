@@ -8,7 +8,7 @@ positioning source.
 
 - [`learning-space/README.md`](learning-space/README.md) — **the main
   product** (since 2026-10-24, on `main`): a desktop canvas with no AI
-  inside, which any agent uses over MCP. Start there: status, reading order
+  inside (except the voice, P1), which any agent uses over MCP. Start there: status, reading order
   and glossary.
 - [`learning-space/strategy.md`](learning-space/strategy.md) — the
   founder's strategy for Learning Space: the bet, the core loop, how we

@@ -3,8 +3,9 @@
 Learning Space is a desktop app (Electron) for macOS and Linux. It gives the learner a
 shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
-the board with the learner. Its one AI call is optional: a speech API reads
-scene lines aloud with the learner's own key (T34).
+the board with the learner. Its one AI part is the voice, which reads scene lines
+aloud: our voice server by default (T39), the learner's own Gemini key, or a
+local Kokoro model that the learner installs from Settings (T40).
 
 **Status (2026-11-03):** the main product of this repository (since 2026-10-24). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
@@ -84,9 +85,11 @@ Electron runs native Wayland. Differences from macOS:
   its audio. With no key, the audio comes from our voice server
   (`LEARNING_SPACE_VOICE_HOST`, decision T39), with a daily cap per user; an own
   Gemini key (`GEMINI_API_KEY`, or a line in `~/.learning-space/.env`) goes to
-  Gemini directly. When the voice fails, or with View > Read Lines Aloud off,
-  the lines run at a reading pace, silent. View > Voice and View > Pace apply
-  to new scenes. Clips stay in the folder's `.learning-space/voice/`.
+  Gemini directly. Settings… (⌘,) holds Read Lines Aloud (on by default), the
+  voice, the pace, the Gemini key and the local voice: Install downloads
+  Kokoro (about 370 MB, `~/.learning-space/models/kokoro/`, T40). When the
+  voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
+  silent. View > Voice and View > Pace apply to new scenes. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
@@ -163,7 +166,7 @@ unless the learner edited it.
 
 The app sends product usage events to our own server at
 `135-181-38-113.sslip.io`. The server keeps a copy of each event and forwards
-it to PostHog (EU). The code is `src/main/analytics.ts`.
+it to PostHog (US). The code is `src/main/analytics.ts`.
 
 The events:
 
@@ -175,7 +178,7 @@ The events:
 | `agent.connected` | the agent app (Claude Code, Codex, Cursor, Claude Desktop or other) and its version |
 | `mcp.tool.invoked` | the tool name, success, the duration, the agent app |
 | `scene.played` | how the playback ended, its length in seconds, whether it had a voice |
-| `voice.requested` | the source (your key or the cache), the result, the audio length, the request time |
+| `voice.requested` | the source (our server, your key, the local voice or the cache), the result, the audio length, the request time |
 | `install.owner_observed` | a hashed account id (see below) |
 
 Each event also has the app version, the release channel, the platform, the
@@ -196,7 +199,9 @@ approximate location.
 
 To turn usage data off, set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in the
 environment of the app. A dev run (`npm run dev`) sends nothing unless you set
-`LEARNING_SPACE_TELEMETRY_ENABLED=true`. `LEARNING_SPACE_TELEMETRY_HOST`
+`LEARNING_SPACE_TELEMETRY_ENABLED=true`; a run of a local build sends, tagged
+with its channel. The voice server gets the same hashed identifier with each
+speech request, also with usage data off (T39): it counts the daily cap. `LEARNING_SPACE_TELEMETRY_HOST`
 changes the server. A build sets the channel from
 `LEARNING_SPACE_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
 default is dev).

@@ -64,3 +64,17 @@ founder does not plan to use it again.
   them. To restart it instead: `docker compose -p auguide -f
   docker-compose.hetzner.yml --env-file env/compose.env up -d` in
   `~/auguide/infrastructure/deploy`.
+
+## Learning Space launch follow-ups (2026-11-06)
+
+- Third-party notices for the local voice: Settings downloads sherpa-onnx
+  (Apache-2.0), the Kokoro model (Apache-2.0) and espeak-ng data (GPL-3.0).
+  Show their licenses in Settings or the README before the public launch.
+- After the D8 rename, fix the clone link in `../learning-space-plugins/README.md`
+  (it names `github.com/Nordup/math-tutor`).
+- `space/resources/brief.md` line 3 says "with a pen or a tablet"; the launch
+  has no pen (launch plan). This is agent text: the founder decides the change
+  (`docs/learning-space/writing-agent-text.md`).
+- Settings panel: "Remove" for Kokoro has no confirmation; the cap toast stays
+  about 9 s and shows once per app run; View > Voice lists only the cloud
+  voices. The founder redesigns Settings later (U8).

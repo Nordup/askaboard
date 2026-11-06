@@ -21,7 +21,9 @@ it points to. All paths are under `space/` unless stated otherwise.
   it, so the learner sees agent work at once and can undo it.
 - The **main process owns the outside world**: the window, the MCP server,
   disk access through one path guard, the snapshot window, the files in
-  `~/.learning-space/`, and the speech API (`src/main/voice.ts`, T34).
+  `~/.learning-space/`, the voice (`src/main/voice.ts`: our voice server, the
+  learner's key or local Kokoro; T34, T39, T40), the settings (`settings.ts`) and
+  usage data (`analytics.ts`, P24).
 - The **learning folder is the only persistent store** of learning content.
   App preferences (recent folders, cameras) live in Electron's `userData`
   (macOS: `~/Library/Application Support/`; Linux: `~/.config/`).
@@ -39,7 +41,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 
 | Process | Code | Role |
 | --- | --- | --- |
-| Main | `src/main/` | App lifecycle, window, menu, IPC handlers, MCP server, folder session, snapshot window, agent home, connect actions, the session trace (`trace.ts`), the brief block in `AGENTS.md` (`brief-block.ts`). |
+| Main | `src/main/` | App lifecycle, window, menu, IPC handlers, MCP server, folder session, snapshot window, agent home, connect actions, the session trace (`trace.ts`), the brief block in `AGENTS.md` (`brief-block.ts`), the app menu (`menu.ts`), Settings IPC (`settings.ts`), the voice (`voice.ts`, `kokoro.ts`), usage data (`analytics.ts`, `analytics-id.ts`). |
 | Preload | `src/preload/` | Exposes one typed API, `window.space` (calls plus `on…` events). Types in `src/shared/space-api.ts`. |
 | Renderer | `src/renderer/` | React app: canvas, content layer, sidebar, top bar, menus, agent request handler. |
 | Snapshot window | `src/main/snapshot.ts` + `src/renderer/src/snapshot/` | A hidden offscreen window that loads the renderer with `?snapshot=1`, draws a requested region, and is captured to PNG. Closed when idle. |
@@ -400,7 +402,17 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   line (host request `voiceLine`, answered by main, not by `host.ts`), and the
   audio length becomes the line length. The answers stay in the record, so a
   replay makes no call. `src/renderer/src/live/voice.ts` sets one audio element
-  from the player clock on each frame (T34, `voice-lines-plan.md`).
+  from the player clock on each frame (T34, `voice-lines-plan.md`). The
+  speaker (T39, T40): the local Kokoro program when the learner chose it in
+  Settings, else the learner's Gemini key, else our voice server
+  (`POST /v1/speech`; at its daily cap a `daily_cap` failure, and the board
+  shows a toast that opens Settings). `src/main/kokoro.ts` installs pinned
+  sherpa-onnx and model archives into `~/.learning-space/models/kokoro/` and
+  runs the program as a separate process (D9).
+- **Backend.** A private repo, `../learning-space-backend` (P25): FastAPI,
+  Postgres and Caddy in Docker on the Hetzner box. It holds the server's
+  Gemini key and the PostHog token. The app reaches it for the voice and for
+  usage data (`POST /batch/`, forwarded to PostHog US).
 - **Renderer.** `src/renderer/src/live/` turns the description into board
   items and plays it: `run.ts` (requests from main), `compile.ts` (objects
   to nodes), `timeline.ts`, `player.ts` (the clock, the queue, pauses,
@@ -440,12 +452,13 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - Components live in `src/renderer/src/components/` (the snapshot view in
   `src/renderer/src/snapshot/`).
-- Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`
-  (`FileTree.tsx`), `ToolPalette.tsx`, `PreviewPanel.tsx`, `WelcomeCard.tsx`,
-  `CanvasNotice.tsx`, `Toast.tsx`.
+- Shell: `src/renderer/src/App.tsx` (state and wiring), `TopBar.tsx`, `Sidebar.tsx`,
+  `SidebarToggle.tsx`, `RenameInput.tsx`, `ToolPalette.tsx`, `PreviewPanel.tsx`,
+  `WelcomeCard.tsx`, `CanvasNotice.tsx`, `Toast.tsx`, `Tooltip.tsx`, `PerfPill.tsx`.
 - Scenes: `ScenePill.tsx` (in `TopBar.tsx`; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).
-- Menus and popovers: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
-  `GuideOverrideNote.tsx` — all built on the shared menu system.
+- Menus, popovers and panels: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
+  `GuideOverrideNote.tsx`, `SearchPanel.tsx` (⌘K), `SettingsPanel.tsx` (⌘,) —
+  all built on the shared menu system.
 - Styles: `styles/tokens.css` (all design tokens), `styles/app.css` (all app
   UI, including the menu system), `board/board.css`, `board/content.css`.
 - Rules: [`design-system.md`](design-system.md).
