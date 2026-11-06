@@ -1,6 +1,6 @@
 import { tip } from './Tooltip'
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
-import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
+import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo, Trash2, Undo, type LucideIcon } from 'lucide-react'
 import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, SHAPE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolKeys, WIDTH_STEPS, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
@@ -59,7 +59,7 @@ type Rect = { left: number; top: number; right: number; bottom: number }
 
 /** The window rects (client CSS px) of the visible board control pills; empty when no board is open. */
 export function boardControlsArea(): Rect[] {
-  return [...document.querySelectorAll<HTMLElement>('.canvas > .board-controls .pill-bar')].map((pill) => {
+  return [...document.querySelectorAll<HTMLElement>('.canvas > .board-controls .pill-bar, .canvas > .board-controls .board-controls__corner')].map((pill) => {
     const box = pill.getBoundingClientRect()
     return { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
   })
@@ -120,7 +120,7 @@ export function BoardControls(props: BoardControlsProps) {
 
   return (
     <div className="board-controls" ref={rootRef}>
-      <div className="pill-bar board-controls__corner" role="toolbar" aria-label="Zoom and history">
+      <div className="board-controls__corner" role="toolbar" aria-label="Zoom and history">
         <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
           <Minus {...ICON} />
         </button>
@@ -128,12 +128,12 @@ export function BoardControls(props: BoardControlsProps) {
         <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
           <Plus {...ICON} />
         </button>
-        <span className="pill-bar__divider" />
+        <span className="board-controls__gap" />
         <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
-          <Undo2 {...ICON} />
+          <Undo {...ICON} />
         </button>
         <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
-          <Redo2 {...ICON} />
+          <Redo {...ICON} />
         </button>
       </div>
 
@@ -164,6 +164,7 @@ export function BoardControls(props: BoardControlsProps) {
                 {i > 0 && TOOLS[i - 1].group !== tool.group && <span className="pill-bar__divider" />}
                 <button
                   className="tool"
+                  style={tool.iconScale ? ({ '--icon-scale': tool.iconScale } as CSSProperties) : undefined}
                   {...tip(tool.label, toolKeys(tool))}
                   aria-label={tool.label}
                   aria-pressed={tools.tool === tool.id}

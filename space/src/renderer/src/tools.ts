@@ -25,6 +25,12 @@ export interface ToolDef {
   style: readonly StyleField[]
   /** The tool pill puts a divider between groups: moving, shapes, then the pen, text and eraser. */
   group: 'move' | 'shape' | 'mark'
+  /**
+   * The icon's size against the others, so every icon looks as large and as heavy: lucide draws
+   * move-up-right in 14 of its 24 units and slash in 20, most tools in about 18. The stroke keeps
+   * its weight (app.css .tool > .lucide).
+   */
+  iconScale?: number
 }
 
 /** The tools in the tool pill's order. A new tool is one row here. */
@@ -33,8 +39,8 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'hand', label: 'Hand', key: 'H', Icon: Hand, style: [], group: 'move' },
   { id: 'rect', label: 'Rectangle', key: 'R', digit: '2', Icon: Square, style: ['color', 'fill', 'width', 'line'], group: 'shape' },
   { id: 'ellipse', label: 'Ellipse', key: 'O', digit: '3', Icon: Circle, style: ['color', 'fill', 'width', 'line'], group: 'shape' },
-  { id: 'arrow', label: 'Arrow', key: 'A', digit: '4', Icon: MoveUpRight, style: ['color', 'width', 'line', 'heads'], group: 'shape' },
-  { id: 'line', label: 'Line', key: 'L', digit: '5', Icon: Slash, style: ['color', 'width', 'line'], group: 'shape' },
+  { id: 'arrow', label: 'Arrow', key: 'A', digit: '4', Icon: MoveUpRight, style: ['color', 'width', 'line', 'heads'], group: 'shape', iconScale: 1.2 },
+  { id: 'line', label: 'Line', key: 'L', digit: '5', Icon: Slash, style: ['color', 'width', 'line'], group: 'shape', iconScale: 0.9 },
   { id: 'pen', label: 'Pen', key: 'P', digit: '6', Icon: PenLine, style: ['color', 'width', 'pen'], group: 'mark' },
   { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color', 'size', 'font', 'align'], group: 'mark' },
   { id: 'eraser', label: 'Eraser', key: 'E', digit: '0', Icon: Eraser, style: [], group: 'mark' }

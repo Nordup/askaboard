@@ -119,7 +119,7 @@ All paths are under `space/src/renderer/src/`.
   `--radius-pill`.
 - **Shadows** (U16): only `--shadow-float` (popups, tooltips, toasts, the
   script panel) and `--shadow-card` (modal panels). Both are soft, wide and
-  low in contrast. The board pills have no shadow (U13).
+  low in contrast. On the board only the tool pill floats (`--shadow-float`, founder 2026-11-07); the style pill is quiet.
 - **See-through:** popups (menus, popovers, the dropdown list) use
   `--bg-glass` / `--bg-glass-2` with `--glass-filter`. Modal panels and
   tooltips stay opaque (the founder, 2026-11-07).
@@ -397,11 +397,13 @@ missing part goes into the same block.
 
 ## Board controls
 
-The three quiet pills over the bottom of the canvas (decisions U10, U13;
-approved mockup "bottom_controls_quiet_small_v8"; `BoardControls.tsx`, the
-comment block above `.board-controls` in `app.css`). Each is a `.pill-bar`
-(`--bg-elevated`, 1 px `--border-subtle`, `--radius-pill`, padding 0 4 px,
-gap 2 px, no shadow, U13) with its own height. Parts: `.tool` (round button,
+The controls over the bottom of the canvas (decisions U10, U13; approved
+mockups "bottom_controls_quiet_small_v8" and
+"bottom_controls_bare_corner_and_icons_v10"; `BoardControls.tsx`, the
+comment block above `.board-controls` in `app.css`). The tool pill and the
+style pill are `.pill-bar`s (`--bg-elevated`, 1 px `--border-subtle`,
+`--radius-pill`, padding 0 4 px, gap 2 px), both 40 px high; the tool pill
+floats (`--shadow-float`), the style pill has no shadow. Parts: `.tool` (round button,
 lucide icon at stroke 1.75; pressed: `--accent-soft` and `--accent`;
 `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider` (1 × 16 px,
 margin 0 5 px), `.swatch` (28 px) with `.swatch__dot` (15 px, the pen ring), `.option`
@@ -413,15 +415,20 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 12 px). Icon sizes come from the tokens (`.tool > .lucide`, `.option >
 .lucide`), not from the components.
 
-- The corner pill (30 px) at the bottom left, 12 px in, centred on the tool
-  pill's row: − % + , a divider (1 × 14 px, margin 0 4 px), undo and redo;
-  24 px buttons, 14 px icons. A click on the % zooms to 100% (no menu; ⇧1
+- The corner at the bottom left, 12 px in, centred on the tool pill's row:
+  bare buttons, no pill (founder 2026-11-07): − % + , an 8 px gap, undo and
+  redo (lucide `Undo` and `Redo`, the U-turn); 28 px buttons, 15 px icons, a
+  round hover fill. A small soft shade of the canvas colour
+  (`--corner-shade`, reaching `--corner-shade-pad` around them) keeps them
+  readable over board material. A click on the % zooms to 100% (no menu; ⇧1
   and ⇧2 fit the board and the selection, founder 2026-11-06). The tool
-  pill (40 px; 30 px buttons, 17 px icons; founder: "a little bit larger"): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
+  pill (40 px; 30 px buttons, 17 px icons; founder: "a little bit larger"; `iconScale` in `TOOLS`
+  evens the optical size of the arrow (1.2) and the line (0.9) with the
+  stroke weight kept): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
   between groups (Select and Hand; the shapes; Pen, Text and Eraser),
   centred on the canvas. The row is a grid `1fr auto 1fr` with a 12 px gap
   and margin, so on a narrow canvas the tool pill moves right and stays
-  12 px after the corner pill.
+  12 px after the corner.
 - The style pill shows for a tool with style fields, or for a selection
   with the Select tool (`board/style.ts`): colours, fill, width, line,
   arrowheads (one, two, none: icons), pen or marker, text size (S M L XL,

@@ -159,12 +159,12 @@
   --tools-pill-height: 40px; /* the tool pill */
   --tool-size: 30px; /* a tool button */
   --tool-icon-size: 17px; /* its lucide icon (stroke 1.75) */
-  --corner-pill-height: 30px; /* the corner pill: zoom and undo, centred on the tool pill's row */
-  --corner-button-size: 24px; /* a corner pill button (zoom out, zoom in, undo, redo) */
-  --corner-icon-size: 14px;
-  --corner-divider-height: 14px; /* the line between zoom and undo */
-  --corner-divider-gap: 4px;
-  --style-pill-height: 36px; /* the style pill */
+  --corner-button-size: 28px; /* a bare corner button (zoom out, zoom in, undo, redo) */
+  --corner-icon-size: 15px;
+  --corner-group-gap: 8px; /* between zoom and undo */
+  --corner-shade-pad: 10px; /* the soft shade reaches this far around the corner buttons */
+  --corner-shade: rgba(22, 22, 24, 0.85); /* --bg-canvas, nearly opaque at the centre of the shade */
+  --style-pill-height: 40px; /* the style pill: as tall as the tool pill */
   --swatch-size: 28px; /* a colour swatch's hit area */
   --swatch-dot: 15px; /* the pen ring inside it (InkGlyph.tsx PenRing) */
   --option-size: 26px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
