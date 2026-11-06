@@ -174,7 +174,7 @@ button:focus-visible {
   width: 100%;
   height: var(--folder-row-height);
   padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--row-radius);
   text-align: left;
   transition: background 120ms ease;
 }
@@ -212,7 +212,7 @@ button:focus-visible {
   flex-shrink: 0;
   width: var(--icon-button-size);
   height: var(--icon-button-size);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-tertiary);
   transition: background 120ms ease, color 120ms ease;
 }
@@ -238,7 +238,7 @@ button:focus-visible {
 .icon-button--title {
   width: var(--title-button-size);
   height: var(--title-button-size);
-  border-radius: var(--radius-md);
+  border-radius: var(--row-radius);
 }
 
 /* ---------- Tooltip ---------- */
@@ -261,7 +261,7 @@ button:focus-visible {
   visibility: hidden;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-elevated-2);
   box-shadow: var(--shadow-float);
   color: var(--text-primary);
@@ -357,7 +357,7 @@ button:focus-visible {
   height: var(--pill-height);
   padding: 0 var(--space-2);
   white-space: nowrap;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--text-secondary);
   transition: background 120ms ease;
@@ -635,7 +635,7 @@ button:focus-visible {
   overflow: hidden;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--popup-radius);
   box-shadow: var(--shadow-float);
   opacity: 0;
   transition: opacity var(--fade), transform var(--into-pill);
@@ -1099,7 +1099,7 @@ button:focus-visible {
   width: 100%;
   height: 34px;
   padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--row-radius);
   background: var(--accent);
   color: var(--text-on-accent);
   font-weight: 600;
@@ -1152,7 +1152,7 @@ button:focus-visible {
   gap: var(--space-2);
   height: var(--sidebar-row-height);
   padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--row-radius);
   color: var(--text-secondary);
   cursor: default;
   outline: none;
@@ -1228,7 +1228,7 @@ button:focus-visible {
   place-items: center end;
   width: var(--icon-button-size);
   height: var(--icon-button-size);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-tertiary);
   visibility: hidden;
 }
@@ -1507,8 +1507,7 @@ button:focus-visible {
 
 /* A modal panel (ModalPanel.tsx: the search panel, the Settings dialog): over a .backdrop, opaque as every menu (U14); the instance sets its position, width and height. */
 .menu--panel {
-  --menu-radius: var(--radius-xl);
-  --menu-item-radius: var(--radius-md);
+  --menu-radius: var(--radius-xl); /* its rows: 16 less the list's 6 px padding = 10 (.menu) */
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -1856,15 +1855,19 @@ button:focus-visible {
   background: var(--bg-active);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--keycap-font);
   line-height: 1;
   white-space: nowrap;
+}
+
+.menu__key--symbol {
+  font-size: var(--keycap-symbol-font);
 }
 
 .menu__key-word {
   padding: 0 var(--space-half);
   color: var(--text-tertiary);
-  font-size: var(--text-xs);
+  font-size: var(--keycap-font);
 }
 
 /* ---------- The select (U14): the app's own dropdown (Select.tsx) ---------- */
@@ -1972,8 +1975,9 @@ button:focus-visible {
 
 .menu__switch {
   position: relative;
-  width: 26px;
-  height: 14px;
+  flex-shrink: 0;
+  width: var(--switch-width);
+  height: var(--switch-height);
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
@@ -1983,10 +1987,10 @@ button:focus-visible {
 
 .menu__switch::after {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
+  top: var(--switch-inset);
+  left: var(--switch-inset);
+  width: var(--switch-knob);
+  height: var(--switch-knob);
   border-radius: 50%;
   background: var(--text-secondary);
   content: '';
@@ -1997,7 +2001,7 @@ button:focus-visible {
 }
 
 .menu__switch[aria-checked='true']::after {
-  left: 14px;
+  left: calc(var(--switch-width) - var(--switch-knob) - var(--switch-inset));
   background: var(--text-primary);
 }
 
@@ -2113,6 +2117,9 @@ button:focus-visible {
 .menu:not(.menu--panel) {
   --control-height: var(--control-height-menu);
   --control-radius: var(--menu-item-radius); /* as the menu's rows */
+  --switch-width: var(--switch-width-menu);
+  --switch-height: var(--switch-height-menu);
+  --switch-knob: var(--switch-knob-menu);
 }
 
 .btn-sm--quiet {
@@ -2185,7 +2192,7 @@ button:focus-visible {
   height: 32px;
   padding: 0 var(--space-4);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--row-radius);
   background: var(--bg-elevated);
   color: var(--text-primary);
   font-weight: 560;
@@ -2206,7 +2213,7 @@ button:focus-visible {
   height: 30px;
   margin: 0 calc(-1 * var(--space-2));
   padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--row-radius);
   color: var(--text-secondary);
   text-align: left;
 }
@@ -2304,7 +2311,7 @@ button:focus-visible {
   display: grid;
   place-items: center;
   padding: var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: repeating-conic-gradient(var(--bg-elevated) 0% 25%, var(--preview-checker) 0% 50%) 50% / 16px 16px;
 }
 
@@ -2379,7 +2386,7 @@ button:focus-visible {
 .markdown pre {
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated);
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -2413,7 +2420,7 @@ button:focus-visible {
   padding: var(--space-2) var(--space-3);
   transform: translateX(-50%);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--bg-elevated-2);
   box-shadow: var(--shadow-float);
   color: var(--text-primary);
@@ -2465,7 +2472,7 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-2);
   padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   text-align: left;
