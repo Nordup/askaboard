@@ -13,6 +13,13 @@ It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
 in [`../../space/`](../../space/); work happens on `main`.
 
+## Now: the launch (2026-11-06 → 2026-11-07)
+
+**Read [`launch-plan.md`](launch-plan.md) first.** It is the current plan:
+an open-source macOS app for people who already pay for an agent app,
+with a new name, a voice server, analytics and a new website (P23, D7).
+Where another doc disagrees, the launch plan wins.
+
 ## Status (2026-11-03)
 
 | Area | State |
@@ -52,7 +59,7 @@ in [`../../space/`](../../space/); work happens on `main`.
 | Linux (2026-11-02/03, decision D6) | The app runs on Linux from source, one code base with macOS: [`../../space/README.md`](../../space/README.md), "On Linux". Checked on Manjaro (GNOME, Wayland, AMD GPU) with Claude Code and Codex sessions that drew scenes. A covered Wayland window gets no display frames, so scene events (end, pause steps, the queue, the voice) now run on a timer (B62). Check instances run under XWayland. Not checked: a pen tablet, KDE, X11 sessions. The plugin repo's 0.1.3 (Linux in the `.mcpb` manifest) waits for a push. |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
-| App packaging, signing, auto-update | Later |
+| App packaging and signing (macOS) | Now: the launch (D7) |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Deeper editing (shapes inside SVG, style inspector) | Much later |
 
@@ -64,6 +71,8 @@ work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.
 
 ## Read in this order
 
+0. [`launch-plan.md`](launch-plan.md) — the current plan: the launch of
+   2026-11-06/07.
 1. [`idea.md`](idea.md) — the founder's original idea, part by part, in the
    founder's words. Why the app exists.
    - [`strategy.md`](strategy.md) — the founder's view (2026-10-26) of the

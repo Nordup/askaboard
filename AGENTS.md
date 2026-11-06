@@ -7,6 +7,11 @@ understanding, not finished answers. **Learning Space is the main product**
 was written for the paused built-in tutor; for Learning Space, the founder's
 own words in `docs/learning-space/` come first.
 
+**Now (2026-11-06/07): the launch.** Read
+[`docs/learning-space/launch-plan.md`](docs/learning-space/launch-plan.md)
+first: an open-source macOS app, a new name and brand, a voice server,
+Mixpanel analytics and a new website.
+
 **Start at [`docs/learning-space/README.md`](docs/learning-space/README.md).**
 It gives the status, the reading order and a glossary. Before you change
 any text that agents read (the brief, instructions, tool descriptions), read
@@ -22,7 +27,7 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
 | `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved |
 | `design/`, `docs/design-system/` | Exports/transcriptions of the Paper design file (paused clients) | Generated — never the first thing you edit |
-| `landing-page/`, `landing/` | Marketing page | Local-only (see Deployment policy) |
+| `landing-page/`, `landing/` | Marketing page of the paused tutor; the launch rebuilds it for Learning Space (`launch-plan.md`) | Local-only (see Deployment policy) |
 | `docs/` | Vision, TODO, research; `docs/learning-space/` for the active app; older specs under `docs/superpowers/` | |
 
 ## Run it
