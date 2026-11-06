@@ -415,8 +415,8 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 12 px). Icon sizes come from the tokens (`.tool > .lucide`, `.option >
 .lucide`), not from the components.
 
-- The corner at the bottom right, 12 px in, centred on the tool pill's
-  row: bare buttons, no pill and no shade (founder 2026-11-07): undo and
+- The corner at the bottom right, 12 px from the right and from the
+  bottom edge (not centred on the tool pill's row; founder 2026-11-07): bare buttons, no pill and no shade (founder 2026-11-07): undo and
   redo (lucide `Undo2`, `Redo2`), an 8 px gap, − % +; 28 px buttons, 15 px
   icons, a round hover fill. A click on the % zooms to 100% (no menu; ⇧1
   and ⇧2 fit the board and the selection, founder 2026-11-06). The tool
