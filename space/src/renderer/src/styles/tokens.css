@@ -147,9 +147,9 @@
   --folder-row-height: 32px; /* the folder button in the sidebar footer (one line): --space-1 under the footer's line, --space-2 on the other sides */
   --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */
   /* The board controls (U10, U13): three quiet pills over the canvas bottom */
-  --tools-pill-height: 36px; /* the tool pill */
-  --tool-size: 28px; /* a tool button */
-  --tool-icon-size: 16px; /* its lucide icon (stroke 1.75) */
+  --tools-pill-height: 40px; /* the tool pill */
+  --tool-size: 30px; /* a tool button */
+  --tool-icon-size: 17px; /* its lucide icon (stroke 1.75) */
   --corner-pill-height: 30px; /* the corner pill: zoom and undo, centred on the tool pill's row */
   --corner-button-size: 24px; /* a corner pill button (zoom out, zoom in, undo, redo) */
   --corner-icon-size: 14px;

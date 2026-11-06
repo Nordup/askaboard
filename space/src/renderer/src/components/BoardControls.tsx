@@ -5,7 +5,6 @@ import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
-import { Menu } from './Menu'
 
 /**
  * What the style pill shows: its fields, with the values of the tool or of the selection (a missing value
@@ -41,7 +40,7 @@ interface BoardControlsProps {
   commandContext(): CommandContext | null
   onZoomIn(): void
   onZoomOut(): void
-  /** A row of the zoom menu: 100%, fit the board, fit the selection. */
+  /** A zoom command: the % zooms to 100%. */
   onZoom(command: ZoomCommand): void
   onUndo(): void
   onRedo(): void
@@ -52,7 +51,7 @@ const PEN_ICONS: Record<PenKind, LucideIcon> = { pen: PenLine, marker: Highlight
 /** Lucide icons: their size comes from the pill's tokens (app.css `.tool > .lucide`, `.option > .lucide`). */
 const ICON = { strokeWidth: 1.75 } as const
 
-/** The More menu and the zoom menu open this far above their pill (CSS px), as the style pill sits above the tool pill. */
+/** The More menu opens this far above its pill (CSS px), as the style pill sits above the tool pill. */
 const MENU_GAP = 8
 
 type Rect = { left: number; top: number; right: number; bottom: number }
@@ -124,7 +123,7 @@ export function BoardControls(props: BoardControlsProps) {
         <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
           <Minus {...ICON} />
         </button>
-        <ZoomMenu zoom={zoom} onZoom={props.onZoom} commandContext={props.commandContext} />
+        <ZoomLabel zoom={zoom} onZoom={props.onZoom} />
         <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
           <Plus {...ICON} />
         </button>
@@ -317,37 +316,12 @@ function SelectionCommands(props: { divider: boolean; editable: boolean; compact
   )
 }
 
-/** The zoom pill's %: a click opens the zoom menu above the pill (Zoom to selection only with a selection). */
-function ZoomMenu(props: { zoom: number; onZoom(command: ZoomCommand): void; commandContext(): CommandContext | null }) {
-  const { onZoom, commandContext } = props
-  const labelRef = useRef<HTMLButtonElement>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; selection: boolean } | null>(null)
-  const close = useCallback(() => setMenu(null), [])
-  const toggleMenu = (): void => {
-    const button = labelRef.current
-    if (menu || !button) {
-      setMenu(null)
-      return
-    }
-    // Above the pill, with its left edge at the pill's.
-    const pill = (button.closest('.pill-bar') ?? button).getBoundingClientRect()
-    setMenu({ x: pill.left, y: pill.top - MENU_GAP, selection: commandContext()?.selection ?? false })
-  }
+/** The zoom pill's %: a click zooms to 100% (⇧1 and ⇧2 fit the board and the selection: the keys panel lists them). */
+function ZoomLabel(props: { zoom: number; onZoom(command: ZoomCommand): void }) {
+  const reset = ZOOM_COMMANDS.find((row) => row.id === 'reset') as (typeof ZOOM_COMMANDS)[number]
   return (
-    <>
-      <button ref={labelRef} className="zoom-label" {...tip('Zoom')} aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
-        {Math.round(props.zoom * 100)}%
-      </button>
-      {menu && (
-        <Menu
-          x={menu.x}
-          y={menu.y}
-          above
-          entries={ZOOM_COMMANDS.filter((row) => row.id !== 'selection' || menu.selection).map((row) => ({ label: row.label, hint: row.keys, onSelect: () => onZoom(row.id) }))}
-          onClose={close}
-          toggle={labelRef.current}
-        />
-      )}
-    </>
+    <button className="zoom-label" {...tip(reset.label, reset.keys)} aria-label={reset.label} onClick={() => props.onZoom('reset')}>
+      {Math.round(props.zoom * 100)}%
+    </button>
   )
 }
