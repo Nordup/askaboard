@@ -2,8 +2,8 @@
 .shot {
   display: flex;
   justify-content: center;
-  padding: 0 16px 96px;
-  background: var(--bg-app);
+  /* A gap under the hero, so its lowest windows end clearly above the screenshot; in design units, so the hero's scale stays. */
+  padding: calc(56 * var(--u)) 16px 96px;
 }
 
 .image {

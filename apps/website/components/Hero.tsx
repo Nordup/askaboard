@@ -1,6 +1,5 @@
 import { formatStars, getStars } from '@/lib/github'
 import { REPO_URL } from '@/lib/site'
-import { HeroBoard } from './HeroBoard'
 import styles from './Hero.module.css'
 
 /** The Apple logo of the download button. */
@@ -12,7 +11,7 @@ function AppleLogo() {
   )
 }
 
-/** The hero (decision D11): the top bar as on t3.codes, the headline, and the board round it. */
+/** The hero (decision D11): the top bar as on t3.codes and the headline. The board round it is Board.tsx, over the whole page. */
 export async function Hero() {
   const stars = await getStars()
   return (
@@ -54,7 +53,6 @@ export async function Hero() {
         <p className={styles.note}>Open source. Bring your own AI.</p>
       </div>
 
-      <HeroBoard />
     </section>
   )
 }

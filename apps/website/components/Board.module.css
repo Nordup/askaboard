@@ -1,0 +1,216 @@
+/*
+ * The board over the whole page (decision D11, "The whole page is one board"): the windows,
+ * the loose ink and the visitor's marks in one layer above the page content, the draft canvas,
+ * and the app's tool pill. Sizes are design units (--u, app/page.module.css).
+ */
+/* ---------- The board layer: every board item, one z-order (engine.ts) ---------- */
+
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.sprite {
+  --x: var(--dx);
+  --y: var(--dy);
+  --r: var(--dr);
+  --s: var(--ds);
+  /* One design unit of this sprite, in CSS px. */
+  --k: calc(var(--s) * var(--u));
+  position: absolute;
+  left: calc(var(--ox) + var(--x) * var(--u) - var(--w) * var(--k) / 2);
+  top: calc(var(--oy) + var(--y) * var(--u) - var(--h) * var(--k) / 2);
+  width: calc(var(--w) * var(--k));
+  height: calc(var(--h) * var(--k));
+  rotate: calc(var(--r) * 1deg);
+}
+
+.body {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* A window: the app's window chrome (the dark title strip, the macOS window buttons). */
+.window {
+  border: 1px solid var(--border-strong);
+  border-radius: calc(11 * var(--k));
+  background: var(--bg-canvas);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.window .body {
+  height: calc(100% - 28 * var(--k));
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--k));
+  height: calc(28 * var(--k));
+  padding-left: calc(16 * var(--k));
+  background: var(--bg-elevated-2);
+}
+
+.titlebar i {
+  width: calc(12 * var(--k));
+  height: calc(12 * var(--k));
+  border-radius: 50%;
+  background: var(--window-close);
+}
+
+.titlebar i:nth-child(2) {
+  background: var(--window-minimize);
+}
+
+.titlebar i:nth-child(3) {
+  background: var(--window-zoom);
+}
+
+/* The draft: what is being drawn now (a shape, a pen stroke, a text, the eraser ring), over the viewport. */
+.draft {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+/* The text tool's field: it takes the keys; the text itself is drawn on the draft canvas. */
+.field {
+  position: absolute;
+  z-index: 4;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+
+/* ---------- The tool pill: the app's pill (app.css .pill-bar, .tool) at 1.42 × ---------- */
+
+.pill {
+  --p: calc(1.42 * var(--u));
+  position: absolute;
+  left: 50%;
+  top: calc(var(--oy) + (346 - 20 * 1.42) * var(--u));
+  z-index: 6;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: calc(2 * var(--p));
+  height: calc(40 * var(--p));
+  padding: 0 calc(4 * var(--p));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+}
+
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: calc(16 * var(--p));
+  margin: 0 calc(5 * var(--p));
+  background: var(--border-subtle);
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: calc(30 * var(--p));
+  height: calc(30 * var(--p));
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.tool svg {
+  width: calc(17 * var(--p));
+  height: calc(17 * var(--p));
+}
+
+.tool:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tool[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quiet {
+  color: var(--text-tertiary);
+}
+
+/* The pill's spot under the headline: when it leaves the viewport, the pill docks (Board.tsx). */
+.spot {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--oy) + (346 - 20 * 1.42) * var(--u));
+  width: 1px;
+  height: calc(40 * 1.42 * var(--u));
+  pointer-events: none;
+}
+
+/* Docked: the app's own pill size, at the bottom centre of the viewport. */
+.docked {
+  --p: 1px;
+  position: fixed;
+  top: auto;
+  bottom: 16px;
+  background: var(--bg-glass);
+  box-shadow: var(--shadow-float);
+  animation: dock 220ms ease;
+}
+
+@keyframes dock {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* ---------- Phones and narrow windows ---------- */
+@media (max-width: 719px) {
+  .sprite {
+    --x: var(--px);
+    --y: var(--py);
+    --r: var(--pr);
+    --s: var(--ps);
+  }
+
+  .sprite[data-phone='off'] {
+    display: none;
+  }
+
+  .pill,
+  .spot {
+    --p: calc(0.86 * var(--u));
+    top: calc(578 * var(--u));
+  }
+
+  .spot {
+    height: calc(40 * 0.86 * var(--u));
+  }
+
+  .docked {
+    --p: 0.86px;
+    top: auto;
+  }
+}

@@ -1,10 +1,10 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { mountHero, type Engine, type HeroState } from './hero/engine'
+import { mountBoard, type Engine, type HeroState } from './hero/engine'
 import { SPRITES } from './hero/layout'
 import { Icon, LOCK_KEY, TOOLS, toolKeys } from './hero/tools'
-import styles from './Hero.module.css'
+import styles from './Board.module.css'
 
 /** The place of a sprite as CSS variables: the desktop place, and the phone place (Hero.module.css picks one). */
 function placeVars(def: (typeof SPRITES)[number]): CSSProperties {
@@ -25,23 +25,36 @@ function placeVars(def: (typeof SPRITES)[number]): CSSProperties {
 }
 
 /**
- * The hero board (decision D11): the windows and the loose ink round the headline, the visitor's
- * marks, and the app's tool pill. The section around it (Hero.tsx) takes the presses.
+ * The board over the whole page (decision D11, "The whole page is one board"): the windows and
+ * the loose ink round the headline, the visitor's marks, the draft canvas and the app's tool
+ * pill. The page (app/page.tsx, data-board) takes the presses.
  */
-export function HeroBoard() {
+export function Board() {
   const layerRef = useRef<HTMLDivElement>(null)
-  const marksRef = useRef<HTMLCanvasElement>(null)
+  const draftRef = useRef<HTMLCanvasElement>(null)
   const fieldRef = useRef<HTMLInputElement>(null)
+  const spotRef = useRef<HTMLDivElement>(null)
   const engine = useRef<Engine | null>(null)
   const [state, setState] = useState<HeroState>({ tool: 'select', lock: false })
+  const [docked, setDocked] = useState(false)
+
+  // The pill sits under the headline; once that spot leaves the viewport it docks at the bottom.
+  useEffect(() => {
+    const spot = spotRef.current
+    if (!spot) return
+    const observer = new IntersectionObserver(([entry]) => setDocked(entry.intersectionRatio < 1), { threshold: [0, 1] })
+    observer.observe(spot)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const layer = layerRef.current
-    const marks = marksRef.current
+    const draft = draftRef.current
     const field = fieldRef.current
-    const host = layer?.closest<HTMLElement>('[data-hero]')
-    if (!layer || !marks || !field || !host) return
-    const e = mountHero({ host, layer, marks, field, sprites: SPRITES, onChange: setState })
+    const host = layer?.closest<HTMLElement>('[data-board]')
+    const hero = host?.querySelector<HTMLElement>('[data-hero]')
+    if (!layer || !draft || !field || !host || !hero) return
+    const e = mountBoard({ host, hero, layer, draft, field, sprites: SPRITES, onChange: setState })
     engine.current = e
     return () => {
       e.stop()
@@ -51,7 +64,7 @@ export function HeroBoard() {
 
   return (
     <>
-      <div className={styles.layer} ref={layerRef} aria-hidden="true">
+      <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite} aria-hidden="true">
         {SPRITES.map((def) =>
           def.window ? (
             <div key={def.id} className={`${styles.sprite} ${styles.window}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
@@ -69,10 +82,11 @@ export function HeroBoard() {
           )
         )}
       </div>
-      <canvas className={styles.marks} ref={marksRef} aria-hidden="true" />
+      <canvas className={styles.draft} ref={draftRef} aria-hidden="true" />
+      <div className={styles.spot} ref={spotRef} aria-hidden="true" />
       <input className={styles.field} ref={fieldRef} data-ui="" aria-label="Text" autoComplete="off" spellCheck={false} />
 
-      <div className={styles.pill} role="toolbar" aria-label="Tools" data-ui="">
+      <div className={docked ? `${styles.pill} ${styles.docked}` : styles.pill} role="toolbar" aria-label="Tools" data-ui="">
         <button
           className={state.lock ? styles.tool : `${styles.tool} ${styles.quiet}`}
           title={`Keep tool ${LOCK_KEY}`}

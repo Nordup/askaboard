@@ -12,6 +12,8 @@
   --grid-size: 24px;
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 80px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.16);
   --eraser-ring: rgba(255, 255, 255, 0.6);
+  --bg-glass: rgba(28, 28, 31, 0.93);
+  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 40px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.14);
 
   --card: #1f2230;
   --card-2: #262a3a;
@@ -31,8 +33,8 @@
   /* The GitHub star (the app's --status-warn). */
   --star: #fbbf24;
   --border: #2e3448;
-  /* The visitor's pen (the app's white ink). */
-  --ink: #ececef;
+  /* The visitor's ink (pen, shapes, text): the board accent blue, on trial; the app's white ink is #ececef. */
+  --ink: #6e8bff;
   /* The macOS window buttons on the hero's windows. */
   --window-close: #ff5f57;
   --window-minimize: #febc2e;

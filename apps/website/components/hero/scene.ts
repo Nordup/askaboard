@@ -141,8 +141,13 @@ export function wavesWindow(): Draw {
   }
 }
 
-/** A neuron with its parts; a signal runs from the cell body down the axon. Body 215 × 489. */
+/** A neuron with its parts; a signal runs from the cell body down the axon. Body 270 × 477: the drawing sits 28 in from the left. */
 export function neuronWindow(): Draw {
+  const draw = neuronDrawing()
+  return (g, t, still) => g.at(28, 4, 0, 1, () => draw(g, t, still))
+}
+
+function neuronDrawing(): Draw {
   const soma: Point = [62, 172]
   const dendrites: Point[][] = [
     [soma, [46, 142], [32, 114], [22, 92], [10, 70]],
@@ -438,8 +443,14 @@ export function squiggleInk(): Draw {
   }
 }
 
-/** "move things around" with a hand cursor that taps. Box 175 × 85. */
+/** "move things around" with a hand cursor that taps, large enough to read as an invitation. Box 175 × 85 at MOVE_SCALE. */
+export const MOVE_SCALE = 1.45
 export function moveInk(): Draw {
+  const draw = moveDrawing()
+  return (g, t, still) => g.at(0, 0, 0, MOVE_SCALE, () => draw(g, t, still))
+}
+
+function moveDrawing(): Draw {
   const hand = [
     'M22 14a8 8 0 0 1-8 8',
     'M18 11v-1a2 2 0 0 0-2-2a2 2 0 0 0-2 2',
@@ -492,5 +503,35 @@ export function moveInk(): Draw {
         }
       })
     })
+  }
+}
+
+/** The hint at the tool pill: "draw, write, make shapes" and an arrow to the pill's right end. Box 225 × 100. */
+export function pillHint(): Draw {
+  const arrow: Point[] = [
+    [62, 60],
+    [44, 58],
+    [28, 50],
+    [16, 38],
+    [9, 26]
+  ]
+  let inks: [Ink, number][] | null = null
+  return (g, t, still) => {
+    if (t < 0) return
+    inks ??= [
+      [label('draw, write,', 22, 140, 42, 'text', { center: true }), 0],
+      [label('make shapes', 22, 146, 72, 'text', { center: true }), 0.9]
+    ]
+    drawOn(g, t, still, inks)
+    // The arrow draws on, then its tip nods toward the pill now and then.
+    const nod = still ? 0 : Math.max(0, Math.sin((cyc(t - 2.4, 4.2) / 4.2) * TAU * 2)) * 3 * (cyc(t - 2.4, 4.2) < 1.05 ? 1 : 0)
+    const line = arrow.map(([x, y], i) => [x - (nod * i) / arrow.length, y - (nod * i) / arrow.length] as Point)
+    const reveal = part(t, still, 1.7, 0.5)
+    inkLine(g, line, 'yellow', 2.6, 91, reveal)
+    if (reveal < 1) return
+    const [tx, ty] = line[line.length - 1]
+    const [px, py] = line[line.length - 2]
+    const a = Math.atan2(ty - py, tx - px)
+    for (const side of [0.5, -0.5]) inkLine(g, [[tx - 9 * Math.cos(a + side), ty - 9 * Math.sin(a + side)], [tx, ty]], 'yellow', 2.6, side > 0 ? 92 : 93)
   }
 }
