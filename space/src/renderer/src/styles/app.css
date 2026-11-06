@@ -892,6 +892,7 @@ button:focus-visible {
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-float);
   pointer-events: auto;
 }
 
@@ -1364,10 +1365,12 @@ button:focus-visible {
  */
 .menu {
   --menu-pad: 6px;
-  --menu-radius: 10px;
+  --menu-radius: var(--popup-radius);
   --menu-item-pad: 4px 8px;
   --menu-row-pad: 4px 8px;
-  --menu-item-radius: 6px;
+  /* Concentric with the menu's corner (U16): the corner's radius less the padding between them. */
+  --menu-item-radius: calc(var(--menu-radius) - var(--menu-pad));
+  --scroll-pad-end: var(--menu-pad); /* when the menu is a .scroll-area */
   --menu-font: 13px;
   --menu-meta-font: 12px;
   --menu-heading-font: 11px;
@@ -1375,7 +1378,9 @@ button:focus-visible {
   position: fixed;
   z-index: 100;
   padding: var(--menu-pad);
-  background: var(--bg-elevated);
+  /* A popup lets a little of the board through (U16); a modal panel stays opaque (.menu--panel). */
+  background: var(--bg-glass);
+  backdrop-filter: var(--glass-filter);
   border: 1px solid var(--border-subtle);
   border-radius: var(--menu-radius);
   box-shadow: var(--shadow-float);
@@ -1509,6 +1514,8 @@ button:focus-visible {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+  background: var(--bg-elevated);
+  backdrop-filter: none;
   border-color: var(--border-strong);
   box-shadow: var(--shadow-card);
 }
@@ -1728,6 +1735,7 @@ button:focus-visible {
 }
 
 .menu__scroll {
+  --scroll-pad-end: var(--menu-pad); /* a .scroll-area */
   min-height: 0;
   padding: var(--menu-pad);
   overflow-y: auto;
@@ -1889,7 +1897,7 @@ button:focus-visible {
   overflow-y: auto;
   overscroll-behavior: contain;
   border-color: var(--border-strong);
-  background: var(--bg-elevated-2);
+  background: var(--bg-glass-2);
 }
 
 /* The list holds the focus for its keys; the --bg-active row shows where they are. */
@@ -1903,7 +1911,7 @@ button:focus-visible {
   gap: var(--space-2);
   height: var(--select-option-height);
   padding: var(--select-option-pad);
-  border-radius: var(--radius-md);
+  border-radius: var(--menu-item-radius); /* concentric with the list (U16) */;
   color: var(--text-primary);
   font-size: var(--text-base);
   white-space: nowrap;
@@ -1953,7 +1961,7 @@ button:focus-visible {
   width: 90px;
   height: 4px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--bg-active);
 }
 
@@ -1969,7 +1977,7 @@ button:focus-visible {
   height: 14px;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   background: var(--bg-active);
   cursor: pointer;
 }
@@ -2105,6 +2113,7 @@ button:focus-visible {
 
 .menu:not(.menu--panel) {
   --control-height: var(--control-height-menu);
+  --control-radius: var(--menu-item-radius); /* as the menu's rows */
 }
 
 .btn-sm--quiet {
@@ -2361,7 +2370,7 @@ button:focus-visible {
 
 .markdown code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   font-family: var(--font-mono);
   font-size: 0.92em;
@@ -2522,11 +2531,20 @@ button:focus-visible {
  * buttons. The thumb is invisible at rest; it shows while the area is hovered or scrolls (lib/scrollbars.ts sets
  * data-scrolling for a moment after each scroll), then hides again. The board canvas does not scroll natively.
  *
- * .scroll-area is the one shared part for a scroll area: its gutter is always there (scrollbar-gutter: stable) and
- * comes out of its right padding, so its content never moves when it starts to overflow and lines up with the rows
- * that do not scroll. Its right padding is --scroll-pad-end (else --menu-pad inside a menu); it sets no other padding.
+ * .scroll-area is the one shared part for a scroll area (U16). It reserves no gutter: while it does not overflow, its
+ * right padding is the whole --scroll-pad-end, so a row's fill ends as far from the right edge as from the left. While
+ * it overflows (data-overflow, set by lib/scrollbars.ts for every .scroll-area), the scrollbar takes its width out of
+ * that padding, so the content's right edge stays put. --scroll-pad-end does not inherit: each area sets its own (a
+ * menu sets its --menu-pad), so a dropdown list inside a Settings pane does not take the pane's padding. Every
+ * --scroll-pad-end is at least --scrollbar-size, so the thumb sits inside the padding. It sets no other padding.
  * This rule sits at the end of the file so that it follows every area's own padding.
  */
+@property --scroll-pad-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* The thumb's colour now. It inherits, because a scrollbar part takes its values from its element by inheritance;
    every element sets its own, so a hovered ancestor does not show the thumbs of the areas inside it. */
 @property --scrollbar-thumb-shown {
@@ -2570,11 +2588,14 @@ button:focus-visible {
 
 .scroll-area {
   overflow-y: auto;
-  scrollbar-gutter: stable;
   /* The thumb keeps clear of a rounded edge (a menu's corners, U15): --scroll-track-inset at its top and bottom. */
   --scroll-track-inset: var(--menu-radius, 0px);
-  padding-right: calc(var(--scroll-pad-end, var(--menu-pad, 0px)) - var(--scrollbar-size));
+  padding-right: var(--scroll-pad-end);
   transition: --scrollbar-thumb-shown var(--fade);
+}
+
+.scroll-area[data-overflow] {
+  padding-right: calc(var(--scroll-pad-end) - var(--scrollbar-size));
 }
 
 .scroll-area::-webkit-scrollbar-track {

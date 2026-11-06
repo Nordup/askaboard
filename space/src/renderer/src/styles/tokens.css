@@ -112,18 +112,24 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* Radii */
-  --radius-sm: 5px;
-  --radius-md: 7px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  /* Radii (U16: one notch rounder). An inner fill's radius is its outer radius less the padding between them. */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
+  --popup-radius: 14px; /* a popup surface: a menu, a popover, the dropdown list (its rows: this less its 6 px padding) */
 
-  /* Shadows */
-  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.45),
-    0 2px 6px rgba(0, 0, 0, 0.35);
-  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 64px rgba(0, 0, 0, 0.5),
-    0 4px 12px rgba(0, 0, 0, 0.3);
+  /* Shadows (U16): soft and wide, low contrast; a light inner line at the top, a wide blur, a small close shadow */
+  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 12px 40px rgba(0, 0, 0, 0.24),
+    0 2px 8px rgba(0, 0, 0, 0.14);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 24px 80px rgba(0, 0, 0, 0.3),
+    0 4px 16px rgba(0, 0, 0, 0.16);
+
+  /* Glass (U16): a popup surface lets a little of the board through. Menus, popovers, the dropdown list, tooltips; never a modal panel. */
+  --bg-glass: rgba(28, 28, 31, 0.93); /* --bg-elevated */
+  --bg-glass-2: rgba(35, 35, 39, 0.93); /* --bg-elevated-2 */
+  --glass-filter: blur(24px) saturate(140%);
 
   /* Layout */
   --sidebar-width: 248px;
@@ -225,7 +231,7 @@
   --bg-field-hover: rgba(255, 255, 255, 0.09);
   --select-chevron-pad: 10px; /* the trigger's chevron side is a little tighter than --control-pad-x */
   --select-list-min-width: 200px; /* at least the trigger's width too */
-  --select-list-radius: 12px; /* no max height: the list shows every row, up to the room in the window (Select.tsx) */
+  --select-list-radius: var(--popup-radius); /* no max height: the list shows every row, up to the room in the window (Select.tsx) */
   --select-list-pad: 6px;
   --select-option-height: 28px;
   --select-option-pad: 0 10px;
@@ -234,7 +240,7 @@
   --control-height: 30px;
   --control-height-menu: 24px; /* the same in a popup menu's compact rows (the agent popover, the setup flyout): the rows' 24 px */
   --control-pad-x: 12px;
-  --control-radius: 8px;
+  --control-radius: 10px;
 
   /* Settings spacing (U15): the rules every Settings section uses, named for their role, on the 4 px scale */
   --settings-pane-pad-y: var(--space-6); /* the pane's top and bottom, and the section list's */

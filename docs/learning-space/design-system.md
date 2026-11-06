@@ -44,7 +44,10 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Surfaces: `--bg-app`, `--bg-sidebar`, `--bg-canvas`, `--bg-elevated`,
   `--bg-elevated-2`, `--bg-hover`, `--bg-active`; `--bg-field` and
   `--bg-field-hover` (white at 0.06 and 0.09: a control's soft fill, the
-  select's trigger). Every surface is opaque; no glass or blur (U14)
+  select's trigger). Glass (U16): `--bg-glass`, `--bg-glass-2` (the two
+  elevated surfaces at 0.93) with `--glass-filter` (blur 24 px, saturate
+  140%) on popups only (menus, popovers, the dropdown list); a modal panel,
+  a tooltip and every other surface are opaque
 - Borders and canvas: `--border-subtle`, `--border-strong`, `--canvas-dot`,
   `--canvas-dot-pitch`, `--canvas-dot-solid`, `--preview-checker`
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`,
@@ -77,9 +80,15 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--leading-current` (the reading view's lines)
 - Space: `--space-half` (2px, stacked lines of one text block), `--space-1` …
   `--space-6`, `--space-8`
-- Radius: `--radius-sm`, `--radius-md`, `--radius-lg`, `--radius-xl`,
-  `--radius-pill`
-- Shadow: `--shadow-float`, `--shadow-card`
+- Radius (U16, one notch rounder): `--radius-sm` 6, `--radius-md` 9,
+  `--radius-lg` 12, `--radius-xl` 16, `--radius-pill`; `--popup-radius` 14
+  (a menu, a popover, the dropdown list). An inner fill's radius is its
+  outer radius less the padding between them (a menu row: 14 − 6 = 8)
+- Shadow (U16, soft and wide, low contrast; ChatGPT app as the reference):
+  `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
+  black 0.14) for popups, tooltips, the script panel, toasts and the board
+  pills; `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
+  0.16) for the modal panels and the welcome card
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   the title row (see "Title row"): `--window-buttons-end`,
   `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
@@ -204,7 +213,7 @@ The app's own dropdown (decision U14, approved mockup, 2026-11-06):
 - Trigger `.menu__select`: the small control (U15), one CSS rule shared
   with `.btn-sm` so the two cannot drift: `--control-height` (30 px),
   padding 0 `--control-pad-x` (12 px; the chevron side
-  `--select-chevron-pad`, 10 px), `--control-radius` (8 px), `--bg-field`
+  `--select-chevron-pad`, 10 px), `--control-radius` (10 px; in a popup menu its rows' `--menu-item-radius`), `--bg-field`
   with no border (hover, and open for the trigger: `--bg-field-hover`), 13 px
   `--text-primary`; disabled `--disabled-opacity`; the buttons'
   keyboard-only focus ring. The trigger adds a 14 px `ChevronDown` in
@@ -214,9 +223,9 @@ The app's own dropdown (decision U14, approved mockup, 2026-11-06):
 - List `.menu.menu--select`: fixed under the trigger, right-aligned to it,
   4 px gap; above it when there is less room below; at least
   `--select-list-min-width` (200 px) and the trigger's width;
-  `--bg-elevated-2`, 1 px `--border-strong`, `--select-list-radius`
-  (12 px), `--select-list-pad` (6 px); rows `.menu__option`
-  `--select-option-height` (28 px), `--radius-md`, `--select-option-pad`.
+  `--bg-glass-2` with `--glass-filter`, 1 px `--border-strong`, `--select-list-radius`
+  (`--popup-radius`, 14 px), `--select-list-pad` (6 px); rows `.menu__option`
+  `--select-option-height` (28 px), `--menu-item-radius` (8 px, concentric), `--select-option-pad`.
   The pointer and the keys move the one `--bg-active` fill
   (`data-active`); the chosen row has a 14 px `Check` at the right. The
   list has no max height of its own (U15): it shows every row up to the
@@ -248,10 +257,15 @@ buttons, a transparent corner.
   element `data-scrolling` until 800 ms after its last scroll.
 - `.scroll-area` is the one shared part for a scroll area (the sidebar
   list, the Settings pane and section list, the search list, the select's
-  list, the pill popovers, the preview body). Its gutter is always there
-  (`scrollbar-gutter: stable`) and comes out of its right padding
-  (`--scroll-pad-end`, else `--menu-pad`), so its content never moves when
-  it starts to overflow, and lines up with the rows that do not scroll.
+  list, the pill popovers, the preview body). It reserves no gutter (U16):
+  while it does not overflow, its right padding is its whole
+  `--scroll-pad-end`, so a row's fill ends as far from the right edge as
+  from the left. `lib/scrollbars.ts` marks every `.scroll-area`
+  `data-overflow` while its content is taller than it (one resize and
+  mutation observer for the page); the scrollbar then takes its width out of
+  that padding, so the content never moves. `--scroll-pad-end` does not
+  inherit: each area sets its own (a `.menu` its `--menu-pad`), and it is
+  never less than `--scrollbar-size`.
   Its thumb keeps `--scroll-track-inset` (a menu's `--menu-radius`) clear
   of the top and bottom, so it never runs over a rounded edge (U15).
 - Never style a scrollbar in one component.
@@ -280,7 +294,7 @@ The three quiet pills over the bottom of the canvas (decisions U10, U13;
 approved mockup "bottom_controls_quiet_small_v8"; `BoardControls.tsx`, the
 comment block above `.board-controls` in `app.css`). Each is a `.pill-bar`
 (`--bg-elevated`, 1 px `--border-subtle`, `--radius-pill`, padding 0 4 px,
-gap 2 px, no shadow) with its own height. Parts: `.tool` (round button,
+gap 2 px, `--shadow-float`, U16) with its own height. Parts: `.tool` (round button,
 lucide icon at stroke 1.75; pressed: `--accent-soft` and `--accent`;
 `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider` (1 × 16 px,
 margin 0 5 px), `.swatch` (24 px) with `.swatch__dot` (13 px), `.option`
