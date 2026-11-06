@@ -19,10 +19,12 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    mockup, spacing included.
 5. **The canvas belongs to the learner.** UI does not cover the board: menus
    open beside the sidebar or under the top bar, never as cards on the
-   canvas. **One exception** (the founder's request, 2026-10-25): the script
-   panel floats over the board, because the learner reads the scene's lines
-   next to the drawing. The learner drags it where it is in the way least,
-   and hides it into the scene pill.
+   canvas. **Two exceptions.** The script panel floats over the board (the
+   founder's request, 2026-10-25), because the learner reads the scene's
+   lines next to the drawing. The learner drags it where it is in the way
+   least, and hides it into the scene pill. The search panel (⌘K, decision
+   U7, 2026-11-06) covers the window with a backdrop, because it is short
+   and the learner opens it.
 
 ## Where the design lives
 
@@ -87,6 +89,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--reading-view-height`, `--reading-view-gap`, `--reading-para-gap`,
   `--reading-said`, `--reading-next`, `--reading-light`,
   `--reading-light-ramp`
+- Search panel: `--backdrop` (behind a modal panel), `--search-panel-width`,
+  `--search-panel-top`, `--search-panel-margin`, `--search-list-reserve`;
+  a modal panel's `--panel-field-height` and `--panel-row-height`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
@@ -98,7 +103,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 Every menu, popover and flyout uses it: the sidebar folder and board menus
 (`Menu.tsx`), the agent popover (`AgentPill.tsx`), the scene pill's menu
 (`ScenePill.tsx`), the performance pill's menu (`PerfPill.tsx`), the setup
-flyout (`SetupMenu.tsx`). The reference comment block sits above `.menu` in
+flyout (`SetupMenu.tsx`), the search panel (`SearchPanel.tsx`). The reference comment block sits above `.menu` in
 `app.css`.
 
 **Spacing and type** come only from custom properties on `.menu`:
@@ -115,6 +120,9 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu__heading` | Small uppercase section label |
 | `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap. `Menu.tsx` entries `{ title }` and `{ lede }` |
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover) |
+| `.menu__sub` | Dim text right after a `.menu__label` (a board's folder); a `.menu__hint` stays at the right |
+| `.menu__match` | The part of a label that matches the typed text, in `--accent` |
+| `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that scrolls. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
@@ -303,6 +311,43 @@ item pill).
   - Rows are `.menu__row`, `.menu__name` and `.menu__meta--mono`.
   - The pill reads `perf-meter.ts`, and the meter runs only while the pill
     shows.
+
+- **Search panel** (`SearchPanel.tsx`; left-panel plan section 6, decision
+  U7, mockup "learning_space_search_panel_mockup_v1", 2026-11-06). Opens
+  from the sidebar's "Search boards" row and File > Search Boards… (⌘K),
+  also with the sidebar hidden; a second ⌘K closes it. No folder: the menu
+  item is disabled and ⌘K does nothing (the welcome card has the open
+  action).
+  - A `.backdrop` (`--backdrop`, rgba(0, 0, 0, 0.4)) over the whole window;
+    it is no drag region, and the native window buttons stay above it. The
+    panel `.menu.menu--panel.search-panel`: 520 px wide (at most the window
+    width − 32 px), 64 px from the window top, centred, `--bg-elevated`,
+    1 px `--border-strong`, `--radius-xl`, `--shadow-card`.
+  - Field: 46 px, lucide `Search` 17 px `--text-tertiary`, 15 px text,
+    placeholder "Search boards", a hairline under it. It has the focus while
+    the panel is open.
+  - Empty field: `.menu__heading` "Actions" with New board (⌘N) and Open
+    Learning Folder… (⌘O, the folder menu's label); "Recent boards" with the
+    first 8 boards by edit time.
+  - Typed text (trimmed): only boards whose name contains it
+    (case-insensitive), names that start with it first, then by edit time;
+    the match in `--accent` (`.menu__match`); up to 50 rows. The list
+    scrolls inside the panel (at most the window height − 160 px). No match:
+    a `.menu__line` `No boards match “…”` and the row `New board “…”` (the
+    name main will give the file), which makes the board and opens it, with
+    no rename step.
+  - Rows: `.menu__item`, 32 px, `--radius-md`; lucide `LayoutDashboard`
+    16 px for a board, its folder as `.menu__sub` for a board outside
+    `boards/`, the short time (or the shortcut) as `.menu__hint`. The
+    selected row is `.menu__item--current`; the first row starts selected
+    and is selected again when the text changes.
+  - Keys: ↑ / ↓ move the selection (no wrap; it scrolls into view), Enter
+    runs the row, Escape closes; an IME composition keeps its keys. The
+    pointer moves the selection; a click runs the row; a click on the
+    backdrop closes. While it is open no board, tool or sidebar key acts,
+    and the zoom items do not zoom the board; ⌘N and ⌘O close it and run.
+    Opening it closes any open menu. A close gives the focus back to the
+    element that had it, then the row's action runs.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).

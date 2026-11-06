@@ -525,6 +525,27 @@ button:focus-visible {
   position: relative;
 }
 
+/* A modal panel's backdrop: over the whole window, the native window buttons stay above it. It is no drag region, so a press on it closes the panel and never moves the window. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--backdrop);
+  -webkit-app-region: no-drag;
+}
+
+/* The search panel (⌘K): layout only (position, width, the list's max-height); the content is shared .menu parts. */
+.menu.search-panel {
+  top: var(--search-panel-top);
+  left: 50%;
+  width: min(var(--search-panel-width), calc(100vw - 2 * var(--search-panel-margin)));
+  transform: translateX(-50%);
+}
+
+.menu.search-panel .menu__scroll {
+  max-height: calc(100vh - var(--search-list-reserve));
+}
+
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
 .menu.perf-pop {
   position: absolute;
@@ -1161,6 +1182,12 @@ button:focus-visible {
  *   .menu__title/__lede    a title and one muted line (or two: a second .menu__lede follows closely); long words wrap
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right)
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
+ *   .menu__sub             dim text right after a .menu__label (a board's folder); the .menu__hint goes to the right
+ *   .menu__match           the part of a label that matches the typed text (--accent)
+ *   .menu--panel           a modal panel over a .backdrop (the search panel): --radius-xl, --border-strong,
+ *                          --shadow-card, rows of --panel-row-height; the selection is the one fill (hover moves it)
+ *   .menu__field/__input   the panel's search field at the top: a 17 px icon, 15 px text, a hairline under it
+ *   .menu__scroll          the panel's rows under the field; it scrolls when the instance sets a max-height
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
@@ -1273,8 +1300,89 @@ button:focus-visible {
 }
 
 .menu__hint {
+  flex-shrink: 0;
   color: var(--text-tertiary);
   font-size: var(--menu-meta-font);
+}
+
+/* A label with dim text after it: both shrink with an ellipsis, the text takes the free space, so a hint stays at the right. */
+.menu__label:has(+ .menu__sub) {
+  flex: 0 1 auto;
+}
+
+.menu__sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+}
+
+.menu__match {
+  background: none;
+  color: var(--accent);
+}
+
+/* A modal panel (the search panel): over a .backdrop; the instance sets its position, width and the list's max-height. */
+.menu--panel {
+  --menu-radius: var(--radius-xl);
+  --menu-item-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.menu--panel .menu__item {
+  height: var(--panel-row-height);
+  padding-block: 0;
+}
+
+/* The pointer moves the selection, so a hovered row has no fill of its own: the selected row is the one fill. */
+.menu--panel .menu__item:not(.menu__item--current):hover:not(:disabled) {
+  background: none;
+}
+
+/* The field's icon lines up with the rows' icons (the list padding + the row padding). */
+.menu__field {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--panel-field-height);
+  padding: 0 calc(var(--menu-pad) + var(--space-2));
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+}
+
+.menu__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-lg);
+  user-select: text;
+}
+
+.menu__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.menu__scroll {
+  min-height: 0;
+  padding: var(--menu-pad);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .menu__list {

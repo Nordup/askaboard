@@ -13,3 +13,6 @@ export const revealLabel = isMac ? 'Reveal in Finder' : platform === 'win32' ? '
 
 /** Where the boards are kept, under the folder name in the sidebar footer. */
 export const savedOnLabel = isMac ? 'Saved on this Mac' : 'Saved on this computer'
+
+/** The folder menu's open item: the sidebar footer's folder menu and the search panel's action. */
+export const openFolderLabel = 'Open Learning Folder…'

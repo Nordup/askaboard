@@ -10,7 +10,7 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
+import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -330,6 +330,9 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.devSidebarMenu, (event, click: unknown) => {
     event.returnValue = remoteDebugPort !== null ? devSidebarMenu(click === true) : null
+  })
+  ipcMain.on(IPC.devClickMenu, (event, id: unknown) => {
+    event.returnValue = remoteDebugPort !== null && typeof id === 'string' ? devClickMenu(id) : false
   })
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -664,6 +667,7 @@ void app.whenReady().then(async () => {
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
     },
     newBoard: () => sendMenuCommand('new-board'),
+    searchBoards: () => sendMenuCommand('search-boards'),
     setupFolder: () => sendMenuCommand('setup-folder'),
     zoom: (step) => sendMenuCommand(step === 'in' ? 'zoom-in' : step === 'out' ? 'zoom-out' : 'zoom-reset'),
     selectAll: () => sendMenuCommand('select-all'),

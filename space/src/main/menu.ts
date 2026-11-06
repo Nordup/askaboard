@@ -4,6 +4,8 @@ import { PACES, VOICES, type PaceName } from './voice'
 export interface MenuActions {
   openFolder(): void
   newBoard(): void
+  /** File > Search Boards… (⌘K): the renderer opens the search panel, or closes it when it is open. */
+  searchBoards(): void
   /** File > Set Up Folder for Learning…: the renderer shows the setup preview. */
   setupFolder(): void
   zoom(step: 'in' | 'out' | 'reset'): void
@@ -30,6 +32,7 @@ export interface MenuActions {
  * the canvas handles ⌘Z / ⌘C / ⌘V itself when no input has focus.
  */
 const SETUP_ITEM = 'setup-folder'
+const SEARCH_ITEM = 'search-boards'
 const READ_LINES_ITEM = 'read-lines'
 /** Two items, one visible at a time: a menu item's label does not change after the menu is built on macOS. */
 const HIDE_SIDEBAR_ITEM = 'hide-sidebar'
@@ -37,8 +40,10 @@ const SHOW_SIDEBAR_ITEM = 'show-sidebar'
 
 /** Folder-only menu items are enabled while a learning folder is open. */
 export function setFolderOpen(open: boolean): void {
-  const item = Menu.getApplicationMenu()?.getMenuItemById(SETUP_ITEM)
-  if (item) item.enabled = open
+  for (const id of [SETUP_ITEM, SEARCH_ITEM]) {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id)
+    if (item) item.enabled = open
+  }
 }
 
 /** View > Read Lines Aloud shows this. */
@@ -65,6 +70,14 @@ export function devSidebarMenu(click: boolean): string | null {
   return [menu?.getMenuItemById(HIDE_SIDEBAR_ITEM), menu?.getMenuItemById(SHOW_SIDEBAR_ITEM)].find((entry) => entry?.visible)?.label ?? null
 }
 
+/** Dev hook: choose a menu item by id, as its click or accelerator does. */
+export function devClickMenu(id: string): boolean {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(id)
+  if (!item || !item.visible || !item.enabled) return false
+  item.click()
+  return true
+}
+
 export function installMenu(actions: MenuActions): void {
   const isMac = process.platform === 'darwin'
   const sidebarKey: Partial<MenuItemConstructorOptions> = isMac ? {} : { accelerator: 'CmdOrCtrl+B', registerAccelerator: false }
@@ -75,6 +88,8 @@ export function installMenu(actions: MenuActions): void {
       submenu: [
         { label: 'Open Learning Folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.openFolder() },
         { label: 'New Board', accelerator: 'CmdOrCtrl+N', click: () => actions.newBoard() },
+        // A second ⌘K closes the panel: the accelerator reaches the menu also while the panel's field has focus.
+        { id: SEARCH_ITEM, label: 'Search Boards…', accelerator: 'CmdOrCtrl+K', enabled: false, click: () => actions.searchBoards() },
         { id: SETUP_ITEM, label: 'Set Up Folder for Learning…', enabled: false, click: () => actions.setupFolder() },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }

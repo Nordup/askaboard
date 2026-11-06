@@ -71,6 +71,7 @@ const api: SpaceApi = {
   devCloseAnswer: (button) => ipcRenderer.send(IPC.devCloseAnswer, button),
   devFullScreen: (on) => ipcRenderer.send(IPC.devFullScreen, on),
   devSidebarMenu: (click) => ipcRenderer.sendSync(IPC.devSidebarMenu, click) as string | null,
+  devClickMenu: (id) => ipcRenderer.sendSync(IPC.devClickMenu, id) as boolean,
   flushStarted: () => ipcRenderer.send(IPC.flushStarted),
   flushDone: (failed) => ipcRenderer.send(IPC.flushDone, failed),
 

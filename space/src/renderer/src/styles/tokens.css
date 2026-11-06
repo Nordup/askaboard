@@ -159,6 +159,14 @@
   --reading-light-ramp: 60px; /* the light fades out until this far from the reading point */
   --reading-band-offset: 4px; /* a selected item's step: its first line starts this far below the top of the bright band */
   --leading-current: 1.6; /* the reading view's lines */
+  /* The search panel (⌘K): a modal panel over the whole window */
+  --backdrop: rgba(0, 0, 0, 0.4); /* behind a modal panel, over the whole window */
+  --search-panel-width: 520px; /* at most the window width − 32 px */
+  --search-panel-top: 64px; /* from the window top */
+  --search-panel-margin: 16px; /* the least space between the panel and the window's sides */
+  --search-list-reserve: 160px; /* the list is at most the window height minus this */
+  --panel-field-height: 46px; /* a modal panel's field (.menu--panel .menu__field) */
+  --panel-row-height: 32px; /* a modal panel's rows (.menu--panel .menu__item) */
 
   /* Motion */
   --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */

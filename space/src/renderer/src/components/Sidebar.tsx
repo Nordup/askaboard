@@ -7,7 +7,7 @@ import { Menu, type MenuEntry } from './Menu'
 import { RenameInput } from './RenameInput'
 import { SetupMenu } from './SetupMenu'
 import { SidebarToggle } from './SidebarToggle'
-import { revealLabel, savedOnLabel, shortcut } from '../platform'
+import { openFolderLabel, revealLabel, savedOnLabel, shortcut } from '../platform'
 
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
@@ -106,7 +106,7 @@ export function Sidebar(props: SidebarProps) {
         { lede: homePath(folderRoot, props.homeDir) },
         { lede: 'Your boards are files in this folder.' },
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
-        { label: 'Open Learning Folder…', icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
+        { label: openFolderLabel, icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
         { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
         ...(others.length
           ? (['separator', { heading: 'Recent' }] as MenuEntry[]).concat(

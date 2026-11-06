@@ -630,6 +630,17 @@ export function boardName(relPath: string): string {
   return base.endsWith(BOARD_SUFFIX) ? base.slice(0, -BOARD_SUFFIX.length) : base
 }
 
+/** File-name-safe board name: no separators, no control characters, no leading dots. Main names a new or renamed board with it; the search panel shows the name it will get. */
+export function sanitizeBoardName(name: string): string {
+  return name
+    .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+/, '')
+    .slice(0, 120)
+    .trim()
+}
+
 export function isBoardPath(relPath: string): boolean {
   return relPath.endsWith(BOARD_SUFFIX)
 }

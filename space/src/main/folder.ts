@@ -4,7 +4,7 @@ import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFi
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
-import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, parseBoard, serializeBoard } from '@shared/board-format'
+import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, parseBoard, sanitizeBoardName, serializeBoard } from '@shared/board-format'
 import type { BoardChange, BoardList, BoardListEntry, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
 const MAX_DEPTH = 10
@@ -89,17 +89,6 @@ function errorCode(error: unknown): string | undefined {
 /** The paths of the board files of a file tree. */
 function boardPaths(nodes: FileNode[]): string[] {
   return nodes.flatMap((node) => (node.children ? boardPaths(node.children) : isBoardPath(node.name) ? [node.path] : []))
-}
-
-/** File-name-safe board name: no separators, no control characters, no leading dots. */
-export function sanitizeBoardName(name: string): string {
-  return name
-    .replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^\.+/, '')
-    .slice(0, 120)
-    .trim()
 }
 
 /** A board of the sidebar list. `dir`: null in boards/, '/' at the folder root, else the board's folder. */

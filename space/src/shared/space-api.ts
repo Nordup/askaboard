@@ -147,7 +147,7 @@ export interface ShellState {
   homeDir: string
 }
 
-export type MenuCommand = 'open-folder' | 'new-board' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
+export type MenuCommand = 'open-folder' | 'new-board' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance'
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -678,6 +678,8 @@ export interface SpaceApi {
   devFullScreen(on: boolean): void
   /** Dev hook: the label of the View menu's sidebar item that shows now; with click, choose it first. */
   devSidebarMenu(click: boolean): string | null
+  /** Dev hook: choose the menu item with this id (for example 'search-boards', File > Search Boards…), as a click or its accelerator does; false when it is missing, hidden or disabled. */
+  devClickMenu(id: string): boolean
   flushStarted(): void
   flushDone(failed: FailedSave[]): void
 
@@ -762,6 +764,7 @@ export const IPC = {
   devCloseAnswer: 'space:dev-close-answer',
   devFullScreen: 'space:dev-full-screen',
   devSidebarMenu: 'space:dev-sidebar-menu',
+  devClickMenu: 'space:dev-click-menu',
   getShellState: 'space:get-shell-state',
   setSidebarHidden: 'space:set-sidebar-hidden',
   sidebarHidden: 'space:sidebar-hidden',

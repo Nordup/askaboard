@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
   boardName,
@@ -26,6 +27,7 @@ import { HOME_ZOOM } from './board/geometry'
 import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
+import { SearchPanel } from './components/SearchPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast } from './components/Toast'
@@ -603,6 +605,22 @@ export function App() {
     }
   }, [changeBoard, openBoard, snapshot])
 
+  /** The search panel's `New board "…"`: a board with that name (main makes the file name safe), opened, no rename step. */
+  const createNamedBoard = useCallback(
+    async (name: string) => {
+      if (!snapshot?.folder) return
+      // A typed name that main's safe form turns into an existing board's name opens that board.
+      const existing = boards.find((board) => board.dir === null && board.name.toLowerCase() === name.toLowerCase())
+      try {
+        const path = existing ? existing.path : (await changeBoard({ op: 'create', name })).path
+        await openBoard(path)
+      } catch (error) {
+        showError(errorMessage(error))
+      }
+    },
+    [boards, changeBoard, openBoard, snapshot]
+  )
+
   const renameBoard = useCallback(
     async (path: string, name: string) => {
       setRenaming(null)
@@ -795,6 +813,13 @@ export function App() {
     space.setSidebarHidden(sidebarHiddenRef.current)
   }, [])
 
+  // The search panel (⌘K, the "Search boards" row): open only with a folder; a second ⌘K closes it.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchOpenRef = useRef(false)
+  searchOpenRef.current = searchOpen
+  const closeSearch = useCallback(() => setSearchOpen(false), [])
+  useEffect(() => setSearchOpen(false), [folder?.root])
+
   // ⌘B (Ctrl+B): a window key, not a menu accelerator, so ⌘B in a text box stays bold (board/content.tsx).
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
@@ -861,9 +886,13 @@ export function App() {
         if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
       }),
       space.onMenuCommand((command) => {
-        if (command === 'open-folder') void openFolderDialogRef.current()
+        // ⌘N, ⌘O and the setup item close the search panel first; the zoom keys do not reach the board under it.
+        if (searchOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
+        if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
+        else if (command === 'open-folder') void openFolderDialogRef.current()
         else if (command === 'new-board') void createBoardRef.current()
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
+        else if (searchOpenRef.current && command.startsWith('zoom-')) return
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
         else if (command === 'zoom-reset') boardRef.current?.zoomStep('reset', 'menu')
@@ -974,6 +1003,10 @@ export function App() {
           selected: live?.selectedIds.length ?? 0,
           selectedIds: live ? [...live.selectedIds] : [],
           editing: document.activeElement instanceof HTMLTextAreaElement && document.activeElement.classList.contains('node-text__editor'),
+          /** The focused element: tag, class and its text (checks of the focus return). */
+          focus: document.activeElement && document.activeElement !== document.body ? `${document.activeElement.tagName.toLowerCase()}.${document.activeElement.className} ${(document.activeElement.textContent ?? '').trim().slice(0, 40)}`.trim() : null,
+          searchOpen: document.querySelector('.search-panel') !== null,
+          sidebarHidden: sidebarHiddenRef.current,
           nodes: (live?.nodes ?? []).map((node) => {
             const bounds = live?.bounds(node.id)
             return {
@@ -1168,8 +1201,7 @@ export function App() {
         onOpenRecent={(path) => void openRecent(path)}
         onOpenBoard={(path) => void openBoard(path)}
         onCreateBoard={() => void createBoard()}
-        // search panel: next step
-        onSearch={() => {}}
+        onSearch={() => setSearchOpen(true)}
         onStartRename={setRenaming}
         onRename={(path, name) => void renameBoard(path, name)}
         onCancelRename={() => setRenaming(null)}
@@ -1239,6 +1271,16 @@ export function App() {
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
       </main>
+      {searchOpen && folder && (
+        <SearchPanel
+          boards={boards}
+          onClose={closeSearch}
+          onOpenBoard={(path) => void openBoard(path)}
+          onNewBoard={() => void createBoard()}
+          onCreateNamed={(name) => void createNamedBoard(name)}
+          onOpenFolder={() => void openFolderDialog()}
+        />
+      )}
     </div>
   )
 }

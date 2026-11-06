@@ -22,6 +22,7 @@
  *   node scripts/drive.mjs board-action rename <path> <name> | trash <path>   the sidebar's own Rename / Move to Trash
  *   node scripts/drive.mjs recent <folder>      the sidebar's own recent-folder item
  *   node scripts/drive.mjs close                close the window, as the red button does
+ *   node scripts/drive.mjs menu <id>            choose an app menu item by id, as its accelerator does (CDP keys do not reach the menu), e.g. search-boards (⌘K)
  *   node scripts/drive.mjs close-answer try|close   answer the sheet "Couldn't save your board"
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
@@ -58,6 +59,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   board-action rename <path> <name> | trash <path>   the sidebar's Rename / Move to Trash (prints the open board)
   recent <folder>                                the sidebar's recent-folder item (prints the open board)
   close                                          close the window, as the red button does
+  menu <id>                                      choose an app menu item by id (search-boards: File > Search Boards…, ⌘K)
   close-answer try|close                         answer the sheet "Couldn't save your board"
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
@@ -546,6 +548,14 @@ async function main() {
       await evaluate(cdp, `window.__spaceDev.sidebar.openRecent(${JSON.stringify(rest[0])})`)
       await sleep(300)
       console.log(JSON.stringify(await evaluate(cdp, 'window.__spaceDev.state().board')))
+    }
+  } else if (command === 'menu') {
+    if (!rest[0]) throw new Failure('menu needs a menu item id, for example search-boards.')
+    run = async (cdp) => {
+      const ran = await evaluate(cdp, `window.space.devClickMenu(${JSON.stringify(rest[0])})`)
+      if (!ran) throw new Failure(`Menu item "${rest[0]}" is missing, hidden or disabled (or the app runs without SPACE_REMOTE_DEBUG).`)
+      await sleep(150)
+      console.log(JSON.stringify({ menu: rest[0], ran }))
     }
   } else if (command === 'close') {
     run = async (cdp) => {
