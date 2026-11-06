@@ -3,6 +3,7 @@
   "productName": "Learning Space",
   "version": "0.0.1",
   "private": true,
+  "license": "MIT",
   "description": "A shared canvas and a local learning folder for you and your AI agent.",
   "main": "./out/main/index.js",
   "scripts": {

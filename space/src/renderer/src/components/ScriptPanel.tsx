@@ -1,3 +1,4 @@
+import { tip } from './Tooltip'
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { Minus, Pause, Play, RotateCcw, SkipForward } from 'lucide-react'
 import { useSceneState } from '../live/state'
@@ -369,10 +370,10 @@ export function ScriptPanel() {
     >
       <header className="script-panel__header" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         <span className={`status-dot status-dot--small${value.live && !value.paused ? ' status-dot--play' : ''}`} />
-        <span className="script-panel__title" title={sentence(value.name)}>
+        <span className="script-panel__title">
           {sentence(value.name)}
         </span>
-        <button className="icon-button icon-button--strong script-panel__hide" title="Hide" aria-label="Hide" onClick={hide}>
+        <button className="icon-button icon-button--strong script-panel__hide" {...tip('Hide')} aria-label="Hide" onClick={hide}>
           <Minus size={14} strokeWidth={1.75} />
         </button>
       </header>
@@ -384,7 +385,7 @@ export function ScriptPanel() {
               key={i}
               className="script-panel__segment"
               style={{ flexGrow: Math.max(step.dur, 0.01) }}
-              title={sentence(step.name)}
+              {...tip(sentence(step.name))}
               aria-label={`Play from step ${i + 1}: ${step.name}`}
               disabled={!playable}
               onClick={() => playStep(i)}
@@ -401,19 +402,19 @@ export function ScriptPanel() {
         <span className="script-panel__status">{status}</span>
         {value.live ? (
           <>
-            <button className="icon-button" title="Replay step" aria-label="Replay step" onClick={() => scene.playFrom(value.scene, { step: value.step + 1 })}>
+            <button className="icon-button" {...tip('Replay step')} aria-label="Replay step" onClick={() => scene.playFrom(value.scene, { step: value.step + 1 })}>
               <RotateCcw size={14} strokeWidth={1.75} />
             </button>
-            <button className="icon-button icon-button--strong" title={value.paused ? 'Play' : 'Pause'} aria-label={value.paused ? 'Play' : 'Pause'} onClick={() => (value.paused ? scene.resume() : scene.pause())}>
+            <button className="icon-button icon-button--strong" {...tip(value.paused ? 'Play' : 'Pause')} aria-label={value.paused ? 'Play' : 'Pause'} onClick={() => (value.paused ? scene.resume() : scene.pause())}>
               {value.paused ? <Play size={13} strokeWidth={2} fill="currentColor" /> : <Pause size={13} strokeWidth={2} fill="currentColor" />}
             </button>
-            <button className="icon-button" title="Next step" aria-label="Next step" onClick={() => scene.nextStep()}>
+            <button className="icon-button" {...tip('Next step')} aria-label="Next step" onClick={() => scene.nextStep()}>
               <SkipForward size={14} strokeWidth={1.75} />
             </button>
           </>
         ) : (
           replayable && (
-            <button className="icon-button" title="Replay" aria-label="Replay" onClick={() => scene.replay([{ scene: value.scene }])}>
+            <button className="icon-button" {...tip('Replay')} aria-label="Replay" onClick={() => scene.replay([{ scene: value.scene }])}>
               <RotateCcw size={14} strokeWidth={1.75} />
             </button>
           )

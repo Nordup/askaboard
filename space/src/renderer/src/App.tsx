@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
@@ -31,7 +31,8 @@ import { SearchPanel } from './components/SearchPanel'
 import { KeysPanel } from './components/KeysPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
-import { Toast } from './components/Toast'
+import { Toast, type ToastAction } from './components/Toast'
+import { SettingsPanel } from './components/SettingsPanel'
 import { BoardControls } from './components/BoardControls'
 import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
 import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
@@ -40,9 +41,11 @@ import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
 import { isMac } from './platform'
+import { markFocus, returnFocus, type FocusMark } from './lib/focus'
 import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
 import { perfMeter } from './perf-meter'
+import { Tooltips } from './components/Tooltip'
 import type { BoardStories } from '@shared/scene-story'
 import { chooseTool, INITIAL_TOOLS, LOCK_KEY, toolForKey, type ToolId, type ToolState } from './tools'
 import type { SelectionStyle, StylePatch } from './board/style'
@@ -115,7 +118,7 @@ export function App() {
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' } | null>(null)
+  const [toast, setToast] = useState<{ text: string; kind: 'error' | 'info' | 'warn'; action?: ToastAction } | null>(null)
   /** The "Set up this folder" menu is open (the sidebar row, the folder menu or File > Set Up Folder for Learning…). */
   const [menuSetup, setMenuSetup] = useState(false)
   /** "Don't ask" or a finished setup: no setup row until the folder opens again. */
@@ -811,8 +814,12 @@ export function App() {
   const [shellStart] = useState<ShellState>(() => space.getShellState())
   const [sidebarHidden, setSidebarHidden] = useState(shellStart.sidebarHidden)
   const [fullScreen, setFullScreen] = useState(shellStart.fullScreen)
+  /** Main places the window buttons for the Interface Size and says where they end (CSS px); tokens.css holds the 100% value. */
+  const [windowButtonsEnd, setWindowButtonsEnd] = useState(shellStart.windowButtonsEnd)
   /** The setting as last asked for, so two quick toggles are two changes before main answers. */
   const sidebarHiddenRef = useRef(shellStart.sidebarHidden)
+  /** The sidebar button had the focus when the setting changed: the focus follows the button to its new place. */
+  const toggleFocusRef = useRef<FocusMark | null>(null)
   /**
    * The one place the setting changes here (the sidebar button, ⌘B, the View menu). Before the sidebar hides, a rename
    * in it commits through its own blur (the field unmounts with no blur of its own). The setup flyout hangs at the
@@ -821,6 +828,7 @@ export function App() {
   const changeSidebarHidden = useCallback((hidden: boolean): boolean => {
     if (hidden === sidebarHiddenRef.current) return false
     const active = document.activeElement
+    toggleFocusRef.current = active instanceof HTMLElement && active.matches('.sidebar-toggle') ? markFocus() : null
     if (hidden && active instanceof HTMLElement && active.closest('.sidebar')) active.blur()
     sidebarHiddenRef.current = hidden
     setSidebarHidden(hidden)
@@ -828,9 +836,20 @@ export function App() {
     return true
   }, [])
   useEffect(() => {
-    const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen)]
+    const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen), space.onWindowButtons(setWindowButtonsEnd)]
     return () => offs.forEach((off) => off())
   }, [changeSidebarHidden])
+  useLayoutEffect(() => {
+    const mark = toggleFocusRef.current
+    toggleFocusRef.current = null
+    if (mark) returnFocus(mark, document.querySelector<HTMLElement>('.sidebar-toggle'))
+  }, [sidebarHidden])
+  /**
+   * The title row's one rule: the sidebar strip exists only where the macOS window buttons need it (a window, not full
+   * screen). The sidebar button is at the strip's right end while the strip shows; otherwise it leads the top bar.
+   */
+  const windowButtons = isMac && !fullScreen
+  const toggleInStrip = windowButtons && !sidebarHidden
   const toggleSidebar = useCallback(() => {
     if (changeSidebarHidden(!sidebarHiddenRef.current)) space.setSidebarHidden(sidebarHiddenRef.current)
   }, [changeSidebarHidden])
@@ -840,6 +859,11 @@ export function App() {
   const searchOpenRef = useRef(false)
   searchOpenRef.current = searchOpen
   const closeSearch = useCallback(() => setSearchOpen(false), [])
+  // The Settings panel (Settings…, ⌘,; the voice notice's action): also without a folder. Opening it or the search panel closes the other.
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsOpenRef = useRef(false)
+  settingsOpenRef.current = settingsOpen
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
   useEffect(() => setSearchOpen(false), [folder?.root])
 
   // ⌘B (Ctrl+B): a window key, not a menu accelerator, so ⌘B in a text box stays bold (board/content.tsx).
@@ -904,13 +928,32 @@ export function App() {
       space.onBoardChanged((change) => void onBoardChangeRef.current(change.path, change.deleted)),
       // Main sends the stories of the board the window shows; reads take them only for that board's path (live/stories.ts).
       // Main sends a board's stories after each new record line; they are for the open board only when its id is theirs.
+      // The cloud voice's daily limit (main sends it at most once a day per run).
+      space.onVoiceNotice(() =>
+        setToast({
+          text: 'Not enough voice credits left for today.',
+          kind: 'warn',
+          action: {
+            label: 'Set up local voice',
+            run: () => {
+              setSearchOpen(false)
+              setSettingsOpen(true)
+            }
+          }
+        })
+      ),
       space.onSceneStories((stories) => {
         if (stories.id && boardRef.current?.boardId() === stories.id) setStories(stories)
       }),
       space.onMenuCommand((command) => {
         // ⌘N, ⌘O and the setup item close the search panel first; the zoom keys do not reach the board under it.
         if (searchOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
-        if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
+        if (settingsOpenRef.current && (command === 'open-folder' || command === 'new-board' || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsOpen(false))
+        if (command === 'open-settings') {
+          flushSync(() => setSearchOpen(false))
+          setSettingsOpen(true)
+        } else if (settingsOpenRef.current && command.startsWith('zoom-')) return
+        else if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
         else if (command === 'open-folder') void openFolderDialogRef.current()
         else if (command === 'new-board') void createBoardRef.current()
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
@@ -1231,10 +1274,12 @@ export function App() {
       className="shell"
       data-sidebar-hidden={sidebarHidden || undefined}
       data-fullscreen={fullScreen || undefined}
-      data-window-buttons={(isMac && !fullScreen) || undefined}
+      data-window-buttons={windowButtons || undefined}
+      style={windowButtonsEnd === null ? undefined : ({ '--window-buttons-end': `${windowButtonsEnd}px` } as CSSProperties)}
     >
       <Sidebar
         hidden={sidebarHidden}
+        strip={toggleInStrip}
         onToggleSidebar={toggleSidebar}
         folderName={folder?.name ?? null}
         folderRoot={folder?.root ?? null}
@@ -1267,6 +1312,7 @@ export function App() {
       <main className="main">
         <TopBar
           sidebarHidden={sidebarHidden}
+          sidebarButton={!toggleInStrip}
           onToggleSidebar={toggleSidebar}
           onCreateBoard={folder ? () => void createBoard() : null}
           folderName={folder?.name ?? null}
@@ -1339,7 +1385,7 @@ export function App() {
                 onClose={closeBoardMenu}
               />
             )}
-            {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}
+            {toast && <Toast message={toast.text} kind={toast.kind} action={toast.action} onDone={clearToast} />}
           </div>
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
@@ -1355,6 +1401,8 @@ export function App() {
           onOpenFolder={openFolderFromSearch}
         />
       )}
+      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
+      <Tooltips />
     </div>
   )
 }

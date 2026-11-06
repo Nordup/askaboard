@@ -10,6 +10,7 @@
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z, Shift+? (the keys panel); Meta+v pastes as ⌘V does
  *   node scripts/drive.mjs click <x> <y> [--shift] [--alt] [--ctrl] [--right]  window CSS pixels; --right is the right button
+ *   node scripts/drive.mjs hover <x> <y>        move the pointer there and leave it (a tooltip check)
  *   node scripts/drive.mjs dblclick <x> <y>
  *   node scripts/drive.mjs drag <x1> <y1> <x2> <y2> [--shift] [--alt] [--steps N]   mouse drag; --alt holds Option / Alt
  *   node scripts/drive.mjs type "<text>"        insert text into the focused field
@@ -51,6 +52,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  Meta+c/x/v/a/z also run the edit command, so Meta+v raises the paste event
   click <x> <y> [--shift] [--alt] [--ctrl] [--right]
                                                  window CSS pixels; --right presses the right button (the board menu)
+  hover <x> <y>                                  move the pointer there, no press (it stays there after the command)
   dblclick <x> <y>
   drag <x1> <y1> <x2> <y2> [--shift] [--alt] [--steps N]
                                                  mouse drag in window CSS pixels; --alt holds Option / Alt (duplicate and move)
@@ -65,6 +67,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   recent <folder>                                the sidebar's recent-folder item (prints the open board)
   close                                          close the window, as the red button does
   menu <id>                                      choose an app menu item by id (search-boards: File > Search Boards…, ⌘K)
+                                                 interface-size-auto, interface-size-<percent> (interface-size-120): View > Interface Size
   close-answer try|close                         answer the sheet "Couldn't save your board"
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
@@ -480,6 +483,13 @@ async function main() {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('click needs <x> <y> in window CSS pixels.')
     run = (cdp) => click(cdp, x, y, modifiers | (ctrl ? 2 : 0), right ? 'right' : 'left')
+  } else if (command === 'hover') {
+    const [x, y] = rest.map(Number)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('hover needs <x> <y> in window CSS pixels.')
+    run = async (cdp) => {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 })
+      console.log(JSON.stringify({ hover: [x, y] }))
+    }
   } else if (command === 'dblclick') {
     const [x, y] = rest.map(Number)
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Failure('dblclick needs <x> <y> in window CSS pixels.')

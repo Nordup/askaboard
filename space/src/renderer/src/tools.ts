@@ -52,9 +52,9 @@ export function toolForKey(key: string): ToolId | undefined {
   return TOOLS.find((tool) => tool.key === upper || tool.digit === key)?.id
 }
 
-/** The tooltip of a tool: "Select — V or 1". */
-export function toolTitle(tool: ToolDef): string {
-  return `${tool.label} — ${tool.key}${tool.digit ? ` or ${tool.digit}` : ''}`
+/** A tool's keys for its tooltip: "V or 1" (the tooltip shows "Select V or 1"). */
+export function toolKeys(tool: ToolDef): string {
+  return `${tool.key}${tool.digit ? ` or ${tool.digit}` : ''}`
 }
 
 /** The lock keeps a shape tool after one shape (Q). */

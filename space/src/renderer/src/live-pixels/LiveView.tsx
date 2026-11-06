@@ -28,10 +28,10 @@ function firstLine(text: string | undefined): string {
   return (text ?? '').split('\n').find((line) => line.trim()) ?? ''
 }
 
-function Note({ style, common, title, detail, hint }: Pick<Props, 'style' | 'common'> & { title: string; detail?: string; hint?: string }) {
+function Note({ style, common, title, detail }: Pick<Props, 'style' | 'common'> & { title: string; detail?: string }) {
   return (
     <div {...common} className="node node-live node-live--note" style={style}>
-      <div className="node-live__note" title={hint}>
+      <div className="node-live__note">
         <span className="node-live__note-title">{title}</span>
         {detail && <span className="node-live__note-detail">{detail}</span>}
       </div>
@@ -73,7 +73,7 @@ function LiveRunner({ node, style, common }: Props) {
       style={style}
     >
       {failed && (
-        <div className="node-live__note" title={status.error}>
+        <div className="node-live__note">
           <span className="node-live__note-title">World error</span>
           <span className="node-live__note-detail">{firstLine(status.error)}</span>
         </div>

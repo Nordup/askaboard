@@ -3,8 +3,9 @@
 Learning Space is a desktop app (Electron) for macOS and Linux. It gives the learner a
 shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
-the board with the learner. Its one AI call is optional: a speech API reads
-scene lines aloud with the learner's own key (T34).
+the board with the learner. Its one AI part is the voice, which reads scene lines
+aloud: our voice server by default (T39), the learner's own Gemini key, or a
+local Kokoro model that the learner installs from Settings (T40).
 
 **Status (2026-11-03):** the main product of this repository (since 2026-10-24). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
 
@@ -80,11 +81,15 @@ Electron runs native Wayland. Differences from macOS:
   panel for one scene (the previous line, the current line, a step bar); it
   fades after the scene and hides into the scene pill in the top bar, which
   lists the board's scenes and shows the scene and step of a selected item.
-- **Voice.** With a Gemini key, the app reads `say` lines aloud, and each line
-  lasts as long as its audio. Without a key, or with View > Read Lines Aloud
-  off, the lines run at a reading pace, silent. View > Voice and View > Pace
-  apply to new scenes. Key: `GEMINI_API_KEY`, or a line in
-  `~/.learning-space/.env`. Clips stay in the folder's `.learning-space/voice/`.
+- **Voice.** The app reads `say` lines aloud, and each line lasts as long as
+  its audio. With no key, the audio comes from our voice server
+  (`LEARNING_SPACE_VOICE_HOST`, decision T39), with a daily cap per user; an own
+  Gemini key (`GEMINI_API_KEY`, or a line in `~/.learning-space/.env`) goes to
+  Gemini directly. Settings… (⌘,) holds Read Lines Aloud (on by default), the
+  voice, the pace, the Gemini key and the local voice: Install downloads
+  Kokoro (about 370 MB, `~/.learning-space/models/kokoro/`, T40). When the
+  voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
+  silent. View > Voice and View > Pace apply to new scenes. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
@@ -161,7 +166,7 @@ unless the learner edited it.
 
 The app sends product usage events to our own server at
 `135-181-38-113.sslip.io`. The server keeps a copy of each event and forwards
-it to PostHog (EU). The code is `src/main/analytics.ts`.
+it to PostHog (US). The code is `src/main/analytics.ts`.
 
 The events:
 
@@ -173,7 +178,7 @@ The events:
 | `agent.connected` | the agent app (Claude Code, Codex, Cursor, Claude Desktop or other) and its version |
 | `mcp.tool.invoked` | the tool name, success, the duration, the agent app |
 | `scene.played` | how the playback ended, its length in seconds, whether it had a voice |
-| `voice.requested` | the source (your key or the cache), the result, the audio length, the request time |
+| `voice.requested` | the source (our server, your key, the local voice or the cache), the result, the audio length, the request time |
 | `install.owner_observed` | a hashed account id (see below) |
 
 Each event also has the app version, the release channel, the platform, the
@@ -194,7 +199,9 @@ approximate location.
 
 To turn usage data off, set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in the
 environment of the app. A dev run (`npm run dev`) sends nothing unless you set
-`LEARNING_SPACE_TELEMETRY_ENABLED=true`. `LEARNING_SPACE_TELEMETRY_HOST`
+`LEARNING_SPACE_TELEMETRY_ENABLED=true`; a run of a local build sends, tagged
+with its channel. The voice server gets the same hashed identifier with each
+speech request, also with usage data off (T39): it counts the daily cap. `LEARNING_SPACE_TELEMETRY_HOST`
 changes the server. A build sets the channel from
 `LEARNING_SPACE_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
 default is dev).
@@ -213,6 +220,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
 | `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the desktop (a macOS Space). The lab, the benchmarks and the render run set it. |
+| `SPACE_FAKE_FULL_SCREEN=1` | With `SPACE_REMOTE_DEBUG`: the renderer lays out as in full screen (no window buttons, no sidebar strip), with no real full screen, so a check never moves the window to a new macOS desktop Space. |
 
 The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 
@@ -230,6 +238,7 @@ to 20 s for that window and its dev hook to load.
 | `draw <file.json \| -> [--tool pen\|marker\|eraser\|current] [--no-pan] [--mouse]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes. `--mouse` sends a mouse pointer in place of a pen |
 | `key <combo>` | Sends a key, for example `Meta+z` or `Shift+?`. `Meta+c`, `x`, `v`, `a` and `z` also run their edit command, as macOS does, so `Meta+v` raises the page's paste event with the system clipboard |
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels. `click --right` presses the right button (the board menu); `drag --alt` holds Option / Alt (duplicate and move); `--shift` adds Shift |
+| `hover <x> <y>` | Moves the pointer there with no press and leaves it there (a tooltip check) |
 | `type "<text>"` | Types into the focused field |
 | `node-rect <id>` | A node's window rect, from the layout cache and the DOM |
 | `element-rect <css selector>` | The window rects (and visibility, opacity) of the elements that match |

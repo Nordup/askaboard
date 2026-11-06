@@ -12,6 +12,8 @@ import { openFolderLabel, revealLabel, savedOnLabel, shortcut } from '../platfor
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
   hidden: boolean
+  /** The top strip with the sidebar button: only beside the macOS window buttons (App.tsx, the title row's rule). */
+  strip: boolean
   onToggleSidebar(): void
   folderName: string | null
   folderRoot: string | null
@@ -115,7 +117,7 @@ export function Sidebar(props: SidebarProps) {
       above: true,
       className: 'folder-menu',
       entries: [
-        { path: shortPath(path), full: path },
+        { path: shortPath(path) },
         'separator',
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
         { label: openFolderLabel, icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
@@ -148,10 +150,12 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <aside className="sidebar" hidden={hidden}>
-      <div className="sidebar__strip">
-        <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
-      </div>
+    <aside className={props.strip ? 'sidebar' : 'sidebar sidebar--no-strip'} hidden={hidden}>
+      {props.strip && (
+        <div className="sidebar__strip">
+          <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
+        </div>
+      )}
 
       {folderRoot && (
         <nav className="sidebar__actions">
@@ -218,7 +222,6 @@ export function Sidebar(props: SidebarProps) {
                       className={board.path === openBoard ? 'board-row board-row--active' : 'board-row'}
                       role="button"
                       tabIndex={0}
-                      title={board.path}
                       onClick={() => props.onOpenBoard(board.path)}
                       onDoubleClick={() => props.onStartRename(board.path)}
                       onKeyDown={(event) => {
@@ -267,7 +270,6 @@ export function Sidebar(props: SidebarProps) {
         <button
           ref={footerRef}
           className="folder-row"
-          title={folderRoot ?? undefined}
           aria-haspopup={folderRoot ? 'menu' : undefined}
           aria-expanded={folderRoot ? menu?.className === 'folder-menu' : undefined}
           onClick={(event) => {

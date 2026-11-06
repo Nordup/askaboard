@@ -84,9 +84,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   the title row (see "Title row"): `--window-buttons-end`,
   `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
   `--title-button-gap`, `--title-icon-size`;
-  `--sidebar-row-height`, `--sidebar-footer-height`,
+  `--sidebar-row-height`, `--folder-row-height`,
   `--topbar-rename-width`,
-  the board controls (U8): `--palette-height`, `--tool-size`,
+  the board controls (U10): `--palette-height`, `--tool-size`,
   `--swatch-size`, `--swatch-dot`, `--option-size`, `--option-text-pad`,
   `--option-bar-width`, `--pill-divider-height`, `--zoom-label-min`,
   `--toast-bottom`; `--pill-height`, `--pill-gap`, `--pill-action-size`,
@@ -130,12 +130,13 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | --- | --- |
 | `.menu__heading` | Small uppercase section label |
 | `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap |
-| `.menu__path` | A quiet one-line path at the top of a menu (`--text-tertiary`, meta size, ellipsis); `Menu.tsx` entry `{ path, full }`, the full path as its title |
+| `.menu__path` | A quiet one-line path at the top of a menu (`--text-tertiary`, meta size, ellipsis); `Menu.tsx` entry `{ path }` |
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover). An empty `.menu__icon` keeps a row without an icon in the labels' column |
 | `.menu__sub` | Dim text right after a `.menu__label` (a board's folder); a `.menu__hint` stays at the right |
 | `.menu__match` | The part of a label that matches the typed text, in `--accent` |
 | `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--bg-glass` over a blur (`--glass-filter`), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
+| `.menu__switch`, `.menu__select`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small native select, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
 | `.menu__separator` | The hairline between groups |
@@ -165,8 +166,12 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 
 ## Pills
 
-The top bar's status pills share `.pill` in `app.css` (the comment block
-above `.pill--static`). The agent pill is a `.pill` button. The scene pill is
+The top bar's status items (agent, scene, performance; still called pills in
+code) share `.pill` in `app.css` (the comment block above `.pill--static`).
+They have no border and no capsule (decision U9; the zoom percent was the model before it left the top bar, U10):
+`--pill-height` (26 px), padding 0 `--space-2`, `--radius-sm`, `--bg-hover`
+on hover, `--bg-active` while the popover is open. The popover opens under
+the item, right-aligned. The agent pill is a `.pill` button. The scene pill is
 a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 (`--live`, `--warn`, `--bad`, `--play`, `--error`), `.pill__label` (ends with an ellipsis),
 `.pill--selected` (the pill speaks of a selected item: `--text-primary`),
@@ -174,12 +179,12 @@ a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 `.pill__action` (the one small icon button, 12 px lucide icon),
 `.pill__toggle` (a plain button around the dot and text of a static pill;
 the pill hovers with it) and `.pill--flash` (the pill lights up once).
-`.pill--item` is a static pill on a board item, not in the top bar (the `--item-pill-*` tokens). A new pill uses these parts; a
+A new pill uses these parts; a
 missing part goes into the same block.
 
 ## Board controls
 
-The four pills over the bottom of the canvas (decision U8,
+The four pills over the bottom of the canvas (decision U10,
 `BoardControls.tsx`, the comment block above `.board-controls` in
 `app.css`). Each is a `.pill-bar` (48 px, `--bg-elevated`, 1 px
 `--border-subtle`, `--radius-pill`, `--shadow-float`). Parts: `.tool` (34
@@ -215,7 +220,9 @@ solid, dashed, dotted)) and `.zoom-label`.
   that cannot run is left out, never greyed: Cut, Copy, Paste, Duplicate,
   Delete | Bring to front, Send to back; on the empty board Paste and
   Select all.
-- Tooltips name the key: "Select — V or 1", "Undo — ⌘Z".
+- Every button has the shared tooltip ("Tooltips"), with the key after
+  the label: "Select V or 1", "Undo ⌘Z". The font words (Hand, Plain,
+  Code) show their label, so they get none.
 - The zoom % is only here, not in the top bar. A click on it opens the
   shared `Menu` 8 px above the zoom pill: Zoom to 100% (⌘0), Zoom to fit
   (⇧1), Zoom to selection (⇧2, only with a selection). Both fits glide and
@@ -237,13 +244,37 @@ item pill).
 
 ## Title row
 
-The 44 px row across the top of the window: the sidebar strip and the top
-bar. Everything in it shares one centre line at 22 px.
+The 44 px row across the top of the window: the sidebar strip (macOS
+window only) and the top bar. Everything in it shares one centre line at
+22 px.
 
-- The macOS window buttons: `trafficLightPosition { x: 16, y: 15 }`
-  (`main/index.ts`), three 14 px circles at a 23 px pitch, x 16 to 76
-  (`--window-buttons-end`), centre 22 px. Measured in a window capture on
-  2026-11-06; measure again when macOS changes them.
+- **One rule places the sidebar button** (`App.tsx`, decision U9): the
+  sidebar strip exists only beside the macOS window buttons
+  (`data-window-buttons`: macOS, not full screen). There, with the sidebar
+  shown, the button is at the strip's right end. Everywhere else (sidebar
+  hidden, full screen, Linux, Windows) the button leads the top bar
+  (`.topbar--lead`), "Hide sidebar" or "Show sidebar". A keyboard toggle
+  keeps the focus on the button in its new place.
+- Without the strip, the sidebar starts at the top: New board's row is
+  centred on the 22 px line (`.sidebar--no-strip`, top padding
+  (`--topbar-height` − `--sidebar-row-height`) / 2). With the strip, New
+  board starts 8 px (`--space-2`) under it.
+
+- The macOS window buttons: three 14 px circles at a 23 px pitch, x 16 to
+  76 window px (`--window-buttons-end`), centre 22 px at 100 %. Measured
+  in a window capture on 2026-11-06; measure again when macOS changes
+  them.
+- **At any Interface Size** (page zoom factor f): the native buttons do
+  not zoom with the page, so main places them (`main/interface-size.ts`,
+  `windowButtonPosition`, applied with `setWindowButtonPosition` at
+  window creation and at each factor change). Their centre line is the
+  row's centre, 22·f window px (y rounded to a whole px, so within
+  0.5 px). x stays 16 window px at every factor, as macOS apps keep it.
+  Main sends their right edge in CSS px (76 / f) with the shell state and
+  the `windowButtons` event; the renderer sets `--window-buttons-end` on
+  `.shell` from it. The 16 px gap is CSS, so it is 16·f window px.
+  Measured at f = 1, 1.2 and 1.5 (2026-11-06): centre 22 / 26 / 33, gap
+  16 / 19.2 / 24.05.
 - The top bar draws its bottom line as an inset shadow, not a border, so
   its content box is 44 px high.
 - Icon buttons in the row are `.icon-button--title`: a 28 px hit area
@@ -252,12 +283,46 @@ bar. Everything in it shares one centre line at 22 px.
 - 16 px from the window buttons' right edge to the first button
   (`--window-buttons-gap`), so it starts at 92 px in a macOS window.
 - 12 px edge inset in full screen, on Linux and on Windows
-  (`--title-row-inset`). `.shell` sets `--chrome-reserve` to one of the
-  two.
+  (`--title-row-inset`), from the top bar's left edge (the sidebar's right
+  edge while it shows). `.shell` sets `--chrome-reserve` to one of the
+  two; `.topbar--lead` uses it.
 - 12 px (`--space-3`) from the last button to the board name.
-- Sidebar open: the sidebar button sits at the right end of the strip,
-  its icon's right edge in the column of the rows' hints and times.
-- The pills on the right keep their own spacing (`.topbar__right`).
+- In the strip, the sidebar button's icon has its right edge in the
+  column of the rows' hints and times.
+- No save mark in normal work: only a failed save shows, "Not saved" in
+  `--ink-pink` with an alert icon, 12 px after the board name
+  (`.save-status`, an `aria-live` region that is empty otherwise).
+- The status items on the right keep their own spacing (`.topbar__right`).
+
+## Tooltips
+
+No native `title` in app UI: it shows late, unstyled, and often shows
+internal data (a path, an id). One shared tooltip instead
+(`components/Tooltip.tsx`, the `.tooltip` comment block in `app.css`).
+
+- A control asks for it with `{...tip(label, key)}`: two data attributes.
+  `<Tooltips />`, mounted once in `App.tsx`, owns every listener, so a
+  control adds none.
+- Use it only to name an icon-only control or to give a shortcut: the
+  title-row buttons, the board controls (Board controls), the pill and
+  panel icon buttons, a step-bar segment's step name. Never for a path,
+  an id, a raw value, or the visible label again. A truncated name (a
+  sidebar board, a scene name) gets no tooltip.
+- Icon-only buttons keep their `aria-label`; the tooltip is linked with
+  `aria-describedby` while it shows (`role="tooltip"`).
+- Shows after 500 ms of hover, at once when the pointer moves from one
+  tooltip control to the next within 300 ms (as macOS), and on
+  `:focus-visible`. Never on a press: a pressed control shows none until
+  the pointer leaves it. Hides on leave, any key, a click, a scroll or
+  wheel, and window blur.
+- Look: `--bg-elevated-2`, 1 px `--border-strong`, `--radius-sm`,
+  padding 4 px 8 px, `--text-xs` `--text-primary`; the shortcut after
+  the label in `--text-tertiary` (`.tooltip__key`, 8 px before it);
+  `--shadow-float`. Below the control with a 6 px gap
+  (`--tooltip-gap`), above it when there is no room, 8 px inside the
+  window (`--tooltip-margin`). `pointer-events: none`, in a portal.
+- Words: sentence case; shortcuts from `platform.ts` `shortcut()`
+  ("Hide sidebar ⌘B", "New board ⌘N", "Undo ⌘Z").
 
 ## Approved screens (reference)
 
@@ -269,14 +334,16 @@ bar. Everything in it shares one centre line at 22 px.
 - **Setup flyout.** A quiet sidebar row "Set up for learning" with an accent
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
-- **Sidebar** (left-panel plan, decisions U6, 2026-11-06). Top to bottom: a
-  44 px strip (drag region) with the sidebar button at its right end
-  (lucide `PanelLeft`, `.icon-button--title`, `SidebarToggle.tsx`; see
-  "Title row"); the rows New board (`SquarePen`,
+- **Sidebar** (left-panel plan, decisions U6 and U9, 2026-11-06). Top to
+  bottom: in a macOS window only, a 44 px strip (drag region) with the
+  sidebar button at its right end (lucide `PanelLeft`,
+  `.icon-button--title`, `SidebarToggle.tsx`; see "Title row"), 8 px above
+  the rows; the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
   and the guide-override note; the heading "Boards" and the boards list;
-  the footer (`--sidebar-footer-height`, top hairline): `.folder-row` with
+  the footer (top hairline, 8 px padding on all four sides): `.folder-row`
+  (`--folder-row-height`, 44 px) with
   `Folder`, the folder name over `savedOnLabel` ("Saved on this Mac"), and
   `ChevronsUpDown`. Rows are `--sidebar-row-height` (30 px), radius
   `--radius-md`. The footer opens the folder menu above it
@@ -291,7 +358,9 @@ bar. Everything in it shares one centre line at 22 px.
   column, at once. The top bar then starts with the sidebar button and a
   New board button (`.topbar__lead`, 4 px apart): at 92 px on macOS in a
   window, at 12 px in full screen and off macOS (`--chrome-reserve` on
-  `.shell`, set by `data-window-buttons`; see "Title row"). Then the board
+  `.shell`, set by `data-window-buttons`; see "Title row"). In full screen
+  and off macOS the sidebar button stays there with the sidebar shown,
+  without New board. Then the board
   name, 12 px after the buttons; a new board's rename
   field shows in the top bar (`.topbar__rename`).
 - **Scene pill** (decision B19, mockup v3, 2026-10-29; idle, selection and
@@ -436,9 +505,8 @@ bar. Everything in it shares one centre line at 22 px.
     a `.menu__line` `No boards match “…”` and the row `New board “…”` (the
     name main will give the file), which makes the board and opens it, with
     no rename step.
-  - Rows: `.menu__item`, 32 px, `--radius-md`; actions keep their 16 px
-    icons, a board row has an empty icon cell (its name in the column of
-    the action labels and the typed text), its folder as `.menu__sub` for a board outside
+  - Rows: `.menu__item`, 32 px, `--radius-md`; every row has a 16 px
+    icon (actions their own, a board row `LayoutDashboard`), its folder as `.menu__sub` for a board outside
     `boards/`, the short time (or the shortcut) as `.menu__hint`. The
     selected row is `.menu__item--current`; the first row starts selected
     and is selected again when the text changes.
@@ -450,6 +518,27 @@ bar. Everything in it shares one centre line at 22 px.
     Opening it closes any open menu. A close gives the focus back to the
     element that had it (with the ring only if it had one at open), then
     the row's action runs.
+
+- **Settings panel** (decision U8, 2026-11-06; a simple first version, the
+  founder redesigns it later; `SettingsPanel.tsx`). Settings… (⌘,) in the
+  app menu (File menu off macOS) opens a centred `.menu--panel`
+  (`.menu.settings-panel`, `--settings-panel-width` 380 px, the height of
+  its rows) over a `.backdrop`. Rows are `--panel-row-height`. Heading
+  "Voice": "Read lines aloud" with a `.menu__switch`; a separator; the
+  model rows (`.menu__item`, the chosen one `--current` with a check):
+  "Cloud voice" with the meta "Free, a daily limit", and "On this Mac ·
+  Kokoro" with Install · N MB (`.btn-sm`), a progress bar and percent,
+  "Installed" and a quiet Remove (`.btn-text`), or one `.menu__line--error`
+  with Retry; a separator; "Voice" (a `.menu__select` and a play icon
+  button, a spinner while the sample loads) and "Pace" (a
+  `.menu__select`); a separator; heading "Gemini key": a password
+  `.menu__text` ("Your Gemini API key") and Save, or "Key saved" and
+  Remove. Escape and a backdrop click close it.
+- **Voice notice.** At the cloud voice's daily limit the board's toast
+  (`.toast--warn`: lucide `VolumeX` in `--status-warn`) says "Not enough
+  voice credits left for today." with one text action
+  (`.toast__action`) "Set up local voice", which opens Settings. At most
+  once a day per app run.
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).

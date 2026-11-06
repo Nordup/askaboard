@@ -1,6 +1,7 @@
+import { tip } from './Tooltip'
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
-import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
+import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolKeys, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
@@ -70,7 +71,7 @@ export function boardControlsTop(canvas: HTMLElement): number | null {
   return tools.getBoundingClientRect().top - canvas.getBoundingClientRect().top - canvas.clientTop
 }
 
-/** The bottom controls over the board: zoom, undo, the tools and the style of the tool or the selection (decision U8). */
+/** The bottom controls over the board: zoom, undo, the tools and the style of the tool or the selection (decision U10). */
 export function BoardControls(props: BoardControlsProps) {
   const { tools, zoom } = props
   const style = stylePillOf(tools, props.selection)
@@ -120,19 +121,19 @@ export function BoardControls(props: BoardControlsProps) {
     <div className="board-controls" ref={rootRef}>
       <div className="board-controls__start">
         <div className="pill-bar" role="toolbar" aria-label="Zoom">
-          <button className="tool" title={`Zoom out — ${KEYS.zoomOut}`} aria-label="Zoom out" onClick={props.onZoomOut}>
+          <button className="tool" {...tip('Zoom out', KEYS.zoomOut)} aria-label="Zoom out" onClick={props.onZoomOut}>
             <Minus {...ICON} />
           </button>
           <ZoomMenu zoom={zoom} onZoom={props.onZoom} commandContext={props.commandContext} />
-          <button className="tool" title={`Zoom in — ${KEYS.zoomIn}`} aria-label="Zoom in" onClick={props.onZoomIn}>
+          <button className="tool" {...tip('Zoom in', KEYS.zoomIn)} aria-label="Zoom in" onClick={props.onZoomIn}>
             <Plus {...ICON} />
           </button>
         </div>
         <div className="pill-bar" role="toolbar" aria-label="History">
-          <button className="tool" title={`Undo — ${KEYS.undo}`} aria-label="Undo" onClick={props.onUndo}>
+          <button className="tool" {...tip('Undo', KEYS.undo)} aria-label="Undo" onClick={props.onUndo}>
             <Undo2 {...ICON} />
           </button>
-          <button className="tool" title={`Redo — ${KEYS.redo}`} aria-label="Redo" onClick={props.onRedo}>
+          <button className="tool" {...tip('Redo', KEYS.redo)} aria-label="Redo" onClick={props.onRedo}>
             <Redo2 {...ICON} />
           </button>
         </div>
@@ -150,7 +151,7 @@ export function BoardControls(props: BoardControlsProps) {
         <div className="pill-bar board-controls__tools" role="toolbar" aria-label="Tools">
           <button
             className={tools.lock ? 'tool' : 'tool tool--quiet'}
-            title={`Keep tool — ${LOCK_KEY}`}
+            {...tip('Keep tool', LOCK_KEY)}
             aria-label="Keep tool"
             aria-pressed={tools.lock}
             onClick={props.onToggleLock}
@@ -164,7 +165,7 @@ export function BoardControls(props: BoardControlsProps) {
               <button
                 key={tool.id}
                 className="tool"
-                title={toolTitle(tool)}
+                {...tip(tool.label, toolKeys(tool))}
                 aria-label={tool.label}
                 aria-pressed={tools.tool === tool.id}
                 onClick={() => props.onChooseTool(tool.id)}
@@ -194,7 +195,7 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
       <button
         key={color.id}
         className="swatch"
-        title={color.label}
+        {...tip(color.label)}
         aria-label={color.label}
         aria-pressed={values.color === color.value}
         style={{ '--swatch': color.value } as CSSProperties}
@@ -208,7 +209,7 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
       <button
         key={width.px}
         className="option"
-        title={`${width.label} stroke`}
+        {...tip(`${width.label} stroke`)}
         aria-label={`${width.label} stroke`}
         aria-pressed={values.width === width.px}
         onClick={() => onStyle({ width: width.px })}
@@ -218,13 +219,13 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
     ))
   } else if (field === 'fill') {
     options = FILLS.map((fill) => (
-      <button key={fill.id} className="option" title={fill.label} aria-label={fill.label} aria-pressed={values.fill === fill.id} onClick={() => onStyle({ fill: fill.id })}>
+      <button key={fill.id} className="option" {...tip(fill.label)} aria-label={fill.label} aria-pressed={values.fill === fill.id} onClick={() => onStyle({ fill: fill.id })}>
         <span className="option__fill" data-fill={fill.id} />
       </button>
     ))
   } else if (field === 'line') {
     options = LINE_STYLES.map((line) => (
-      <button key={line.id} className="option" title={line.label} aria-label={line.label} aria-pressed={values.line === line.id} onClick={() => onStyle({ line: line.id })}>
+      <button key={line.id} className="option" {...tip(line.label)} aria-label={line.label} aria-pressed={values.line === line.id} onClick={() => onStyle({ line: line.id })}>
         <svg className="option__line" viewBox="0 0 18 4" aria-hidden="true">
           <line x1="2" y1="2" x2="16" y2="2" strokeDasharray={line.id === 'dashed' ? '4 3' : line.id === 'dotted' ? '0 3.5' : undefined} />
         </svg>
@@ -232,25 +233,25 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
     ))
   } else if (field === 'heads') {
     options = ARROW_HEADS.map(({ id, label, Icon }) => (
-      <button key={id} className="option" title={label} aria-label={label} aria-pressed={values.heads === id} onClick={() => onStyle({ heads: id })}>
+      <button key={id} className="option" {...tip(label)} aria-label={label} aria-pressed={values.heads === id} onClick={() => onStyle({ heads: id })}>
         <Icon {...ICON} />
       </button>
     ))
   } else if (field === 'size') {
     options = TEXT_SIZES.map((size) => (
-      <button key={size.id} className="option option--text" title={`${size.label} text`} aria-label={`${size.label} text`} aria-pressed={values.size === size.px} onClick={() => onStyle({ size: size.px })}>
+      <button key={size.id} className="option option--text" {...tip(`${size.label} text`)} aria-label={`${size.label} text`} aria-pressed={values.size === size.px} onClick={() => onStyle({ size: size.px })}>
         {size.id}
       </button>
     ))
   } else if (field === 'font') {
     options = FONTS.map((font) => (
-      <button key={font.id} className="option option--text" title={`${font.label} font`} aria-label={`${font.label} font`} aria-pressed={values.font === font.id} onClick={() => onStyle({ font: font.id })}>
+      <button key={font.id} className="option option--text" aria-label={`${font.label} font`} aria-pressed={values.font === font.id} onClick={() => onStyle({ font: font.id })}>
         {font.label}
       </button>
     ))
   } else if (field === 'align') {
     options = TEXT_ALIGNS.map(({ id, label, Icon }) => (
-      <button key={id} className="option" title={label} aria-label={label} aria-pressed={values.align === id} onClick={() => onStyle({ align: id })}>
+      <button key={id} className="option" {...tip(label)} aria-label={label} aria-pressed={values.align === id} onClick={() => onStyle({ align: id })}>
         <Icon {...ICON} />
       </button>
     ))
@@ -258,7 +259,7 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
     options = PEN_KINDS.map((kind) => {
       const Icon = PEN_ICONS[kind.id]
       return (
-        <button key={kind.id} className="option" title={kind.label} aria-label={kind.label} aria-pressed={values.pen === kind.id} onClick={() => onStyle({ pen: kind.id })}>
+        <button key={kind.id} className="option" {...tip(kind.label)} aria-label={kind.label} aria-pressed={values.pen === kind.id} onClick={() => onStyle({ pen: kind.id })}>
           <Icon {...ICON} />
         </button>
       )
@@ -298,16 +299,16 @@ function SelectionCommands(props: { divider: boolean; editable: boolean; compact
     <>
       {props.divider && <span className="pill-bar__divider" />}
       {!props.compact && (
-        <button className="option" title={`${duplicate.label} — ${duplicate.keys}`} aria-label={duplicate.label} onClick={() => onCommand('duplicate')}>
+        <button className="option" {...tip(duplicate.label, duplicate.keys)} aria-label={duplicate.label} onClick={() => onCommand('duplicate')}>
           <CopyPlus {...ICON} />
         </button>
       )}
       {props.editable && !props.compact && (
-        <button className="option" title={`${remove.label} — ${remove.keys}`} aria-label={remove.label} onClick={() => onCommand('delete')}>
+        <button className="option" {...tip(remove.label, remove.keys)} aria-label={remove.label} onClick={() => onCommand('delete')}>
           <Trash2 {...ICON} />
         </button>
       )}
-      <button ref={moreRef} className="option" title="More" aria-label="More" aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
+      <button ref={moreRef} className="option" {...tip('More')} aria-label="More" aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
         <Ellipsis {...ICON} />
       </button>
       {menu && <BoardMenu x={menu.x} y={menu.y} above context={menu.context} onCommand={onCommand} onClose={close} toggle={moreRef.current} />}
@@ -333,7 +334,7 @@ function ZoomMenu(props: { zoom: number; onZoom(command: ZoomCommand): void; com
   }
   return (
     <>
-      <button ref={labelRef} className="zoom-label" title="Zoom" aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
+      <button ref={labelRef} className="zoom-label" {...tip('Zoom')} aria-haspopup="menu" aria-expanded={menu !== null} onClick={toggleMenu}>
         {Math.round(props.zoom * 100)}%
       </button>
       {menu && (

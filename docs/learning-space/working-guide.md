@@ -94,6 +94,8 @@ and what went wrong before.
 | Board news hook in the bench | On by default: the agent gets the plugins' `UserPromptSubmit` hook against the run's own app (Claude: `--settings`; Codex: `-c hooks.UserPromptSubmit=…` with `--dangerously-bypass-hook-trust`). `--no-news-hook` measures without it. `metrics.json` → `news_in_prompt` (Codex) holds the line that reached the prompt. Board news is delivered once per agent app and board: after the hook sent it, the tool results of that turn do not repeat it. |
 | Read a real session of the founder | Learning Space trace: `~/.learning-space/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
 | Keep the founder's focus | Launch with `SPACE_NO_FOCUS=1`. On macOS, after launching, also `osascript -e 'tell application "Claude" to activate'`. |
+| Settings and the voice (2026-11-06) | Launch with `SPACE_FOLDER` (the welcome screen has no Settings route), then `node scripts/drive.mjs --port <debug port> menu settings`. A Kokoro install check needs a scratch `HOME` (it writes about 370 MB to `~/.learning-space/models/kokoro/`): delete that folder after the check. A check agent cannot hear: confirm playback from the renderer (an audio element's `currentTime` moves after `play()`). |
+| Usage data from a check | A run of the built app (`electron .` on `out/`) sends events by default, tagged `dev`; a dev renderer run sends nothing unless `LEARNING_SPACE_TELEMETRY_ENABLED=true`. Set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in checks that do not test usage data, or filter `dev` in PostHog. |
 
 ## Choosing lab tests (live drawing)
 
@@ -228,6 +230,8 @@ combine; `meta.json` records `no_html` and `brief`.
 - **Give a check agent plain shell commands** (2026-11-02). Claude Code's safety check refused a block with no `rm` in it, because it could not parse zsh-only expansions (`${=spec}`, `${(s:,:)x}`) and a command name in a variable. Use literal paths and a few calls per block. A rewrite in another language to pass a refusal is a workaround: stop and report the text.
 - **A check click can land on the app's own parts** (2026-11-02). A click on a world's bar at y=709 hit the tool palette (y 703 to 749), and the check read as an input fault. Frame the item clear of the palette first.
 - **A check agent must stop its own apps before it reports** (2026-11-02). Apps started as background shells outlived a finished agent and kept running. Name this in the brief, by exact PID.
+- **Name the exact drive command in a check brief** (2026-11-06). A Haiku check agent read `drive.mjs` and reported that it had no menu command, so Settings was out of reach. It has one (`menu <id>`). Give the command, the menu id and `SPACE_FOLDER` in the brief.
+- **The Codex review agent returns before Codex ends** (2026-11-06). `codex:codex-rescue` starts the Codex run in the background and hands back at once. Its stdout goes to a file in the session's `tasks/` folder; wait for that file (a background `until grep` loop), then read the findings.
 
 ### On Linux (decision D6, checked 2026-11-02 on Manjaro, GNOME on Wayland, AMD GPU)
 

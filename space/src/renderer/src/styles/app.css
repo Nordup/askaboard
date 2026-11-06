@@ -88,9 +88,18 @@ button:focus-visible {
 }
 
 /*
- * The top strip, level with the top bar (one 44 px title row, one centre line with the window buttons): the window
- * buttons at the left, the sidebar button at the right end. The button's icon ends in the column of the rows' hints
- * and times below: the rows' inset and padding, less the space between the icon and its hit area's edge.
+ * Without the strip (full screen, Linux, Windows) the sidebar starts at the top: the first row (New board) is centred
+ * on the title row's centre line, and the sidebar button leads the top bar.
+ */
+.sidebar--no-strip {
+  padding-top: calc((var(--topbar-height) - var(--sidebar-row-height)) / 2);
+}
+
+/*
+ * The top strip, only beside the macOS window buttons (a window, not full screen; App.tsx decides), level with the top
+ * bar (one 44 px title row, one centre line with the window buttons): the window buttons at the left, the sidebar button
+ * at the right end, 8 px above the first row. The button's icon ends in the column of the rows' hints and times below:
+ * the rows' inset and padding, less the space between the icon and its hit area's edge.
  */
 .sidebar__strip {
   display: flex;
@@ -98,6 +107,7 @@ button:focus-visible {
   justify-content: flex-end;
   height: var(--titlebar-height);
   flex-shrink: 0;
+  margin-bottom: var(--space-2);
   padding-right: calc(2 * var(--space-2) - (var(--title-button-size) - var(--title-icon-size)) / 2);
   -webkit-app-region: drag;
 }
@@ -158,8 +168,8 @@ button:focus-visible {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  height: var(--sidebar-footer-height);
-  padding: 0 var(--space-2);
+  /* the same 8 px from the hairline, the sidebar's edges and the window bottom */
+  padding: var(--space-2);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -169,7 +179,7 @@ button:focus-visible {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  height: calc(var(--sidebar-footer-height) - 2 * var(--space-1));
+  height: var(--folder-row-height);
   padding: 0 var(--space-2);
   border-radius: var(--radius-md);
   text-align: left;
@@ -245,6 +255,41 @@ button:focus-visible {
   border-radius: var(--radius-md);
 }
 
+/* ---------- Tooltip ---------- */
+
+/*
+ * The one tooltip (components/Tooltip.tsx; design-system.md, "Tooltips"). A control asks for it with
+ * {...tip(label, shortcut)}; no native `title` in app UI. It names an icon-only control or a shortcut, never
+ * internal data (a path, an id) and never the visible label again.
+ *
+ *   .tooltip        a small label in a portal: after 500 ms of hover (at once from one tooltip control to the
+ *                   next within 300 ms), and on :focus-visible; never on a press; hidden on leave, a key, a
+ *                   click, a scroll; below the control (--tooltip-gap), above it when there is no room
+ *   .tooltip__key   the shortcut after the label, tertiary
+ */
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tooltip__key {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+}
+
 /* ---------- Top bar ---------- */
 
 .topbar {
@@ -276,8 +321,11 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/* With the sidebar hidden: the sidebar button and New board after the window buttons (or at the inset), then the board name. */
-.shell[data-sidebar-hidden] .topbar {
+/*
+ * The top bar leads with the sidebar button (and New board with the sidebar hidden) when no sidebar strip holds it:
+ * after the window buttons (sidebar hidden, macOS window) or at the inset, then the board name.
+ */
+.topbar--lead {
   padding-left: var(--chrome-reserve);
 }
 
@@ -316,16 +364,16 @@ button:focus-visible {
   gap: var(--space-2);
 }
 
+/* A title-row status item (agent, scene, performance): no border or capsule; a hover and an open state. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: var(--pill-gap);
   flex-shrink: 0;
   height: var(--pill-height);
-  padding: 0 var(--space-3) 0 10px;
+  padding: 0 var(--space-2);
   white-space: nowrap;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--text-secondary);
   transition: background 120ms ease;
@@ -336,7 +384,7 @@ button:focus-visible {
 }
 
 /*
- * Pill parts. A pill is a button (the agent pill) or, with --static, a plain
+ * Pill parts (a "pill" is the title row's status item; it has no capsule shape). A pill is a button (the agent pill) or, with --static, a plain
  * holder of one control (the scene pill):
  *   .pill__label   the main text; long text ends with an ellipsis
  *   .pill__count   a count after the label ("· 2/5"); its .pill__sep is the "· "
@@ -371,12 +419,12 @@ button:focus-visible {
 }
 
 .pill--static:has(.pill__toggle) .pill__toggle {
-  padding-left: 10px;
+  padding-left: var(--space-2);
 }
 
 .pill--static:has(.pill__action) {
-  /* the button sits evenly inside the pill's border */
-  padding-right: calc((var(--pill-height) - var(--pill-action-size)) / 2 - 1px);
+  /* the button sits evenly inside the pill's hover area */
+  padding-right: calc((var(--pill-height) - var(--pill-action-size)) / 2);
 }
 
 .pill__label {
@@ -569,6 +617,15 @@ button:focus-visible {
   max-height: calc(100vh - 2 * var(--search-panel-margin-y));
   margin: auto;
   outline: none;
+}
+
+/* The Settings panel (⌘,): layout only (centred in the window both ways, a fixed width, the height of its rows); the content is shared .menu parts. */
+.menu.settings-panel {
+  inset: 0;
+  width: min(var(--settings-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
+  height: fit-content;
+  max-height: calc(100vh - 2 * var(--search-panel-margin-y));
+  margin: auto;
 }
 
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
@@ -1270,7 +1327,7 @@ button:focus-visible {
  *
  *   .menu__heading         small uppercase section label
  *   .menu__title/__lede    a title and one muted line (or two: a second .menu__lede follows closely); long words wrap
- *   .menu__path            a quiet one-line path at the top of a menu (tertiary, meta size; the full path in its title)
+ *   .menu__path            a quiet one-line path at the top of a menu (tertiary, meta size, ellipsis)
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right);
  *                          an empty .menu__icon keeps a row's label in the column of the other rows' labels
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
@@ -1285,6 +1342,9 @@ button:focus-visible {
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
+ *   .menu__select          a small native select in a .menu__control (a voice, a pace)
+ *   .menu__text            a small text field in a .menu__row (a key), before its .btn-sm
+ *   .menu__progress        a 90 × 4 px accent progress bar (.menu__progress-bar sets its width), a % .menu__meta--mono after it
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
@@ -1341,7 +1401,7 @@ button:focus-visible {
   padding-bottom: var(--space-half);
 }
 
-/* A quiet path line at the top of a menu (the folder menu): one line; Menu.tsx gives the full path as its title. */
+/* A quiet path line at the top of a menu (the folder menu): one line, an ellipsis at the end. */
 .menu__path {
   padding: var(--menu-row-pad);
   overflow: hidden;
@@ -1454,6 +1514,17 @@ button:focus-visible {
   padding-block: 0;
 }
 
+/* A panel that holds the focus itself (the Settings panel, for its keys) shows no ring: its controls show theirs. */
+.menu--panel:focus-visible {
+  outline: none;
+}
+
+/* A panel's plain rows have the height of its items (the Settings panel). */
+.menu--panel .menu__row {
+  min-height: var(--panel-row-height);
+  padding-block: 0;
+}
+
 /* The pointer moves the selection, so a hovered row has no fill of its own: the selected row is the one fill. */
 .menu--panel .menu__item:not(.menu__item--current):hover:not(:disabled) {
   background: none;
@@ -1560,7 +1631,57 @@ button:focus-visible {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
+  gap: var(--space-1);
   min-height: 24px;
+}
+
+.menu__select {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--menu-meta-font);
+}
+
+.menu__text {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--menu-meta-font);
+  user-select: text;
+}
+
+.menu__text:focus-visible {
+  border-color: var(--accent);
+}
+
+.menu__text::placeholder {
+  color: var(--text-tertiary);
+}
+
+.menu__progress {
+  position: relative;
+  width: 90px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-active);
+}
+
+.menu__progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
 }
 
 .menu__switch {
@@ -1709,28 +1830,18 @@ button:focus-visible {
 
 /* ---------- Save status ---------- */
 
+/* Only a failed save shows: "Not saved" with its alert icon. The live region stays, empty, otherwise. */
 .save-status {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   margin-left: var(--space-3);
   font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-
-.save-status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-}
-
-.save-status--saving .save-status__dot {
-  background: var(--accent);
-}
-
-.save-status--error {
   color: var(--ink-pink);
+}
+
+.save-status:empty {
+  margin-left: 0;
 }
 
 /* ---------- Canvas notices ---------- */
@@ -2014,6 +2125,21 @@ button:focus-visible {
 
 .toast--info svg {
   color: var(--status-live);
+}
+
+/* A notice that asks for a step (the voice's daily limit): a warn icon and one text action after the text. */
+.toast--warn svg {
+  color: var(--status-warn);
+}
+
+.toast__action {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 560;
+}
+
+.toast__action:hover {
+  text-decoration: underline;
 }
 
 /* ---------- Folder guide overrides (.learning-space/guide.md, instructions.md) ---------- */

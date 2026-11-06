@@ -1,3 +1,4 @@
+import { tip } from './Tooltip'
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import type { FilePreview } from '@shared/space-api'
@@ -72,7 +73,7 @@ export function PreviewPanel({ path, version, onClose }: PreviewPanelProps) {
           {dir && <span className="preview__dir">{dir}</span>}
         </div>
         {preview && <span className="preview__size">{formatSize(preview.size)}</span>}
-        <button className="icon-button" title="Close preview" aria-label="Close preview" onClick={onClose}>
+        <button className="icon-button" {...tip('Close preview')} aria-label="Close preview" onClick={onClose}>
           <X size={14} strokeWidth={2} />
         </button>
       </header>

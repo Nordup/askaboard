@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { app } from 'electron'
-import { readTelemetryIdentity, type TelemetryIdentity } from './analytics-id'
+import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
 
 /**
  * Usage data (decision P24). The delivery copies T3 Code's telemetry/AnalyticsService.ts: an
@@ -177,7 +177,7 @@ function flush(): Promise<void> {
 /** Read the ids, start the flush loop and the quit flush. Call once, when the app is ready. */
 export function start(): void {
   if (!enabled || identity) return
-  identity = readTelemetryIdentity().then(
+  identity = telemetryIdentity().then(
     (id) => {
       resolved = id
       if (!id.distinctId) buffer = []
@@ -221,6 +221,11 @@ export function agentClientName(raw: string | undefined): string {
   if (name.includes('codex')) return 'codex'
   if (name.includes('cursor')) return 'cursor'
   return 'other'
+}
+
+/** An MCP client's version when it is a plain version number (1.2.3, 2.0.1-beta.4), else null: free text is not sent. */
+export function agentClientVersion(raw: unknown): string | null {
+  return typeof raw === 'string' && /^\d{1,9}(\.\d{1,9}){0,3}([-+][0-9A-Za-z.-]{1,20})?$/.test(raw) ? raw : null
 }
 
 // ---------- board.opened ----------

@@ -30,4 +30,30 @@ export function stepSize(factor: number, direction: 1 | -1): number {
   return next ?? factor
 }
 
+/**
+ * The macOS window buttons at an Interface Size factor. They are native, so the page zoom does not move them: three
+ * 14 px circles at a 23 px pitch, 60 px from the first circle's left edge to the last one's right edge (measured in a
+ * window capture, 2026-11-06). Their centre line is the title row's centre (44 CSS px high, tokens.css
+ * --titlebar-height), so y follows the factor. x stays 16 window px at every factor: macOS keeps the window buttons a
+ * fixed distance from the window edge whatever the content size (Finder, Mail and Xcode keep about 20 px at every
+ * toolbar size), and a scaled x (24 px at 150%) looks loose next to other windows.
+ */
+const WINDOW_BUTTONS_X = 16
+const WINDOW_BUTTONS_WIDTH = 60
+const WINDOW_BUTTON_SIZE = 14
+const TITLE_ROW_CSS = 44
+
+/** Where the window buttons go at this factor (BrowserWindow trafficLightPosition / setWindowButtonPosition, window px). */
+export function windowButtonPosition(factor: number): { x: number; y: number } {
+  return { x: WINDOW_BUTTONS_X, y: Math.round((TITLE_ROW_CSS * factor - WINDOW_BUTTON_SIZE) / 2) }
+}
+
+/**
+ * The window buttons' right edge in CSS px at this factor: the renderer's --window-buttons-end. The 16 CSS px gap after
+ * it (--window-buttons-gap) is then 16 x factor window px, as every other CSS length. null off macOS (no window buttons).
+ */
+export function windowButtonsEnd(factor: number): number | null {
+  return process.platform === 'darwin' ? (WINDOW_BUTTONS_X + WINDOW_BUTTONS_WIDTH) / factor : null
+}
+
 export const percent = (factor: number): string => `${Math.round(factor * 100)}%`

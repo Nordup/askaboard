@@ -10,8 +10,9 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
-import { automaticSize, interfaceFactor, stepSize, type InterfaceSize } from './interface-size'
+import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
+import { registerSettings, settingsChanged } from './settings'
+import { automaticSize, interfaceFactor, stepSize, windowButtonPosition, windowButtonsEnd, type InterfaceSize } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -62,6 +63,8 @@ const remoteDebugPort = (() => {
   }
   return port
 })()
+/** Dev hook (with SPACE_REMOTE_DEBUG): the renderer lays out as in full screen, with no real full screen (no new macOS Space). */
+const fakeFullScreen = remoteDebugPort !== null && process.env.SPACE_FAKE_FULL_SCREEN === '1'
 if (remoteDebugPort !== null) {
   app.commandLine.appendSwitch('remote-debugging-port', String(remoteDebugPort))
   app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
@@ -139,6 +142,7 @@ const agentServer = new AgentServer({
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
   readLines: readLinesNow,
+  voiceNotice: showVoiceNotice,
   shownBoard: () => (session ? store.getLastBoard(session.root) : null),
   folder: () => session,
   // This instance owns the port: point the relay at it and refresh its offline tool list.
@@ -164,15 +168,26 @@ function setSidebarHidden(hidden: boolean): void {
 /** What the menu and the renderer show of Read Lines Aloud. */
 let readLinesShown: boolean | null = null
 
-/** Read Lines Aloud as it stands, the one way to read it: with no saved choice it follows the key, which can come or go while the app runs. A change reaches the menu and the renderer here. */
+/** Read Lines Aloud as it stands, the one way to read it. A change reaches the menu and the renderer here. */
 function readLinesNow(): boolean {
   const on = store.readLinesOn()
   if (on !== readLinesShown) {
     readLinesShown = on
     setReadLinesChecked(on)
     send(IPC.readLines, on)
+    settingsChanged()
   }
   return on
+}
+
+/** The day (local date) the daily-limit notice last showed: at most once a day per app run, not on every scene. */
+let voiceNoticeDay: string | null = null
+
+function showVoiceNotice(code: 'daily_cap'): void {
+  const day = new Date().toDateString()
+  if (voiceNoticeDay === day) return
+  voiceNoticeDay = day
+  send(IPC.voiceNotice, code)
 }
 
 // The watcher skips hidden folders, so .learning-space changes reach the UI
@@ -348,7 +363,8 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, homeDir: homedir() }
+    const buttonsEnd = win && win === liveMainWindow() ? windowButtonsEnd(interfaceFactor(store.getInterfaceSize(), win)) : null
+    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: fakeFullScreen || (win?.isFullScreen() ?? false), windowButtonsEnd: buttonsEnd, homeDir: homedir() }
   })
   ipcMain.on(IPC.setSidebarHidden, (event, hidden: unknown) => {
     if (event.sender === mainWindow?.webContents && typeof hidden === 'boolean') setSidebarHidden(hidden)
@@ -600,7 +616,8 @@ function createWindow(): BrowserWindow {
     title: 'Learning Space',
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 15 }, // 14 px buttons centred on the 44 px title row (tokens.css --window-buttons-end)
+    // Centred on the 44 CSS px title row at the window's Interface Size (applyInterfaceSize moves them when it changes).
+    trafficLightPosition: windowButtonPosition(interfaceFactor(store.getInterfaceSize(), null)),
     // Linux and Windows draw the application menu as a bar inside the window, above the app's own top bar.
     // Hidden, it shows on Alt, and its accelerators keep working.
     autoHideMenuBar: process.platform !== 'darwin',
@@ -695,6 +712,15 @@ if (uncappedAtLaunch) {
 }
 limitDiskCache()
 registerIpc()
+registerSettings({
+  handle,
+  send,
+  setReadLines: (on) => {
+    store.setReadLines(on)
+    readLinesNow()
+  },
+  menuChanged: () => setVoiceMenu(store.getVoice(), store.getPace())
+})
 
 /** The automatic interface size that the menu shows (the screen module works only once the app is ready). */
 let menuAutomaticSize = 1
@@ -730,9 +756,16 @@ function buildMenu(): void {
       readLinesNow()
     },
     voice: store.getVoice(),
-    setVoice: store.setVoice,
+    setVoice: (voice) => {
+      store.setVoice(voice)
+      settingsChanged()
+    },
     pace: store.getPace(),
-    setPace: store.setPace,
+    setPace: (pace) => {
+      store.setPace(pace)
+      settingsChanged()
+    },
+    openSettings: () => sendMenuCommand('open-settings'),
     interfaceSize: store.getInterfaceSize(),
     automaticSize: menuAutomaticSize,
     setInterfaceSize,
@@ -761,10 +794,22 @@ function applyInterfaceSize(win: BrowserWindow | null): void {
   }
   if (!win || win.isDestroyed()) return
   const factor = interfaceFactor(store.getInterfaceSize(), win)
+  placeWindowButtons(win, factor)
   if (Math.abs(win.webContents.getZoomFactor() - factor) < 1e-6) return
   win.webContents.setZoomFactor(factor)
   const { width, height } = screen.getDisplayMatching(win.getBounds()).workAreaSize
   win.setMinimumSize(Math.min(Math.round(MIN_PAGE[0] * factor), width), Math.min(Math.round(MIN_PAGE[1] * factor), height))
+}
+
+/** The factor each window's buttons were last placed for: 'move' fires often, the renderer hears only a change. */
+const placedButtons = new WeakMap<BrowserWindow, number>()
+
+/** macOS: the window buttons on the title row's centre line at this factor, and their right edge to the renderer. */
+function placeWindowButtons(win: BrowserWindow, factor: number): void {
+  if (process.platform !== 'darwin' || placedButtons.get(win) === factor) return
+  placedButtons.set(win, factor)
+  win.setWindowButtonPosition(windowButtonPosition(factor))
+  win.webContents.send(IPC.windowButtons, windowButtonsEnd(factor))
 }
 
 void app.whenReady().then(async () => {
@@ -780,7 +825,7 @@ void app.whenReady().then(async () => {
   firstFolder = openInitialFolder().then(() => {
     setFolderOpen(session !== null)
     agentServer.start()
-    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: hasVoiceKey() ? 'own_key' : 'off' })
+    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: !store.readLinesOn() ? 'off' : store.getVoiceModel() === 'local' ? 'local' : hasVoiceKey() ? 'own_key' : 'backend' })
   })
   void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   void cleanTraces().catch((error) => console.error(`storage: ${String(error)}`))
