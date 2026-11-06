@@ -182,7 +182,7 @@ export function Sidebar(props: SidebarProps) {
         />
       )}
 
-      <div className="sidebar__scroll">
+      <div className="sidebar__scroll scroll-area">
         <section className="section">
           <header className="section__header">
             <span className="section__title">Boards</span>

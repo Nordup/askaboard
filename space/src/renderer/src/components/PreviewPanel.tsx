@@ -77,7 +77,7 @@ export function PreviewPanel({ path, version, onClose }: PreviewPanelProps) {
           <X size={14} strokeWidth={2} />
         </button>
       </header>
-      <div className="preview__body">{body}</div>
+      <div className="preview__body scroll-area">{body}</div>
     </aside>
   )
 }

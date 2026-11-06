@@ -66,7 +66,7 @@ export function PerfPill() {
         </button>
       </div>
       {open && (
-        <div className="menu perf-pop" role="dialog" aria-label="Performance">
+        <div className="menu perf-pop scroll-area" role="dialog" aria-label="Performance">
           <div className="menu__heading">Board</div>
           <Row name="Frame rate" value={rate} />
           <Row name="Slowest frame" value={fixed(reading?.worstFrameMs ?? null, 'ms')} />

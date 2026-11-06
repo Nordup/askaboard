@@ -35,7 +35,13 @@ export function Select<T extends string>({ value, options, onChange, label, disa
   const triggerRef = useRef<HTMLButtonElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const [active, setActive] = useState(0)
+  const [active, setActiveState] = useState(0)
+  /** The active row as the keys last left it: Enter reads this, never a render's copy that a newer key or move outdated. */
+  const activeRef = useRef(0)
+  const setActive = (index: number): void => {
+    activeRef.current = index
+    setActiveState(index)
+  }
   const [place, setPlace] = useState<CSSProperties>({ visibility: 'hidden' })
   const typed = useRef({ text: '', at: 0 })
   const close = useCallback(() => setOpen(false), [])
@@ -113,7 +119,7 @@ export function Select<T extends string>({ value, options, onChange, label, disa
     typed.current = { text, at: now }
     const same = text.length > 1 && [...text].every((char) => char === text[0])
     const prefix = same ? text[0] : text
-    const from = text.length === 1 || same ? active + 1 : active
+    const from = text.length === 1 || same ? activeRef.current + 1 : activeRef.current
     for (let step = 0; step < options.length; step++) {
       const index = (from + step) % options.length
       if (options[index].label.toLowerCase().startsWith(prefix)) return moveTo(index)
@@ -131,11 +137,12 @@ export function Select<T extends string>({ value, options, onChange, label, disa
   const listKey = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.nativeEvent.isComposing) return
     let handled = true
-    if (event.key === 'ArrowDown') moveTo(active + 1)
-    else if (event.key === 'ArrowUp') moveTo(active - 1)
+    const at = activeRef.current
+    if (event.key === 'ArrowDown') moveTo(at + 1)
+    else if (event.key === 'ArrowUp') moveTo(at - 1)
     else if (event.key === 'Home' || event.key === 'PageUp') moveTo(0)
     else if (event.key === 'End' || event.key === 'PageDown') moveTo(options.length - 1)
-    else if (event.key === 'Enter' || event.key === ' ') choose(active)
+    else if (event.key === 'Enter' || event.key === ' ') choose(at)
     else if (event.key === 'Escape' || event.key === 'Tab') dismiss()
     else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) findTyped(event.key)
     else handled = false
@@ -165,7 +172,7 @@ export function Select<T extends string>({ value, options, onChange, label, disa
         <div
           ref={listRef}
           id={`${id}-list`}
-          className="menu menu--select"
+          className="menu menu--select scroll-area"
           role="listbox"
           aria-label={label}
           tabIndex={-1}
@@ -182,7 +189,12 @@ export function Select<T extends string>({ value, options, onChange, label, disa
               role="option"
               aria-selected={index === chosen}
               data-active={index === active ? '' : undefined}
-              onPointerMove={() => index !== active && setActive(index)}
+              onPointerMove={(event) => {
+                // Only a real move of the pointer moves the active row: Chromium also sends a move with no movement
+                // when the rows open or change under a still pointer, and that must not undo the keys' choice.
+                if (!event.movementX && !event.movementY) return
+                if (index !== activeRef.current) setActive(index)
+              }}
               onClick={() => choose(index)}
             >
               <span className="menu__option-label">{option.label}</span>

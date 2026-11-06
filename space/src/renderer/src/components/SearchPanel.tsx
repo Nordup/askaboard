@@ -166,7 +166,7 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
           />
         </div>
         {(rows.length > 0 || view.noMatch !== null) && (
-          <div ref={scrollRef} className="menu__scroll" id="search-panel-list" role="listbox">
+          <div ref={scrollRef} className="menu__scroll scroll-area" id="search-panel-list" role="listbox">
             {view.noMatch !== null && (
               <div className="menu__line">
                 <span className="menu__line-text">No boards match “{view.noMatch}”</span>

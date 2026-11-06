@@ -232,9 +232,8 @@
   --select-option-height: 30px;
   --select-option-pad: 0 10px;
 
-  /* Scrollbars (U14): one style for every scroll area (app.css, "Scrollbars"): a 6 px thumb in a 10 px zone, no track */
-  --scrollbar-size: 10px;
-  --scrollbar-inset: 2px; /* the transparent border around the thumb: 10 − 2 × 2 = 6 px */
+  /* Scrollbars (U14): one style for every scroll area (app.css, "Scrollbars"): a 6 px thumb, no track, shown on hover and scroll */
+  --scrollbar-size: 6px; /* the thumb's width, and the gutter a .scroll-area takes out of its right padding */
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 }

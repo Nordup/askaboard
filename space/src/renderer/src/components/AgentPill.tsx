@@ -183,7 +183,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
         {pillLabel(status, active)}
       </button>
       {open && (
-        <div className="menu agent-pop" role="dialog" aria-label={view === 'agents' ? 'Agents' : 'Connect an agent'} data-view={view}>
+        <div className="menu agent-pop scroll-area" role="dialog" aria-label={view === 'agents' ? 'Agents' : 'Connect an agent'} data-view={view}>
           {status?.state === 'error' && (
             <div className="menu__line menu__line--error">
               <AlertCircle size={12} strokeWidth={2} />

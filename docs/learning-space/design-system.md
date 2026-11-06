@@ -112,8 +112,8 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--select-list-min-width`, `--select-list-max-height`,
   `--select-list-radius`, `--select-list-pad`, `--select-option-height`,
   `--select-option-pad`
-- Scrollbars (U14): `--scrollbar-size`, `--scrollbar-inset`,
-  `--scrollbar-thumb`, `--scrollbar-thumb-hover`
+- Scrollbars (U14): `--scrollbar-size`, `--scrollbar-thumb`,
+  `--scrollbar-thumb-hover`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
@@ -220,12 +220,23 @@ The app's own dropdown (decision U14, approved mockup, 2026-11-06):
 
 ### Scrollbars
 
-One style for every scroll area (decision U14; `app.css`, "Scrollbars"):
-global `::-webkit-scrollbar` rules. The zone is `--scrollbar-size` (10 px);
-the thumb has a transparent `--scrollbar-inset` (2 px) border, so it shows
-6 px wide, `--radius-pill`, `--scrollbar-thumb` (white at 0.18),
-`--scrollbar-thumb-hover` (white at 0.3) on hover. No track, no arrow
-buttons, a transparent corner. Never style a scrollbar in one component.
+One style for every scroll area (decision U14; `app.css`, "Scrollbars", at
+the end of the file), as a macOS overlay scrollbar in our look: global
+`::-webkit-scrollbar` rules, a `--scrollbar-size` (6 px) thumb,
+`--radius-pill`, `--scrollbar-thumb` (white at 0.18),
+`--scrollbar-thumb-hover` (white at 0.3) on hover; no track, no arrow
+buttons, a transparent corner.
+
+- The thumb is invisible at rest. It fades in (`--fade`) while the area is
+  hovered or scrolls, and out again: `lib/scrollbars.ts` marks a scrolled
+  element `data-scrolling` until 800 ms after its last scroll.
+- `.scroll-area` is the one shared part for a scroll area (the sidebar
+  list, the Settings pane and section list, the search list, the select's
+  list, the pill popovers, the preview body). Its gutter is always there
+  (`scrollbar-gutter: stable`) and comes out of its right padding
+  (`--scroll-pad-end`, else `--menu-pad`), so its content never moves when
+  it starts to overflow, and lines up with the rows that do not scroll.
+- Never style a scrollbar in one component.
 
 ## Pills
 

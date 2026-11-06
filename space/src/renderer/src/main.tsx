@@ -1,4 +1,5 @@
 import './frame-pace'
+import './lib/scrollbars'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/tokens.css'

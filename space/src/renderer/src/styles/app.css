@@ -36,37 +36,6 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
-/* ---------- Scrollbars (U14) ---------- */
-
-/* One style for every scroll area (the Settings pane, the search list, the sidebar, menus, any overflow): a thin
-   rounded thumb, no track, no arrow buttons. The board canvas does not scroll natively, so it shows none. */
-::-webkit-scrollbar {
-  width: var(--scrollbar-size);
-  height: var(--scrollbar-size);
-  background: transparent;
-}
-
-::-webkit-scrollbar-track,
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  border: var(--scrollbar-inset) solid transparent;
-  border-radius: var(--radius-pill);
-  background: var(--scrollbar-thumb);
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
-}
-
-::-webkit-scrollbar-button {
-  display: none;
-}
-
 .mono {
   font-family: var(--font-mono);
 }
@@ -154,8 +123,8 @@ button:focus-visible {
 }
 
 .sidebar__scroll {
+  --scroll-pad-end: var(--space-2); /* a .scroll-area */
   flex: 1;
-  overflow-y: auto;
   padding: 0 var(--space-2) var(--space-4);
 }
 
@@ -2205,6 +2174,7 @@ button:focus-visible {
 .preview__body {
   flex: 1;
   overflow: auto;
+  --scroll-pad-end: var(--space-6); /* a .scroll-area */
   padding: var(--space-5) var(--space-6) var(--space-8);
   user-select: text;
 }
@@ -2446,4 +2416,70 @@ button:focus-visible {
 /* The "Set up this folder" flyout: layout only (width); the content is shared .menu parts. */
 .menu.setup-menu {
   width: 270px;
+}
+
+/* ---------- Scrollbars (U14) ---------- */
+
+/*
+ * One style for every scroll area, as a macOS overlay scrollbar in our look: a 6 px rounded thumb, no track, no arrow
+ * buttons. The thumb is invisible at rest; it shows while the area is hovered or scrolls (lib/scrollbars.ts sets
+ * data-scrolling for a moment after each scroll), then hides again. The board canvas does not scroll natively.
+ *
+ * .scroll-area is the one shared part for a scroll area: its gutter is always there (scrollbar-gutter: stable) and
+ * comes out of its right padding, so its content never moves when it starts to overflow and lines up with the rows
+ * that do not scroll. Its right padding is --scroll-pad-end (else --menu-pad inside a menu); it sets no other padding.
+ * This rule sits at the end of the file so that it follows every area's own padding.
+ */
+/* The thumb's colour now. It inherits, because a scrollbar part takes its values from its element by inheritance;
+   every element sets its own, so a hovered ancestor does not show the thumbs of the areas inside it. */
+@property --scrollbar-thumb-shown {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+:where(*) {
+  --scrollbar-thumb-shown: transparent;
+}
+
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb-shown);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+:hover,
+[data-scrolling] {
+  --scrollbar-thumb-shown: var(--scrollbar-thumb);
+}
+
+.scroll-area {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: calc(var(--scroll-pad-end, var(--menu-pad, 0px)) - var(--scrollbar-size));
+  transition: --scrollbar-thumb-shown var(--fade);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-area {
+    transition: none;
+  }
 }

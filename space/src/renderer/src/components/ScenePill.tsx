@@ -138,7 +138,7 @@ export function ScenePill() {
         )}
       </div>
       {open && (
-        <div className="menu scene-pop" role="menu" aria-label="Scenes">
+        <div className="menu scene-pop scroll-area" role="menu" aria-label="Scenes">
           <div className="menu__heading">Scenes</div>
           {scenes.length === 0 && <div className="menu__row menu__meta">No scenes on this board yet</div>}
           {scenes.map((entry) => {

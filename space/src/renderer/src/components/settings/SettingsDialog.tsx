@@ -77,7 +77,7 @@ export function SettingsDialog({ section, onSection, onClose, folder, homeDir, f
 
   return (
     <ModalPanel className="menu--split settings-dialog" label="Settings" onClose={onClose} onKeyDown={keyDown}>
-      <nav className="menu__nav" aria-label="Settings sections">
+      <nav className="menu__nav scroll-area" aria-label="Settings sections">
         {SECTIONS.map(navItem)}
         <div className="menu__nav-end">{navItem(ABOUT)}</div>
       </nav>
@@ -88,7 +88,7 @@ export function SettingsDialog({ section, onSection, onClose, folder, homeDir, f
             <X size={16} strokeWidth={1.75} />
           </button>
         </header>
-        <div className="menu__scroll">{body}</div>
+        <div className="menu__scroll scroll-area">{body}</div>
       </div>
     </ModalPanel>
   )
