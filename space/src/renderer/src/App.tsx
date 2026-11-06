@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { flushSync } from 'react-dom'
 import { AlertCircle, LayoutDashboard, Plus } from 'lucide-react'
 import {
@@ -40,6 +40,7 @@ import { isMac } from './platform'
 import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
 import { perfMeter } from './perf-meter'
+import { Tooltips } from './components/Tooltip'
 import type { BoardStories } from '@shared/scene-story'
 import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
 
@@ -802,6 +803,8 @@ export function App() {
   const [shellStart] = useState<ShellState>(() => space.getShellState())
   const [sidebarHidden, setSidebarHidden] = useState(shellStart.sidebarHidden)
   const [fullScreen, setFullScreen] = useState(shellStart.fullScreen)
+  /** Main places the window buttons for the Interface Size and says where they end (CSS px); tokens.css holds the 100% value. */
+  const [windowButtonsEnd, setWindowButtonsEnd] = useState(shellStart.windowButtonsEnd)
   /** The setting as last asked for, so two quick toggles are two changes before main answers. */
   const sidebarHiddenRef = useRef(shellStart.sidebarHidden)
   /**
@@ -819,7 +822,7 @@ export function App() {
     return true
   }, [])
   useEffect(() => {
-    const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen)]
+    const offs = [space.onSidebarHidden(changeSidebarHidden), space.onFullScreen(setFullScreen), space.onWindowButtons(setWindowButtonsEnd)]
     return () => offs.forEach((off) => off())
   }, [changeSidebarHidden])
   const toggleSidebar = useCallback(() => {
@@ -1202,6 +1205,7 @@ export function App() {
       data-sidebar-hidden={sidebarHidden || undefined}
       data-fullscreen={fullScreen || undefined}
       data-window-buttons={(isMac && !fullScreen) || undefined}
+      style={windowButtonsEnd === null ? undefined : ({ '--window-buttons-end': `${windowButtonsEnd}px` } as CSSProperties)}
     >
       <Sidebar
         hidden={sidebarHidden}
@@ -1297,6 +1301,7 @@ export function App() {
           onOpenFolder={openFolderFromSearch}
         />
       )}
+      <Tooltips />
     </div>
   )
 }

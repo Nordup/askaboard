@@ -60,7 +60,7 @@ export function PerfPill() {
   return (
     <div className="perf-pill" ref={rootRef}>
       <div className={`pill pill--static${open ? ' pill--open' : ''}`}>
-        <button className="pill__toggle" title="Performance" aria-label="Performance details" aria-expanded={open} onClick={() => setOpen((now) => !now)}>
+        <button className="pill__toggle" aria-label="Performance details" aria-expanded={open} onClick={() => setOpen((now) => !now)}>
           <span className={`status-dot${dot}`} />
           <span className="pill__time">{text}</span>
         </button>

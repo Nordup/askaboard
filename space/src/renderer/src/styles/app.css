@@ -245,6 +245,41 @@ button:focus-visible {
   border-radius: var(--radius-md);
 }
 
+/* ---------- Tooltip ---------- */
+
+/*
+ * The one tooltip (components/Tooltip.tsx; design-system.md, "Tooltips"). A control asks for it with
+ * {...tip(label, shortcut)}; no native `title` in app UI. It names an icon-only control or a shortcut, never
+ * internal data (a path, an id) and never the visible label again.
+ *
+ *   .tooltip        a small label in a portal: after 500 ms of hover (at once from one tooltip control to the
+ *                   next within 300 ms), and on :focus-visible; never on a press; hidden on leave, a key, a
+ *                   click, a scroll; below the control (--tooltip-gap), above it when there is no room
+ *   .tooltip__key   the shortcut after the label, tertiary
+ */
+.tooltip {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: var(--leading);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tooltip__key {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+}
+
 /* ---------- Top bar ---------- */
 
 .topbar {
@@ -1195,7 +1230,7 @@ button:focus-visible {
  *
  *   .menu__heading         small uppercase section label
  *   .menu__title/__lede    a title and one muted line (or two: a second .menu__lede follows closely); long words wrap
- *   .menu__path            a quiet one-line path at the top of a menu (tertiary, meta size; the full path in its title)
+ *   .menu__path            a quiet one-line path at the top of a menu (tertiary, meta size, ellipsis)
  *   .menu__item            clickable row: .menu__icon, .menu__label (one line, ellipsis), .menu__hint (right);
  *                          an empty .menu__icon keeps a row's label in the column of the other rows' labels
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
@@ -1264,7 +1299,7 @@ button:focus-visible {
   padding-bottom: var(--space-half);
 }
 
-/* A quiet path line at the top of a menu (the folder menu): one line; Menu.tsx gives the full path as its title. */
+/* A quiet path line at the top of a menu (the folder menu): one line, an ellipsis at the end. */
 .menu__path {
   padding: var(--menu-row-pad);
   overflow: hidden;

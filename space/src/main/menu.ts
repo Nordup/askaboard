@@ -131,8 +131,9 @@ export function installMenu(actions: MenuActions): void {
             { label: 'Larger', accelerator: 'CmdOrCtrl+Alt+=', click: () => actions.stepInterfaceSize(1) },
             { label: 'Smaller', accelerator: 'CmdOrCtrl+Alt+-', click: () => actions.stepInterfaceSize(-1) },
             { type: 'separator' },
-            { label: `Automatic (${percent(actions.automaticSize)})`, accelerator: 'CmdOrCtrl+Alt+0', type: 'radio', checked: actions.interfaceSize === 'auto', click: () => actions.setInterfaceSize('auto') },
-            ...INTERFACE_SIZES.map((size) => ({ label: percent(size), type: 'radio' as const, checked: actions.interfaceSize === size, click: () => actions.setInterfaceSize(size) }))
+            { id: 'interface-size-auto', label: `Automatic (${percent(actions.automaticSize)})`, accelerator: 'CmdOrCtrl+Alt+0', type: 'radio', checked: actions.interfaceSize === 'auto', click: () => actions.setInterfaceSize('auto') },
+            // Ids for the dev hook (drive.mjs menu interface-size-120): the percent.
+            ...INTERFACE_SIZES.map((size) => ({ id: `interface-size-${Math.round(size * 100)}`, label: percent(size), type: 'radio' as const, checked: actions.interfaceSize === size, click: () => actions.setInterfaceSize(size) }))
           ]
         },
         { type: 'separator' },

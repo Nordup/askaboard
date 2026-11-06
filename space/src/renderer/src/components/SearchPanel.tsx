@@ -227,7 +227,6 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
                   role="option"
                   aria-selected={index === current}
                   tabIndex={-1}
-                  title={row.kind === 'board' ? row.board.path : undefined}
                   onMouseMove={(event) => {
                     const last = pointer.current
                     pointer.current = { x: event.clientX, y: event.clientY }
@@ -237,8 +236,8 @@ export function SearchPanel({ boards, onClose, onOpenBoard, onNewBoard, onCreate
                   }}
                   onClick={() => run(row)}
                 >
-                  {/* A board row has no icon: its empty icon cell puts the name in the column of the action labels and the typed text. */}
-                  <span className="menu__icon">{row.kind === 'action' ? row.icon : row.kind === 'create' ? <SquarePen {...ROW_ICON} /> : null}</span>
+                  {/* A board row has no icon and no icon cell: its name starts in the column of the headings and the action icons. */}
+                  {row.kind !== 'board' && <span className="menu__icon">{row.kind === 'action' ? row.icon : <SquarePen {...ROW_ICON} />}</span>}
                   <span className="menu__label">{label(row)}</span>
                   {row.kind === 'board' && row.board.dir && <span className="menu__sub">{row.board.dir}</span>}
                   {row.kind === 'board' ? <span className="menu__hint">{shortAgo(row.board.editedAt, now)}</span> : row.kind === 'action' ? <span className="menu__hint">{row.hint}</span> : null}

@@ -1,3 +1,4 @@
+import { tip } from './Tooltip'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pause, Play } from 'lucide-react'
 import { useSceneState } from '../live/state'
@@ -117,9 +118,9 @@ export function ScenePill() {
   return (
     <div className={`scene-pill${shown ? ' is-shown' : ''}`} ref={rootRef}>
       <div className={`pill pill--static${value.selected ? ' pill--selected' : ''}${open ? ' pill--open' : ''}${flash ? ' pill--flash' : ''}`} data-state={value.playing ? 'playing' : 'idle'}>
-        <button className="pill__toggle" title="Scenes" aria-label="Scenes of this board" aria-expanded={open} disabled={!shown} onClick={() => setOpen((now) => !now)}>
+        <button className="pill__toggle" aria-label="Scenes of this board" aria-expanded={open} disabled={!shown} onClick={() => setOpen((now) => !now)}>
           <span className={value.playing ? 'status-dot status-dot--play' : 'status-dot'} />
-          <span className="pill__label" title={value.label}>
+          <span className="pill__label">
             {value.label}
           </span>
           {value.count && (
@@ -131,7 +132,7 @@ export function ScenePill() {
           {value.time && <span className="pill__time">{value.time}</span>}
         </button>
         {value.action && (
-          <button className="pill__action" title={value.action.label} aria-label={value.action.label} disabled={!shown} onClick={value.action.run}>
+          <button className="pill__action" {...tip(value.action.label)} aria-label={value.action.label} disabled={!shown} onClick={value.action.run}>
             {value.action.pause ? <Pause size={12} strokeWidth={2} fill="currentColor" /> : <Play size={12} strokeWidth={2} fill="currentColor" />}
           </button>
         )}
@@ -149,7 +150,6 @@ export function ScenePill() {
                 className={`menu__item${current ? ' menu__item--current' : ''}`}
                 role="menuitemradio"
                 aria-checked={current}
-                title={name}
                 onClick={() => {
                   setOpen(false)
                   chooseScene(entry.scene)

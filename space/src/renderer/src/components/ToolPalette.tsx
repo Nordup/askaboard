@@ -1,3 +1,4 @@
+import { tip } from './Tooltip'
 import type { CSSProperties } from 'react'
 import { Eraser, Highlighter, Lasso, PenLine, Type, type LucideIcon } from 'lucide-react'
 import { INK_COLORS, STROKE_WIDTHS, type ToolId, type ToolState } from '../tools'
@@ -32,7 +33,7 @@ export function ToolPalette({ state, onChange, onColor, onWidth }: ToolPalettePr
         <button
           key={id}
           className="tool"
-          title={`${label} (${key})`}
+          {...tip(label, key)}
           aria-label={label}
           aria-pressed={state.tool === id}
           onClick={() => onChange({ ...state, tool: id })}
@@ -48,7 +49,7 @@ export function ToolPalette({ state, onChange, onColor, onWidth }: ToolPalettePr
           <button
             key={color.id}
             className="swatch"
-            title={color.label}
+            {...tip(`${color.label} ink`)}
             aria-label={`${color.label} ink`}
             aria-pressed={state.colorId === color.id}
             style={{ '--swatch': color.value } as CSSProperties}
@@ -69,7 +70,7 @@ export function ToolPalette({ state, onChange, onColor, onWidth }: ToolPalettePr
           <button
             key={width.id}
             className="width"
-            title={`${width.label} stroke`}
+            {...tip(`${width.label} stroke`)}
             aria-label={`${width.label} stroke`}
             aria-pressed={state.widthId === width.id}
             onClick={() => {

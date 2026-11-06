@@ -143,6 +143,8 @@ export interface ShellState {
   sidebarHidden: boolean
   /** The window is in full screen (macOS: no window buttons at the top left). */
   fullScreen: boolean
+  /** macOS: the window buttons' right edge in CSS px at the window's Interface Size (--window-buttons-end); null elsewhere. */
+  windowButtonsEnd: number | null
   /** The learner's home folder, so a path can show as `~/…`. */
   homeDir: string
 }
@@ -638,6 +640,8 @@ export interface SpaceApi {
   onSidebarHidden(listener: (hidden: boolean) => void): Unsubscribe
   /** The window entered (true) or left (false) full screen. */
   onFullScreen(listener: (on: boolean) => void): Unsubscribe
+  /** macOS: the window buttons moved for a new Interface Size; their right edge in CSS px. */
+  onWindowButtons(listener: (end: number | null) => void): Unsubscribe
   /** View > Show performance, as saved. */
   getShowPerformance(): Promise<boolean>
   /** View > Read Lines Aloud as it stands: with it off, the board plays no voice. */
@@ -769,6 +773,7 @@ export const IPC = {
   setSidebarHidden: 'space:set-sidebar-hidden',
   sidebarHidden: 'space:sidebar-hidden',
   fullScreen: 'space:full-screen',
+  windowButtons: 'space:window-buttons',
   flushStarted: 'space:flush-started',
   flushDone: 'space:flush-done',
   getAgentStatus: 'space:get-agent-status',

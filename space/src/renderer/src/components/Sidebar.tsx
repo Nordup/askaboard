@@ -115,7 +115,7 @@ export function Sidebar(props: SidebarProps) {
       above: true,
       className: 'folder-menu',
       entries: [
-        { path: shortPath(path), full: path },
+        { path: shortPath(path) },
         'separator',
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
         { label: openFolderLabel, icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
@@ -218,7 +218,6 @@ export function Sidebar(props: SidebarProps) {
                       className={board.path === openBoard ? 'board-row board-row--active' : 'board-row'}
                       role="button"
                       tabIndex={0}
-                      title={board.path}
                       onClick={() => props.onOpenBoard(board.path)}
                       onDoubleClick={() => props.onStartRename(board.path)}
                       onKeyDown={(event) => {
@@ -267,7 +266,6 @@ export function Sidebar(props: SidebarProps) {
         <button
           ref={footerRef}
           className="folder-row"
-          title={folderRoot ?? undefined}
           aria-haspopup={folderRoot ? 'menu' : undefined}
           aria-expanded={folderRoot ? menu?.className === 'folder-menu' : undefined}
           onClick={(event) => {

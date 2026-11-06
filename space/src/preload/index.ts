@@ -46,6 +46,7 @@ const api: SpaceApi = {
   setSidebarHidden: (hidden) => ipcRenderer.send(IPC.setSidebarHidden, hidden),
   onSidebarHidden: (listener) => listen(IPC.sidebarHidden, listener),
   onFullScreen: (listener) => listen(IPC.fullScreen, listener),
+  onWindowButtons: (listener) => listen(IPC.windowButtons, listener),
   getShowPerformance: () => ipcRenderer.invoke(IPC.getShowPerformance),
   getReadLines: () => ipcRenderer.invoke(IPC.getReadLines),
   onReadLines: (listener) => listen(IPC.readLines, listener),

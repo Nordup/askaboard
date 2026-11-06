@@ -133,15 +133,18 @@
   --titlebar-height: 44px;
   /*
    * The title row: the 44 px row across the window (the sidebar strip and the top bar). The macOS window buttons
-   * (main/index.ts trafficLightPosition { x: 16, y: 15 }) are three 14 px circles at a 23 px pitch: x 16 to 76,
-   * centre line 22 px, the row's centre (measured in a window capture, 2026-11-06).
+   * are three 14 px circles at a 23 px pitch: x 16 to 76 window px, centre line on the row's centre (measured in a
+   * window capture, 2026-11-06). Main places them for the Interface Size factor f (main/interface-size.ts) and sets
+   * --window-buttons-end on .shell to 76 / f; the value here is the 100% one.
    */
-  --window-buttons-end: 76px; /* the right edge of the macOS window buttons */
+  --window-buttons-end: 76px; /* the right edge of the macOS window buttons at 100% */
   --window-buttons-gap: 16px; /* from that edge to the first title-row button */
   --title-row-inset: var(--space-3); /* the first button's left edge in full screen, on Linux and on Windows */
   --title-button-size: 28px; /* a title-row icon button's hit area (16 px icon): the sidebar button, New board */
   --title-button-gap: var(--space-1); /* between neighbouring title-row buttons */
   --title-icon-size: 16px; /* the icon in a title-row button */
+  --tooltip-gap: 6px; /* from a control to its tooltip (below it, or above it when there is no room) */
+  --tooltip-margin: var(--space-2); /* a tooltip keeps this far inside the window */
   --sidebar-row-height: 30px; /* every sidebar row: New board, Search boards, a board */
   --sidebar-footer-height: 44px; /* the folder row at the bottom of the sidebar */
   --topbar-rename-width: 240px; /* the board name's rename field in the top bar (sidebar hidden) */

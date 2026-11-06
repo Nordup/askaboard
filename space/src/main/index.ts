@@ -11,7 +11,7 @@ import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu } from './menu'
-import { automaticSize, interfaceFactor, stepSize, type InterfaceSize } from './interface-size'
+import { automaticSize, interfaceFactor, stepSize, windowButtonPosition, windowButtonsEnd, type InterfaceSize } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -345,7 +345,8 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, homeDir: homedir() }
+    const buttonsEnd = win && win === liveMainWindow() ? windowButtonsEnd(interfaceFactor(store.getInterfaceSize(), win)) : null
+    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, windowButtonsEnd: buttonsEnd, homeDir: homedir() }
   })
   ipcMain.on(IPC.setSidebarHidden, (event, hidden: unknown) => {
     if (event.sender === mainWindow?.webContents && typeof hidden === 'boolean') setSidebarHidden(hidden)
@@ -583,7 +584,8 @@ function createWindow(): BrowserWindow {
     title: 'Learning Space',
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 15 }, // 14 px buttons centred on the 44 px title row (tokens.css --window-buttons-end)
+    // Centred on the 44 CSS px title row at the window's Interface Size (applyInterfaceSize moves them when it changes).
+    trafficLightPosition: windowButtonPosition(interfaceFactor(store.getInterfaceSize(), null)),
     // Linux and Windows draw the application menu as a bar inside the window, above the app's own top bar.
     // Hidden, it shows on Alt, and its accelerators keep working.
     autoHideMenuBar: process.platform !== 'darwin',
@@ -744,10 +746,22 @@ function applyInterfaceSize(win: BrowserWindow | null): void {
   }
   if (!win || win.isDestroyed()) return
   const factor = interfaceFactor(store.getInterfaceSize(), win)
+  placeWindowButtons(win, factor)
   if (Math.abs(win.webContents.getZoomFactor() - factor) < 1e-6) return
   win.webContents.setZoomFactor(factor)
   const { width, height } = screen.getDisplayMatching(win.getBounds()).workAreaSize
   win.setMinimumSize(Math.min(Math.round(MIN_PAGE[0] * factor), width), Math.min(Math.round(MIN_PAGE[1] * factor), height))
+}
+
+/** The factor each window's buttons were last placed for: 'move' fires often, the renderer hears only a change. */
+const placedButtons = new WeakMap<BrowserWindow, number>()
+
+/** macOS: the window buttons on the title row's centre line at this factor, and their right edge to the renderer. */
+function placeWindowButtons(win: BrowserWindow, factor: number): void {
+  if (process.platform !== 'darwin' || placedButtons.get(win) === factor) return
+  placedButtons.set(win, factor)
+  win.setWindowButtonPosition(windowButtonPosition(factor))
+  win.webContents.send(IPC.windowButtons, windowButtonsEnd(factor))
 }
 
 void app.whenReady().then(async () => {

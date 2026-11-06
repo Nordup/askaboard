@@ -32,7 +32,7 @@ export function WelcomeCard({ recent, onOpenFolder, onOpenRecent }: WelcomeCardP
             <ul className="recent-list">
               {recent.map((entry) => (
                 <li key={entry.path}>
-                  <button className="recent-row" title={entry.path} onClick={() => onOpenRecent(entry.path)}>
+                  <button className="recent-row" onClick={() => onOpenRecent(entry.path)}>
                     <Folder size={14} strokeWidth={1.75} />
                     <span className="recent-row__name">{entry.name}</span>
                     <span className="recent-row__path">{entry.path.replace(/^\/Users\/[^/]+/, '~')}</span>
