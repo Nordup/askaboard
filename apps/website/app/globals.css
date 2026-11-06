@@ -44,6 +44,10 @@
   --window-close: #ff5f57;
   --window-minimize: #febc2e;
   --window-zoom: #28c840;
+  /* A hero window at rest: macOS's inactive window (grey buttons, a fainter edge, a smaller shadow); it becomes active on hover or grab. */
+  --window-inactive: #3d3d42;
+  --border-quiet: rgba(255, 255, 255, 0.07);
+  --shadow-quiet: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 32px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.12);
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
   --hand: 'Learning Hand', var(--font-ui);

@@ -83,6 +83,57 @@
   background: var(--window-zoom);
 }
 
+/*
+ * A quiet window (the hero's): at rest it looks like an inactive macOS window, so the windows
+ * clutter less; on hover or grab (data-active, engine.ts) it becomes the active window above.
+ */
+.quiet {
+  border-color: var(--border-quiet);
+  box-shadow: var(--shadow-quiet);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.quiet .titlebar {
+  background: var(--bg-canvas);
+  transition: background-color 0.18s ease;
+}
+
+.quiet .titlebar i {
+  background: var(--window-inactive);
+  transition: background-color 0.18s ease;
+}
+
+.quiet[data-active] {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.quiet[data-active] .titlebar {
+  background: var(--bg-elevated-2);
+}
+
+.quiet[data-active] .titlebar i {
+  background: var(--window-close);
+}
+
+.quiet[data-active] .titlebar i:nth-child(2) {
+  background: var(--window-minimize);
+}
+
+.quiet[data-active] .titlebar i:nth-child(3) {
+  background: var(--window-zoom);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quiet,
+  .quiet .titlebar,
+  .quiet .titlebar i {
+    transition: none;
+  }
+}
+
 /* The draft: what is being drawn now (a shape, a pen stroke, a text, the eraser ring), over the viewport. */
 .draft {
   position: fixed;

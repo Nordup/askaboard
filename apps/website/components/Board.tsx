@@ -67,7 +67,7 @@ export function Board() {
       <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite} aria-hidden="true">
         {SPRITES.filter((def) => !def.step).map((def) =>
           def.window ? (
-            <div key={def.id} className={`${styles.sprite} ${styles.window}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
+            <div key={def.id} className={`${styles.sprite} ${styles.window} ${def.agent ? '' : styles.quiet}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
               <div className={styles.titlebar}>
                 <i />
                 <i />

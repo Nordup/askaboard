@@ -35,6 +35,16 @@
   top: calc((100svh - var(--win-h)) / 2);
 }
 
+/* With motion the script owns the stage's place (AppShell.tsx placeStage): fixed to the viewport, moved by its translate only, so the browser never moves it on its own. */
+.section[data-glide] .stage {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: var(--win-w);
+  margin: 0 auto;
+}
+
 /* ---------- The window ---------- */
 
 .frame {

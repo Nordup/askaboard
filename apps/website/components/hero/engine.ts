@@ -221,6 +221,8 @@ export function mountBoard(o: {
   let suppressClick = false
   let paintAll = true
   let overShell = false
+  /** The window under the pointer or held: it shows as the active window (data-active, Board.module.css .quiet). */
+  let active: Item | null = null
   const t0 = performance.now()
 
   // ---------- Layout ----------
@@ -454,6 +456,14 @@ export function mountBoard(o: {
     return best
   }
 
+  const setActive = (item: Item | null): void => {
+    const next = item?.window ? item : null
+    if (next === active) return
+    active?.el.removeAttribute('data-active')
+    active = next
+    active?.el.setAttribute('data-active', '')
+  }
+
   const toFront = (item: Item): void => {
     item.z = ++z
     item.el.style.zIndex = String(item.z)
@@ -492,6 +502,7 @@ export function mountBoard(o: {
   const setTool = (tool: ToolId): void => {
     if (editing) commitText()
     state = { ...state, tool }
+    if (tool !== 'select') setActive(null)
     // One finger scrolls the page with the select tool; the other tools draw (or pan) with it.
     host.style.touchAction = tool === 'select' ? 'pan-y pinch-zoom' : 'none'
     host.dataset.tool = tool
@@ -596,6 +607,7 @@ export function mountBoard(o: {
       // Not on an item: the page's own text, button and links work as usual.
       if (!item) return
       toFront(item)
+      setActive(item)
       press = { kind: 'item', item, from: [item.dx, item.dy], start: p }
       if (isLink(e.target)) suppressClick = true
     } else {
@@ -627,6 +639,7 @@ export function mountBoard(o: {
     if (!press) {
       if (e.pointerType === 'touch') return
       overShell = isOverShell(e.target)
+      setActive(state.tool === 'select' ? itemAt(p) : null)
       if (state.tool === 'eraser') {
         eraserAt = p
         request()
@@ -670,6 +683,8 @@ export function mountBoard(o: {
       }
     }
     if (e.pointerType === 'touch') eraserAt = null
+    // Released: the window stays active only while the pointer is still on it.
+    setActive(e.pointerType !== 'touch' && state.tool === 'select' ? itemAt(toWorld(local(e))) : null)
     request()
     setCursor(toWorld(local(e)))
   }
@@ -682,6 +697,7 @@ export function mountBoard(o: {
   }
 
   const onPointerLeave = (): void => {
+    if (!press) setActive(null)
     if (eraserAt && !press) {
       eraserAt = null
       request()

@@ -136,10 +136,46 @@ export function AppShell() {
       kick()
     }
 
+    // ---------- The window glides into its sticky place and out of it (the founder: no hard stop) ----------
+    // The window's place has one owner: this code. With motion, the stage is position: fixed
+    // (data-glide, AppShell.module.css) and its translate is set from the scroll; the browser
+    // never moves it by itself. (A sticky stage plus a correcting translate had two owners: with
+    // scrolling on the compositor, as in Firefox, the browser moved it first and the script
+    // pulled it back a frame later, so it went up and then down.)
+    // It eases over `knee` (K) px of scroll and never moves faster than the page, so against the
+    // dot grid and the marks it only ever falls behind, never runs ahead (the founder saw a faster
+    // curve as "up, then down"). On the way in its speed falls evenly from the page's to 0: the
+    // ease starts when it is K/2 above its rest and covers those K/2 in K px of scroll. On the way
+    // out, at the same release point as before, its speed rises evenly from 0 to the page's over
+    // K px, and then it stays K/2 behind the track. It follows the scroll, not time. With reduced
+    // motion the stage stays sticky and stops plainly.
+    let knee = 0
+    const measureGlide = (): void => {
+      knee = 0.155 * window.innerHeight
+    }
+    let shown = NaN
+    const placeStage = (trackTop: number, trackH: number, winH: number): void => {
+      if (still) return
+      // Its sticky place: the middle of the viewport.
+      const rest = (window.innerHeight - winH) / 2
+      // In: u px of scroll left in the ease (it ends K/2 of scroll after the track's own stick point).
+      const u = trackTop - rest + knee / 2
+      // Out: e px of scroll since the track's own release point.
+      const e = rest - (trackTop + trackH - winH)
+      const y =
+        u >= knee ? trackTop : u > 0 ? rest + (u * u) / (2 * knee) : e >= knee ? trackTop + trackH - winH + knee / 2 : e > 0 ? rest - (e * e) / (2 * knee) : rest
+      if (y !== shown) {
+        shown = y
+        stage.style.translate = `0 ${y}px`
+      }
+    }
+
     // ---------- Which use case: the third of the sticky phase the viewport's centre is in (lib/shell-steps.ts) ----------
     const onScroll = (): void => {
       const { winH, third } = shellSizes({ track, frame })
-      const i = nextStep(winH, third, window.innerHeight / 2 - track.getBoundingClientRect().top, target)
+      const trackTop = track.getBoundingClientRect().top
+      placeStage(trackTop, track.offsetHeight, winH)
+      const i = nextStep(winH, third, window.innerHeight / 2 - trackTop, target)
       if (i !== target) show(i)
     }
 
@@ -218,6 +254,7 @@ export function AppShell() {
         }
       }
       fitCanvas()
+      measureGlide()
       onScroll()
       kick()
     })
@@ -226,8 +263,13 @@ export function AppShell() {
 
     window.addEventListener('scroll', onScroll, { passive: true })
     document.addEventListener('visibilitychange', onVisibility)
+    measureGlide()
     onScroll()
+    // From now on the script places the stage (placeStage); before this it was sticky.
+    if (!still) section.dataset.glide = ''
     return () => {
+      delete section.dataset.glide
+      stage.style.translate = ''
       near.disconnect()
       seen.disconnect()
       sized.disconnect()
