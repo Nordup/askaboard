@@ -140,7 +140,7 @@
   --window-buttons-end: 76px; /* the right edge of the macOS window buttons at 100% */
   --window-buttons-gap: 16px; /* from that edge to the first title-row button */
   --title-row-inset: var(--space-3); /* the first button's left edge in full screen, on Linux and on Windows */
-  --title-button-size: 28px; /* a title-row icon button's hit area (16 px icon): the sidebar button, Back, Forward, New board */
+  --title-button-size: 28px; /* a title-row icon button's hit area (16 px icon; Back and Forward 20 px chevrons): Back, Forward, the sidebar button, New board */
   --title-button-gap: var(--space-1); /* between neighbouring title-row buttons */
   --title-icon-size: 16px; /* the icon in a title-row button */
   --disabled-opacity: 0.5; /* a disabled control: Back or Forward with nowhere to go, a disabled small button */

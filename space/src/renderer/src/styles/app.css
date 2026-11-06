@@ -89,7 +89,7 @@ button:focus-visible {
 
 /*
  * The top strip, in every state where the sidebar shows, level with the top bar (one 44 px title row, one centre line
- * with the window buttons). It holds the title lead (.title-lead: the sidebar button, Back, Forward) from --chrome-reserve,
+ * with the window buttons). It holds the title lead (.title-lead: Back, Forward, the sidebar button) from --chrome-reserve,
  * the same x as in the top bar with the sidebar hidden: a click on the sidebar button never moves it. 4 px above the first row.
  */
 .sidebar__strip {

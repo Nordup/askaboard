@@ -11,7 +11,7 @@ import { shortcut } from '../platform'
 export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
 
 interface TopBarProps {
-  /** With the sidebar hidden, the top bar starts with the title lead (sidebar button, Back, Forward) and New board; the sidebar's strip holds the lead otherwise. */
+  /** With the sidebar hidden, the top bar starts with the title lead (Back, Forward, sidebar button) and New board; the sidebar's strip holds the lead otherwise. */
   sidebarHidden: boolean
   onToggleSidebar(): void
   boardNav: BoardNav

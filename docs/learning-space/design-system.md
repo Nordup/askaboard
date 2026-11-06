@@ -252,14 +252,17 @@ The 44 px row across the top of the window: the sidebar strip (while the
 sidebar shows, in a window, in full screen and off macOS) and the top bar.
 Everything in it shares one centre line at 22 px.
 
-- **The sidebar button has one place** (decision U9): its left edge is at
-  `--chrome-reserve` in every state. With the sidebar shown it is in the
+- **The sidebar button has one place** (decision U9): the title lead
+  starts at `--chrome-reserve` in every state, and the button is its
+  third button (after Back and Forward). With the sidebar shown it is in the
   strip ("Hide sidebar"); with the sidebar hidden it leads the top bar
   ("Show sidebar"), at the same x. A click on it never moves it. A
   keyboard toggle keeps the focus on the button in its new home
   (`App.tsx`).
-- **Back and Forward** (decision U11) follow the sidebar button, 4 px
-  apart: lucide `ChevronLeft` and `ChevronRight`, `.icon-button--title`,
+- **Back and Forward** (decision U11) come first, then the sidebar
+  button, 4 px apart: lucide `ChevronLeft` and `ChevronRight` at 20 px
+  with a 1.4 stroke (a chevron fills less of its box, so at 16 px it looks
+  smaller than the other icons), `.icon-button--title`,
   tooltips "Back ⌘[" and "Forward ⌘]" (`KEYS.back`, `KEYS.forward` in
   `board/commands.ts`), disabled when there is nowhere to go. The three
   buttons are one group, the title lead (`.title-lead`,
@@ -344,9 +347,9 @@ internal data (a path, an id). One shared tooltip instead
   dot; the flyout lists the files (new / kept) and has one Set up button and
   a "Don't ask for this folder" text action.
 - **Sidebar** (left-panel plan, decisions U6 and U9, 2026-11-06). Top to
-  bottom: a 44 px strip (drag region) with only the title lead (the
-  sidebar button, lucide `PanelLeft`, `SidebarToggle.tsx`; Back and
-  Forward; `TitleLead.tsx`, see "Title row"), its left edge at
+  bottom: a 44 px strip (drag region) with only the title lead (Back and
+  Forward, then the sidebar button, lucide `PanelLeft`,
+  `SidebarToggle.tsx`; `TitleLead.tsx`, see "Title row"), its left edge at
   `--chrome-reserve`, 4 px above the rows; the rows New board (`SquarePen`,
   hint ⌘N) and Search boards (`Search`, hint ⌘K), both `.board-row
   .board-row--action` with `.board-row__hint`; the "Set up for learning" row
@@ -364,8 +367,8 @@ internal data (a path, an id). One shared tooltip instead
   15; above 15, the first 10 and "Show N more", and "Show less" when
   expanded.
 - **Sidebar hidden** (⌘B, View > Hide Sidebar; main owns the setting). One
-  column, at once. The top bar then starts with the title lead (the
-  sidebar button, Back, Forward) and a New board button (4 px apart, in
+  column, at once. The top bar then starts with the title lead (Back,
+  Forward, the sidebar button) and a New board button (4 px apart, in
   the one `.title-lead` group): at 92 px on macOS in a
   window, at 12 px in full screen and off macOS (`--chrome-reserve` on
   `.shell`, set by `data-window-buttons`; see "Title row"), the same x as
