@@ -31,7 +31,7 @@ import { SearchPanel } from './components/SearchPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast } from './components/Toast'
-import { ToolPalette } from './components/ToolPalette'
+import { BoardControls } from './components/BoardControls'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import { WelcomeCard } from './components/WelcomeCard'
 import { errorMessage } from './lib/errors'
@@ -41,7 +41,8 @@ import { setStories } from './live/stories'
 import { setBoardNodes, setReadingBoard, setSelection } from './live/reading'
 import { perfMeter } from './perf-meter'
 import type { BoardStories } from '@shared/scene-story'
-import { colorValue, TOOL_KEYS, widthValue, type ToolId, type ToolState } from './tools'
+import { chooseTool, INITIAL_TOOLS, LOCK_KEY, toolForKey, type ToolId, type ToolState } from './tools'
+import type { SelectionStyle, StylePatch } from './board/style'
 
 const space = window.space
 /** Save this long after the last change… */
@@ -106,7 +107,7 @@ export function App() {
   const [open, setOpen] = useState<OpenBoard | null>(null)
   const [boardError, setBoardError] = useState<{ path: string; message: string } | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
-  /** The zoom the top bar shows: the camera zoom as a share of the home zoom (1 is 100%). */
+  /** The zoom the zoom pill shows: the camera zoom as a share of the home zoom (1 is 100%). */
   const [zoom, setZoom] = useState(1)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewVersion, setPreviewVersion] = useState(0)
@@ -116,7 +117,9 @@ export function App() {
   const [menuSetup, setMenuSetup] = useState(false)
   /** "Don't ask" or a finished setup: no setup row until the folder opens again. */
   const [offerDismissed, setOfferDismissed] = useState(false)
-  const [tools, setTools] = useState<ToolState>({ tool: 'pen', colorId: 'white', widthId: 'medium' })
+  const [tools, setTools] = useState<ToolState>(INITIAL_TOOLS)
+  /** The selection's style, for the style pill (Board onSelectionStyle). */
+  const [selectionStyle, setSelectionStyle] = useState<SelectionStyle | null>(null)
   const [agentStatus, setAgentStatus] = useState<AgentServerStatus | null>(null)
   const [guideOverrides, setGuideOverrides] = useState<GuideOverrides | null>(null)
   const [agentActivity, setAgentActivity] = useState<AgentActivity & { at: number } | null>(null)
@@ -274,7 +277,7 @@ export function App() {
       const current = openRef.current
       if (!current) return
       cameraRef.current = { root: current.root, path: current.path, camera }
-      // The top bar shows whole percents: a pan or a small zoom step renders nothing.
+      // The zoom pill shows whole percents: a pan or a small zoom step renders nothing.
       setZoom(Math.round((camera.zoom / HOME_ZOOM) * 100) / 100)
       if (cameraTimerRef.current) clearTimeout(cameraTimerRef.current)
       cameraTimerRef.current = setTimeout(flushCamera, CAMERA_SAVE_DELAY_MS)
@@ -1005,7 +1008,9 @@ export function App() {
       boardToClient: (x: number, y: number) => boardRef.current?.boardToClient([x, y]) ?? null,
       canvasRect: () => boardRef.current?.clientRect() ?? null,
       reveal: (x: number, y: number, width: number, height: number) => boardRef.current?.reveal({ x, y, width, height }),
-      setTool: (tool: ToolId) => setTools((current) => ({ ...current, tool })),
+      // 'marker' is the Pen tool with the marker (drive.mjs --tool).
+      setTool: (tool: ToolId | 'marker') =>
+        setTools((current) => (tool === 'marker' || tool === 'pen' ? { ...current, tool: 'pen', style: { ...current.style, pen: tool === 'marker' ? 'marker' : 'pen' } } : { ...current, tool })),
       state: () => {
         const current = openRef.current
         const live = boardRef.current?.liveState()
@@ -1143,15 +1148,18 @@ export function App() {
     }
   }, [agentContext])
 
-  // ---------- Tool shortcuts: V P H E ----------
+  // ---------- Tool keys (tools.ts TOOLS), Q for the lock ----------
 
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
-      if (event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return
-      const tool = TOOL_KEYS[event.key.toLowerCase()]
-      if (!tool) return
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || isEditableTarget(event.target)) return
+      const lock = event.key.toUpperCase() === LOCK_KEY
+      const tool = toolForKey(event.key)
+      if (!lock && !tool) return
       event.preventDefault()
-      setTools((current) => ({ ...current, tool }))
+      if (event.repeat) return
+      if (lock) setTools((current) => ({ ...current, lock: !current.lock }))
+      else if (tool) setTools((current) => chooseTool(current, tool))
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
@@ -1245,8 +1253,6 @@ export function App() {
           onRename={(name) => open && void renameBoard(open.path, name)}
           onCancelRename={() => setRenaming(null)}
           saveStatus={open ? saveStatus : null}
-          zoom={open ? zoom : null}
-          onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}
           agentStatus={agentStatus}
           agentActivityAt={agentActivity?.at ?? null}
           guideOverrides={folder ? guideOverrides : null}
@@ -1263,23 +1269,33 @@ export function App() {
                 history={open.history}
                 initialCamera={open.camera}
                 tool={tools.tool}
-                color={colorValue(tools)}
-                width={widthValue(tools)}
+                style={tools.style}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
                 onToolChange={(tool) => setTools((current) => ({ ...current, tool }))}
                 onChanges={onChanges}
                 onSelectionChange={setSelection}
+                onSelectionStyle={setSelectionStyle}
               />
             )}
             {canvasContent}
             {open && <ScriptPanel key={open.path} />}
             {open && (
-              <ToolPalette
-                state={tools}
-                onChange={setTools}
-                onColor={(value) => boardRef.current?.applyColor(value)}
-                onWidth={(px) => boardRef.current?.applyWidth(px)}
+              <BoardControls
+                tools={tools}
+                zoom={zoom}
+                selection={selectionStyle}
+                onChooseTool={(tool) => setTools((current) => chooseTool(current, tool))}
+                onToggleLock={() => setTools((current) => ({ ...current, lock: !current.lock }))}
+                onStyle={(patch: StylePatch) => {
+                  setTools((current) => ({ ...current, style: { ...current.style, ...patch } }))
+                  boardRef.current?.applyStyle(patch)
+                }}
+                onZoomIn={() => boardRef.current?.zoomStep('in', 'menu')}
+                onZoomOut={() => boardRef.current?.zoomStep('out', 'menu')}
+                onResetZoom={() => boardRef.current?.zoomTo(HOME_ZOOM)}
+                onUndo={() => boardRef.current?.undo()}
+                onRedo={() => boardRef.current?.redo()}
               />
             )}
             {toast && <Toast message={toast.text} kind={toast.kind} onDone={clearToast} />}

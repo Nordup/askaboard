@@ -22,9 +22,6 @@ interface TopBarProps {
   onRename(name: string): void
   onCancelRename(): void
   saveStatus: SaveStatus | null
-  /** The zoom as a share of the home zoom (HOME_ZOOM), where 1 is 100%. Null when no board is open. */
-  zoom: number | null
-  onResetZoom(): void
   agentStatus: AgentServerStatus | null
   /** Time (ms) of the last agent tool call. */
   agentActivityAt: number | null
@@ -42,7 +39,7 @@ const SAVE_LABEL: Record<SaveStatus, string> = {
 }
 
 export function TopBar(props: TopBarProps) {
-  const { sidebarHidden, folderName, boardName, saveStatus, zoom, onResetZoom, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance } = props
+  const { sidebarHidden, folderName, boardName, saveStatus, agentStatus, agentActivityAt, guideOverrides, onOpenOverride, showPerformance } = props
   return (
     <header className="topbar">
       <div className="topbar__title">
@@ -76,11 +73,6 @@ export function TopBar(props: TopBarProps) {
         {showPerformance && <PerfPill />}
         <ScenePill />
         <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
-        {zoom !== null && (
-          <button className="zoom" title={`Reset zoom to 100% (${shortcut('0')})`} onClick={onResetZoom}>
-            {Math.round(zoom * 100)}%
-          </button>
-        )}
       </div>
     </header>
   )

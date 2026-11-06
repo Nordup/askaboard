@@ -5,6 +5,7 @@ import { rebuildFailure, useRestoredVersion } from '../live/rebuild'
 import { lookOf, storyOfSelection, useBoardStories, versionOnBoard } from '../live/stories'
 import { boardNodes, hidePanel, openedFromPill, sceneStarted, setPanelScene, useReading } from '../live/reading'
 import { fadeMs, tokenMs, usePresence } from '../lib/presence'
+import { boardControlsTop } from './BoardControls'
 
 /*
  * The reading panel (decision B19): one scene at a time, in a small frame that floats over the
@@ -61,9 +62,9 @@ function placeOf(canvas: HTMLElement, width: number, wanted: Position | null): {
   const header = cssPx(canvas, '--script-panel-header')
   const W = canvas.clientWidth
   const H = canvas.clientHeight
-  // Never over the tool palette: the panel ends a margin above it.
-  const palette = canvas.querySelector<HTMLElement>('.palette')
-  const floor = palette ? palette.offsetTop - margin : H - margin
+  // Never over the board controls: the panel ends a margin above their bottom row.
+  const controls = boardControlsTop(canvas)
+  const floor = (controls ?? H) - margin
   const at = wanted ?? { side: 'right', x: margin, y: margin }
   const rawLeft = at.side === 'left' ? at.x : W - width - at.x
   const left = Math.round(Math.max(margin, Math.min(W - width - margin, rawLeft)))

@@ -6,7 +6,7 @@
  *
  * Start the app with SPACE_REMOTE_DEBUG=<port> (dev builds only), then:
  *
- *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|highlighter|eraser] [--no-pan] [--mouse] [--fast | --hz N] [--then-recent <folder>]
+ *   node scripts/drive.mjs [--port 9339] draw <strokes.json | -> [--tool pen|marker|eraser|current] [--no-pan] [--mouse] [--fast | --hz N] [--then-recent <folder>]
  *   node scripts/drive.mjs draw --strokes '[[[x,y,p],...],...]'
  *   node scripts/drive.mjs key <combo>          e.g. v, Delete, Escape, Meta+z, Shift+Meta+z
  *   node scripts/drive.mjs click <x> <y> [--shift]  window CSS pixels
@@ -36,10 +36,11 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { findAppPage } from './app-page.mjs'
 
 const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
-  draw <file.json|-> [--tool pen|highlighter|eraser] [--no-pan] [--mouse] [--fast | --hz N]
+  draw <file.json|-> [--tool pen|marker|eraser|current] [--no-pan] [--mouse] [--fast | --hz N]
                                                  strokes in board coordinates: [[[x,y,p],...],...];
                                                  pans the board first so every point is on screen;
                                                  --tool eraser drags the eraser along the strokes;
+                                                 --tool current keeps the app's tool (the first pen press switches to Pen);
                                                  --fast sends each stroke in one burst (no pen-speed delays);
                                                  --mouse sends a mouse pointer, so the board ignores p;
                                                  --hz sends N samples per second, as a pen does, with no wait for each answer;
@@ -179,7 +180,7 @@ function parseStrokes(text) {
 
 async function draw(cdp, strokes, tool, pan, fast = false, hz = 0, pointerType = 'pen') {
   await requireDevHook(cdp, { board: true })
-  await evaluate(cdp, `window.__spaceDev.setTool(${JSON.stringify(tool)})`)
+  if (tool !== 'current') await evaluate(cdp, `window.__spaceDev.setTool(${JSON.stringify(tool)})`)
   // Input only reaches the board where the canvas is on screen: pan to the strokes first.
   const xs = strokes.flat().map((point) => point[0])
   const ys = strokes.flat().map((point) => point[1])
@@ -414,7 +415,7 @@ async function main() {
   const port = Number(takeOption('--port') ?? process.env.SPACE_REMOTE_DEBUG ?? 9339)
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Failure('The port is not valid.')
   const tool = takeOption('--tool') ?? 'pen'
-  if (!['pen', 'highlighter', 'eraser'].includes(tool)) throw new Failure('--tool must be pen, highlighter or eraser.')
+  if (!['pen', 'marker', 'eraser', 'current'].includes(tool)) throw new Failure('--tool must be pen, marker, eraser or current.')
   const inline = takeOption('--strokes')
   const thenRecent = takeOption('--then-recent')
   const hz = Number(takeOption('--hz') ?? 0)

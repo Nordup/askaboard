@@ -2,7 +2,7 @@ import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, u
 import { flushSync } from 'react-dom'
 import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
-import type { ToolId } from '../tools'
+import { MARKER_SCALE, type DrawStyle, type ToolId } from '../tools'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
 import { ContentLayer, measureContent, type ContentContext } from './content'
 import {
@@ -23,6 +23,7 @@ import {
 import type { BoardHistory } from './history'
 import { penOnBoard } from '../live/frames'
 import { MouseInk } from './mouse-ink'
+import { restyle, selectionStyle, type SelectionStyle, type StylePatch } from './style'
 import { huggedNodes } from './hug'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves, wheelWorlds } from '../live-pixels/registry'
@@ -83,7 +84,7 @@ export interface BoardHandle {
   zoomTo(zoom: number): void
   zoomBy(factor: number): void
   /**
-   * One zoom step from the menu (⌘= ⌘- ⌘0). The page key handler zooms too;
+   * One zoom step from the menu (⌘= ⌘- ⌘0) or the zoom pill ('menu'). The page key handler zooms too;
    * a step that the other source made a moment ago is not repeated.
    */
   zoomStep(step: ZoomStep, source: 'menu' | 'key'): void
@@ -107,10 +108,12 @@ export interface BoardHandle {
   worldPoints(): WorldPoints
   /** A mark at this item's centre stays on the part of a world under it, if there is one. */
   pinMark(id: string, by: Author): void
-  /** Restyle the selection with a palette colour. Returns false when nothing is selected. */
-  applyColor(color: string): boolean
-  /** Restyle selected ink with a palette width. Returns false when no ink is selected. */
-  applyWidth(width: number): boolean
+  /** Restyle the selection with a style pill choice: one undo step (style.ts restyle). */
+  applyStyle(patch: StylePatch): void
+  /** Undo the learner's last step, as ⌘Z does. */
+  undo(): void
+  /** Redo, as ⇧⌘Z does. */
+  redo(): void
   /**
    * Commit an agent edit as one undo step, then lay it out before returning,
    * so the layout cache has the new nodes' bounds. The edit is the change from
@@ -182,12 +185,11 @@ export interface BoardProps {
   /** null: fit the content when the viewport is known. */
   initialCamera: Camera | null
   tool: ToolId
-  color: string
-  /** Nominal pen width in board points. */
-  width: number
+  /** The style new ink and text take. */
+  style: DrawStyle
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
-  /** The board ends a text edit by key and hands the tool back. */
+  /** The board changes the tool: a text edit ends by key, Escape with nothing selected, the first pen press. */
   onToolChange?(tool: ToolId): void
   /**
    * A commit stamped nodes: the ones that left the board (erase, cut, delete,
@@ -197,11 +199,16 @@ export interface BoardProps {
   onChanges?(change: { removed: Removal[]; revisions: Revision[]; by: Author }): void
   /** The selection changed (node ids): the scene pill shows the scene and step of a selected item. */
   onSelectionChange?(ids: readonly string[]): void
+  /** The style of the selection changed (style.ts selectionStyle): the style pill shows it. Null: nothing selected takes a style. */
+  onSelectionStyle?(style: SelectionStyle | null): void
   ref?: Ref<BoardHandle>
 }
 
-/** Highlighter strokes are this many times wider than pen strokes. */
-export const HIGHLIGHTER_SCALE = 4
+/**
+ * The first press of a pen (pointerType 'pen') in this app session switches to the Pen tool,
+ * so a tablet draws at once while Select is the default. Later presses keep the chosen tool.
+ */
+let penSeen = false
 /** Stroke eraser radius in screen pixels. */
 const ERASE_RADIUS = 10
 /** Grid pitch in board points. */
@@ -433,7 +440,7 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
 }
 
-export function Board({ doc, history, initialCamera, tool, color, width, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, style, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const penRef = useRef<HTMLDivElement>(null)
@@ -532,8 +539,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const learnerViewAtRef = useRef(0)
   /** Bumped by learner input: a running camera glide stops when it changes. */
   const glideRef = useRef(0)
-  const colorRef = useRef(color)
-  colorRef.current = color
+  const styleRef = useRef(style)
+  styleRef.current = style
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onDocChangeRef = useRef(onDocChange)
@@ -550,6 +557,24 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     onSelectionChangeRef.current?.(selectedIds)
   }, [selectedIds])
   useEffect(() => () => onSelectionChangeRef.current?.([]), [])
+  // The selection's style, reported when it changes: on a new selection and when selected items change.
+  const onSelectionStyleRef = useRef(onSelectionStyle)
+  onSelectionStyleRef.current = onSelectionStyle
+  const selectionStyleKeyRef = useRef('null')
+  useEffect(() => {
+    const next = selectionStyle(selectedIds.flatMap((id) => index.byId.get(id) ?? []))
+    const key = JSON.stringify(next)
+    if (key === selectionStyleKeyRef.current) return
+    selectionStyleKeyRef.current = key
+    onSelectionStyleRef.current?.(next)
+  }, [selectedIds, index])
+  useEffect(
+    () => () => {
+      selectionStyleKeyRef.current = 'null'
+      onSelectionStyleRef.current?.(null)
+    },
+    []
+  )
 
   // ---------- Painting (batched to one frame) ----------
 
@@ -1415,14 +1440,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         author: 'learner',
         seq: 0,
         text: '',
-        style: { color, fontSize: `${NEW_TEXT_SIZE}px`, fontFamily: 'var(--ls-hand)' }
+        style: { color: styleRef.current.color, fontSize: `${NEW_TEXT_SIZE}px`, fontFamily: 'var(--ls-hand)' }
       }
       setNodes([...snapshot, node])
       editingRef.current = { id: node.id, snapshot, initial: '' }
       setSelectedIds([node.id])
       setEditingId(node.id)
     },
-    [color, setNodes, setSelectedIds]
+    [setNodes, setSelectedIds]
   )
 
   const contentCtx = useRef<ContentContext>(null as unknown as ContentContext)
@@ -1552,7 +1577,12 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     const startBoard = screenToBoard(screen, viewportRef.current, cameraRef.current)
     pasteAnchorRef.current = startBoard
 
-    const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch')
+    const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch' || tool === 'hand')
+    // The session's first pen press draws: it switches to Pen first (penSeen).
+    const penSwitch = event.pointerType === 'pen' && !penSeen && !shouldPan && !penEraser && tool !== 'pen' && tool !== 'eraser'
+    if (event.pointerType === 'pen') penSeen = true
+    if (penSwitch) onToolChangeRef.current?.('pen')
+    const pressTool: ToolId = penSwitch ? 'pen' : tool
     let kind: DragKind
     let moveIds: Set<string> | undefined
     let clicked: string | undefined
@@ -1560,14 +1590,14 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     let additive = false
 
     if (shouldPan) kind = 'pan'
-    else if (penEraser || tool === 'eraser') kind = 'erase'
-    else if (tool === 'text') {
+    else if (penEraser || pressTool === 'eraser') kind = 'erase'
+    else if (pressTool === 'text') {
       const hit = contentAt(indexRef.current, layoutRef.current, startBoard, shown)
       if (hit && hit.kind === 'text' && !hit.locked) startEditing(hit.id)
       else createText(startBoard)
       event.preventDefault()
       return
-    } else if (tool === 'select') {
+    } else if (pressTool === 'select') {
       const handle = handleOf(event.target)
       const selected = selectedIdsRef.current
       const box = selected.length === 1 ? layoutRef.current.get(selected[0]) : undefined
@@ -1598,7 +1628,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
           additive = event.shiftKey
         }
       }
-    } else kind = 'ink'
+    } else if (pressTool === 'pen') kind = 'ink'
+    else kind = 'none'
 
     try {
       host.setPointerCapture(event.pointerId)
@@ -1625,7 +1656,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
 
     if (kind === 'pan') setPanning(true)
     else if (kind === 'ink') {
-      const highlighter = tool === 'highlighter'
+      const { color, width, pen } = styleRef.current
+      const highlighter = pen === 'marker'
       const mouseInk = !highlighter && event.pointerType !== 'pen' ? new MouseInk(startBoard[0], startBoard[1], event.timeStamp) : undefined
       dragRef.current.mouseInk = mouseInk
       activeRef.current = {
@@ -1638,7 +1670,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         seq: 0,
         tool: highlighter ? 'highlighter' : 'pen',
         color,
-        width: width * (highlighter ? HIGHLIGHTER_SCALE : 1),
+        width: width * (highlighter ? MARKER_SCALE : 1),
         points: mouseInk?.points ?? [[startBoard[0], startBoard[1], pressureOf(event.pointerType, event.pressure)]]
       }
       requestPaint({ active: true })
@@ -1900,7 +1932,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     if (event.target instanceof HTMLTextAreaElement) return
     const host = hostRef.current
     const penEraser = event.pointerType === 'pen' && (event.button === 5 || (event.buttons & 32) !== 0)
-    const worlds = host && event.button === 0 && !spaceRef.current && !penEraser && tool !== 'eraser' && !holdRef.current && !streamRef.current ? pressWorlds() : []
+    const worlds = host && event.button === 0 && !spaceRef.current && !penEraser && tool !== 'eraser' && tool !== 'hand' && !holdRef.current && !streamRef.current ? pressWorlds() : []
     if (!host || !worlds.length) {
       boardPress(event)
       return
@@ -2071,41 +2103,18 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     return () => host.removeEventListener('wheel', wheel, { capture: true })
   }, [applyCamera])
 
-  // ---------- Restyle (palette) ----------
+  // ---------- Restyle (the style pill) ----------
 
-  const applyColor = useCallback(
-    (value: string): boolean => {
+  const applyStyle = useCallback(
+    (patch: StylePatch): void => {
       const byId = indexRef.current.byId
       const changes = new Map<string, BoardNode>()
       for (const id of selectedIdsRef.current) {
         const node = byId.get(id)
-        if (!node || !isKnown(node) || node.locked) continue
-        if (node.kind === 'ink' && node.color !== value) changes.set(id, { ...node, color: value })
-        else if (node.kind === 'text' && node.style.color !== value) changes.set(id, { ...node, style: { ...node.style, color: value } })
-        else if (node.kind === 'frame' && node.style.backgroundColor !== value) {
-          const style: NodeStyle = { ...node.style, backgroundColor: value }
-          delete style.background
-          changes.set(id, { ...node, style })
-        }
+        const next = node && restyle(node, patch)
+        if (next && next !== node) changes.set(id, next)
       }
       replaceNodes(changes)
-      return selectedIdsRef.current.length > 0
-    },
-    [replaceNodes]
-  )
-
-  const applyWidth = useCallback(
-    (value: number): boolean => {
-      const byId = indexRef.current.byId
-      const changes = new Map<string, BoardNode>()
-      for (const id of selectedIdsRef.current) {
-        const node = byId.get(id)
-        if (!node || !isInk(node) || node.locked) continue
-        const next = value * (node.tool === 'highlighter' ? HIGHLIGHTER_SCALE : 1)
-        if (node.width !== next) changes.set(id, { ...node, width: next })
-      }
-      replaceNodes(changes)
-      return changes.size > 0
     },
     [replaceNodes]
   )
@@ -2148,7 +2157,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         learnerInkAt: lastStrokeAtRef.current,
         drawing: dragRef.current?.kind === 'ink',
         learnerViewAt: learnerViewAtRef.current,
-        inkColor: colorRef.current
+        inkColor: styleRef.current.color
       }),
       worldPoint: (world, point) => {
         const p = pointNow(worldPointsRef.current, world, point)
@@ -2228,8 +2237,15 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         setFlashRect({ rect, id: performance.now() })
         flashTimerRef.current = setTimeout(() => setFlashRect(null), FLASH_MS)
       },
-      applyColor,
-      applyWidth,
+      applyStyle,
+      undo: () => {
+        if (editingRef.current) commitEditing()
+        undo()
+      },
+      redo: () => {
+        if (editingRef.current) commitEditing()
+        redo()
+      },
       agentCommit: (base, next, options) => {
         // An agent edit ends a learner's text editing first, so the two never mix.
         if (editingRef.current) commitEditing()
@@ -2302,7 +2318,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, syncViewport, viewportNow, zoomStep]
+    [applyCamera, applyPlaybackToDom, applyStyle, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, redo, requestMeasure, requestPaint, setSelectedIds, syncViewport, undo, viewportNow, zoomStep]
   )
   useEffect(
     () => () => {
@@ -2409,7 +2425,8 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const first = byId.get(selectedIdsRef.current[0])
         const key = first ? parentKey(first, byId) : ROOT
         setSelectedIds(key === ROOT ? [] : [key])
-      } else return
+      } else if (tool !== 'select') onToolChangeRef.current?.('select')
+      else return
       event.preventDefault()
       return
     }
@@ -2484,7 +2501,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   const single = selectedIds.length === 1 ? index.byId.get(selectedIds[0]) : undefined
   const handles = selection && single && tool === 'select' ? handlesFor(single) : []
   const flashTopLeft = flashRect ? boardToScreen([flashRect.rect.x, flashRect.rect.y], viewport, camera) : null
-  const cursorTool = panning ? 'panning' : panReady ? 'pan' : tool
+  const cursorTool = panning ? 'panning' : panReady || tool === 'hand' ? 'pan' : tool
 
   return (
     <div

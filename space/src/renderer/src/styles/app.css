@@ -775,23 +775,6 @@ button:focus-visible {
   }
 }
 
-.zoom {
-  flex-shrink: 0;
-  min-width: 52px;
-  height: var(--pill-height);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.zoom:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 /* ---------- Canvas ---------- */
 
 .canvas {
@@ -806,28 +789,66 @@ button:focus-visible {
   background-position: calc(var(--canvas-dot-pitch) / 2) calc(var(--canvas-dot-pitch) / 2);
 }
 
-/* ---------- Tool palette ---------- */
+/* ---------- Board controls (decision U8) ---------- */
 
-.palette {
+/*
+ * The bottom row over the canvas: zoom and undo at the start, the tool pill in
+ * the middle column. With 1fr auto 1fr the tool pill is centred on the canvas
+ * while the first column has room; on a narrow canvas the first column takes
+ * its own width and the tool pill moves right, one gap after it. The style
+ * pill sits above the tool pill; BoardControls shifts it (--style-shift) to
+ * stay a margin inside the canvas. Every pill is a .pill-bar.
+ */
+.board-controls {
   position: absolute;
   z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  column-gap: var(--space-3);
+  align-items: end;
+  padding: var(--space-3);
+  pointer-events: none;
+}
+
+.board-controls__start {
+  display: flex;
+  gap: var(--space-2);
+  justify-self: start;
+}
+
+.board-controls__center {
+  position: relative;
+  grid-column: 2;
+}
+
+.board-controls__style {
+  position: absolute;
   left: 50%;
-  bottom: var(--space-5);
-  transform: translateX(-50%);
+  bottom: calc(100% + var(--space-2));
+  transform: translateX(calc(-50% + var(--style-shift, 0px)));
+  white-space: nowrap;
+}
+
+.pill-bar {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-half);
   height: var(--palette-height);
   padding: 0 var(--space-2);
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   box-shadow: var(--shadow-float);
+  pointer-events: auto;
 }
 
-.palette__divider {
+.pill-bar__divider {
+  flex-shrink: 0;
   width: 1px;
-  height: 22px;
+  height: var(--pill-divider-height);
   margin: 0 var(--space-2);
   background: var(--border-subtle);
 }
@@ -835,8 +856,9 @@ button:focus-visible {
 .tool {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  flex-shrink: 0;
+  width: var(--tool-size);
+  height: var(--tool-size);
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
   transition: background 120ms ease, color 120ms ease;
@@ -852,23 +874,40 @@ button:focus-visible {
   color: var(--accent);
 }
 
-.swatches {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+.tool--quiet {
+  color: var(--text-tertiary);
+}
+
+.zoom-label {
+  flex-shrink: 0;
+  min-width: var(--zoom-label-min);
+  height: var(--tool-size);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-align: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.zoom-label:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .swatch {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  flex-shrink: 0;
+  width: var(--swatch-size);
+  height: var(--swatch-size);
   border-radius: 50%;
 }
 
 .swatch__dot {
-  width: 16px;
-  height: 16px;
+  width: var(--swatch-dot);
+  height: var(--swatch-dot);
   border-radius: 50%;
   background: var(--swatch);
   box-shadow: inset 0 0 0 1px var(--swatch-edge);
@@ -883,36 +922,35 @@ button:focus-visible {
   box-shadow: 0 0 0 1.5px var(--bg-elevated), 0 0 0 3px var(--swatch);
 }
 
-.widths {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.width {
+.option {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  min-width: var(--option-size);
+  height: var(--option-size);
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.width:hover {
+.option:hover {
   background: var(--bg-hover);
 }
 
-.width[aria-pressed='true'] {
+.option[aria-pressed='true'] {
   background: var(--bg-active);
+  color: var(--text-primary);
 }
 
-.width__bar {
-  width: 14px;
+.option--text {
+  padding: 0 var(--option-text-pad);
+  font-size: var(--text-sm);
+}
+
+.option__bar {
+  width: var(--option-bar-width);
   border-radius: var(--radius-pill);
-  background: var(--text-tertiary);
-}
-
-.width[aria-pressed='true'] .width__bar {
-  background: var(--text-primary);
+  background: currentColor;
 }
 
 /* ---------- Welcome card ---------- */
@@ -1901,7 +1939,7 @@ button:focus-visible {
 .toast {
   position: absolute;
   left: 50%;
-  bottom: 84px;
+  bottom: var(--toast-bottom);
   z-index: 20;
   display: flex;
   align-items: center;

@@ -86,7 +86,10 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--title-button-gap`, `--title-icon-size`;
   `--sidebar-row-height`, `--sidebar-footer-height`,
   `--topbar-rename-width`,
-  `--palette-height`, `--pill-height`, `--pill-gap`, `--pill-action-size`,
+  the board controls (U8): `--palette-height`, `--tool-size`,
+  `--swatch-size`, `--swatch-dot`, `--option-size`, `--option-text-pad`,
+  `--option-bar-width`, `--pill-divider-height`, `--zoom-label-min`,
+  `--toast-bottom`; `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
   `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
   `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
@@ -173,6 +176,30 @@ a `.pill.pill--static` holder of a toggle and one action. Parts: `.status-dot`
 the pill hovers with it) and `.pill--flash` (the pill lights up once).
 `.pill--item` is a static pill on a board item, not in the top bar (the `--item-pill-*` tokens). A new pill uses these parts; a
 missing part goes into the same block.
+
+## Board controls
+
+The four pills over the bottom of the canvas (decision U8,
+`BoardControls.tsx`, the comment block above `.board-controls` in
+`app.css`). Each is a `.pill-bar` (48 px, `--bg-elevated`, 1 px
+`--border-subtle`, `--radius-pill`, `--shadow-float`). Parts: `.tool` (34
+px round button, 17 px lucide icon, stroke 1.75; pressed: `--accent-soft`
+and `--accent`; `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider`
+(1 × 22 px), `.swatch` with `.swatch__dot`, `.option` (28 px, round;
+pressed: `--bg-active`, `--text-primary`; `.option--text` for a word,
+`.option__bar` for a width) and `.zoom-label`.
+
+- Zoom pill (− % +) at the bottom left, the undo pill (undo, redo) 8 px
+  after it, the tool pill (keep-tool lock, divider, the tools of
+  `tools.ts TOOLS`) centred on the canvas. The row is a grid `1fr auto 1fr`
+  with a 12 px gap and margin, so on a narrow canvas the tool pill moves
+  right and stays 12 px after the undo pill.
+- The style pill shows only when the tool or the selection has style
+  fields (`board/style.ts`): colours, then width, then pen or marker, with
+  dividers between groups. It sits 8 px above the tool pill, centred on it,
+  and shifts to stay 12 px inside the canvas.
+- Tooltips name the key: "Select — V or 1", "Undo — ⌘Z".
+- The zoom % is only here, not in the top bar.
 
 ## Icon buttons and status dots
 
@@ -269,8 +296,8 @@ bar. Everything in it shares one centre line at 22 px.
   `--script-panel-width` (296 px), `--bg-elevated`, 1 px `--border-strong`,
   `--radius-lg`, `--shadow-float`, top right of the canvas by default. The
   learner drags it by its header; it keeps the place (localStorage, measured
-  from the nearer side), stays inside the canvas and ends above the tool
-  palette.
+  from the nearer side), stays inside the canvas and ends above the bottom
+  row of the board controls.
   - Header, 34 px, padding 0 5 0 12 px, gap 8 px: the small status dot
     (6 px; accent with its ring while playing, idle grey otherwise), the
     scene name (12 px, secondary, ellipsis), one 24 px icon button, minus

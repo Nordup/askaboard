@@ -47,7 +47,7 @@ Electron runs native Wayland. Differences from macOS:
   is a board. New boards go to `boards/`. The app autosaves and reloads a
   board when another program changes it on disk. If a save fails at close,
   the board goes to a recovery file and a dialog offers to try again.
-- **Ink with pressure.** Pen, highlighter, stroke eraser, lasso select,
+- **Ink with pressure.** Pen, marker, stroke eraser, lasso select,
   undo and redo, pan and zoom. A mouse or trackpad stroke gets its width from
   its speed (B57). The board's 100% is camera zoom 0.85 (B61): Ctrl/⌘ with =,
   - and 0. View > Interface Size zooms the whole window per machine
@@ -227,7 +227,7 @@ to 20 s for that window and its dev hook to load.
 
 | Command | Effect |
 | --- | --- |
-| `draw <file.json \| -> [--tool pen\|highlighter\|eraser] [--no-pan] [--mouse]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes. `--mouse` sends a mouse pointer in place of a pen |
+| `draw <file.json \| -> [--tool pen\|marker\|eraser\|current] [--no-pan] [--mouse]`, `draw --strokes '<json>'` | Draws strokes with pressure, in board coordinates. It pans the board first so that every point is on screen; `--no-pan` keeps the view. `--tool eraser` drags the eraser along the strokes. `--mouse` sends a mouse pointer in place of a pen |
 | `key <combo>` | Sends a key, for example `Meta+z` |
 | `click`, `dblclick`, `drag`, `wheel` | Mouse input at window CSS pixels |
 | `type "<text>"` | Types into the focused field |
