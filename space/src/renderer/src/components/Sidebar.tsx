@@ -12,8 +12,6 @@ import { openFolderLabel, revealLabel, savedOnLabel, shortcut } from '../platfor
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
   hidden: boolean
-  /** The top strip with the sidebar button: only beside the macOS window buttons (App.tsx, the title row's rule). */
-  strip: boolean
   onToggleSidebar(): void
   folderName: string | null
   folderRoot: string | null
@@ -150,12 +148,10 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <aside className={props.strip ? 'sidebar' : 'sidebar sidebar--no-strip'} hidden={hidden}>
-      {props.strip && (
-        <div className="sidebar__strip">
-          <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
-        </div>
-      )}
+    <aside className="sidebar" hidden={hidden}>
+      <div className="sidebar__strip">
+        <SidebarToggle hidden={false} onToggle={props.onToggleSidebar} />
+      </div>
 
       {folderRoot && (
         <nav className="sidebar__actions">

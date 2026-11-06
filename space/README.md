@@ -220,7 +220,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
 | `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
 | `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the desktop (a macOS Space). The lab, the benchmarks and the render run set it. |
-| `SPACE_FAKE_FULL_SCREEN=1` | With `SPACE_REMOTE_DEBUG`: the renderer lays out as in full screen (no window buttons, no sidebar strip), with no real full screen, so a check never moves the window to a new macOS desktop Space. |
+| `SPACE_FAKE_FULL_SCREEN=1` | With `SPACE_REMOTE_DEBUG`: the renderer lays out as in full screen (no window buttons; the title row starts at 12 px), with no real full screen, so a check never moves the window to a new macOS desktop Space. |
 
 The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
 

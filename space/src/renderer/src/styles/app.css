@@ -88,37 +88,22 @@ button:focus-visible {
 }
 
 /*
- * Without the strip (full screen, Linux, Windows) the sidebar starts at the top: the first row (New board) is centred
- * on the title row's centre line, and the sidebar button leads the top bar.
- */
-.sidebar--no-strip {
-  padding-top: calc((var(--topbar-height) - var(--sidebar-row-height)) / 2);
-}
-
-/*
- * The top strip, only beside the macOS window buttons (a window, not full screen; App.tsx decides), level with the top
- * bar (one 44 px title row, one centre line with the window buttons): the window buttons at the left, the sidebar button
- * at the right end, 8 px above the first row. The button's icon ends in the column of the rows' hints and times below:
- * the rows' inset and padding, less the space between the icon and its hit area's edge.
+ * The top strip, in every state where the sidebar shows, level with the top bar (one 44 px title row, one centre line
+ * with the window buttons). The sidebar button's left edge is at --chrome-reserve, the same x as in the top bar's lead
+ * with the sidebar hidden: a click on it never moves it. The rest of the strip is empty; 4 px above the first row.
  */
 .sidebar__strip {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   height: var(--titlebar-height);
   flex-shrink: 0;
-  margin-bottom: var(--space-2);
-  padding-right: calc(2 * var(--space-2) - (var(--title-button-size) - var(--title-icon-size)) / 2);
+  margin-bottom: var(--space-1);
+  padding-left: var(--chrome-reserve);
   -webkit-app-region: drag;
 }
 
 .sidebar__strip button {
   -webkit-app-region: no-drag;
-}
-
-/* The icon's right edge on the text edge of the hints below (the glyph has a small inset in its box, as the rows' dots). */
-.sidebar__strip .sidebar-toggle svg {
-  margin-right: calc(var(--space-1) / -2);
 }
 
 /* New board, Search boards, Set up for learning: sidebar rows above the boards. */
@@ -168,8 +153,8 @@ button:focus-visible {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  /* the same 8 px from the hairline, the sidebar's edges and the window bottom */
-  padding: var(--space-2);
+  /* 4 px under the hairline; 8 px from the sidebar's edges and the window bottom */
+  padding: var(--space-1) var(--space-2) var(--space-2);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -321,11 +306,8 @@ button:focus-visible {
   color: var(--text-secondary);
 }
 
-/*
- * The top bar leads with the sidebar button (and New board with the sidebar hidden) when no sidebar strip holds it:
- * after the window buttons (sidebar hidden, macOS window) or at the inset, then the board name.
- */
-.topbar--lead {
+/* With the sidebar hidden: the sidebar button and New board from --chrome-reserve (as in the strip), then the board name. */
+.shell[data-sidebar-hidden] .topbar {
   padding-left: var(--chrome-reserve);
 }
 
