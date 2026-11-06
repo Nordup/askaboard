@@ -8,7 +8,7 @@ import type { WorldTune } from '@shared/world-tune'
 import { FolderSession } from './folder'
 import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
-import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
+import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, revokeWorldFilesOf, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { devClickMenu, devMenuItem, devSidebarMenu, installMenu, setFolderOpen, setHistoryMenu, setSidebarMenu } from './menu'
 import { changeSettings, registerSettings, settingsChanged, settingsSnapshot, stepInterfaceSize } from './settings'
@@ -25,6 +25,7 @@ import * as store from './state'
 import * as analytics from './analytics'
 import { hasVoiceKey } from './voice'
 import { resourcePath } from './resources'
+import { refusePermissions } from './permissions'
 
 /** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
 const BACKGROUND = '#111113'
@@ -207,7 +208,8 @@ async function snapshot(initial = false): Promise<Snapshot> {
           boards,
           lastBoard: lastExists ? last : null,
           setUp: await isSetUp(session),
-          setupDontAsk: store.getSetupDontAsk(session.root)
+          setupDontAsk: store.getSetupDontAsk(session.root),
+          trusted: store.isFolderTrusted(session.root)
         }
       })()
     : null
@@ -227,6 +229,9 @@ async function openFolder(path: string, via: FolderVia): Promise<void> {
   const opened = await FolderSession.open(path)
   const next = sessions.get(opened.root) ?? opened
   sessions.set(next.root, next)
+  // Folder trust (U19): a folder whose boards hold no world has nothing to ask about, so it is trusted now, silently.
+  // A folder made or set up in the app therefore never asks; only a folder that comes with worlds does, at this open.
+  if (!store.isFolderTrusted(next.root) && !(await next.hasWorlds().catch(() => true))) store.setFolderTrusted(next.root, true)
   session?.stopWatching()
   session = next
   folderVia = via
@@ -378,7 +383,8 @@ function registerIpc(): void {
     if (fromBoardPage(event) && typeof level === 'string' && typeof text === 'string') agentServer.worldLog(level, text)
   })
   ipcMain.on(IPC.worldFilesGrant, (event, token: unknown) => {
-    if (fromBoardPage(event)) grantWorldFiles(token, session)
+    // An untrusted folder runs no world (U19): its files go to no worker, a second line behind the renderer's gate.
+    if (fromBoardPage(event) && session && store.isFolderTrusted(session.root)) grantWorldFiles(token, session)
     event.returnValue = true
   })
   ipcMain.on(IPC.worldFilesRevoke, (event, token: unknown) => {
@@ -469,6 +475,13 @@ function registerIpc(): void {
     return result
   })
   handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
+  handle(IPC.setFolderTrusted, (value: unknown) => {
+    const root = requireSession().root
+    const trusted = value === true
+    store.setFolderTrusted(root, trusted)
+    if (!trusted) revokeWorldFilesOf(root)
+    send(IPC.folderTrust, { root, trusted })
+  })
   handle(IPC.getUncappedFrames, () => ({ on: store.getUncappedFrames(), launched: uncappedAtLaunch }))
   handle(IPC.setUncappedFrames, (on: unknown) => store.setUncappedFrames(on === true))
   handle(IPC.boardGuidePath, async () => {
@@ -776,6 +789,8 @@ function placeWindowButtons(win: BrowserWindow, factor: number): void {
 }
 
 void app.whenReady().then(async () => {
+  // Before any page loads: the pages and the worlds get no web permission (D13).
+  refusePermissions()
   buildMenu()
   const displaysChanged = (): void => applyInterfaceSize(liveMainWindow())
   screen.on('display-metrics-changed', displaysChanged)

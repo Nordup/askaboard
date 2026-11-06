@@ -67,6 +67,17 @@ export interface FolderInfo {
   setUp: boolean
   /** The learner chose "Don't ask for this folder" for the setup offer. */
   setupDontAsk: boolean
+  /**
+   * Its worlds may run (decision U19; main owns it, main/state.ts). At open, main trusts a folder whose boards hold no
+   * world, so false here means: the folder has worlds and the learner has not trusted it.
+   */
+  trusted: boolean
+}
+
+/** The open folder's trust after a change (Settings, the trust question, a paused world's note). */
+export interface FolderTrust {
+  root: string
+  trusted: boolean
 }
 
 /** One item "Set up this folder for learning" would create. */
@@ -698,6 +709,10 @@ export interface SpaceApi {
   applySetup(): Promise<SetupResult>
   /** Remember (or forget) "Don't ask for this folder". */
   setSetupDontAsk(value: boolean): Promise<void>
+  /** Trust the open folder or stop trusting it: main saves it and answers with onFolderTrust (main owns it). */
+  setFolderTrusted(value: boolean): Promise<void>
+  /** The open folder's trust after any change. */
+  onFolderTrust(listener: (trust: FolderTrust) => void): Unsubscribe
   /** Main window only: the sidebar setting, full screen and the home folder, at once (a sync call, so the first paint is right). */
   getShellState(): ShellState
   /** The sidebar button and ⌘B: main saves the setting and answers with onSidebarHidden (main owns it). */
@@ -832,6 +847,8 @@ export const IPC = {
   setupPlan: 'space:setup-plan',
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
+  setFolderTrusted: 'space:set-folder-trusted',
+  folderTrust: 'space:folder-trust',
   getUncappedFrames: 'space:get-uncapped-frames',
   setUncappedFrames: 'space:set-uncapped-frames',
   boardGuidePath: 'space:board-guide-path',

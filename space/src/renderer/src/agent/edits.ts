@@ -7,7 +7,7 @@ import { ownBox } from '../board/rotation'
 import { hasEnds } from '../board/shapes'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
-import { liveReport, liveStatus } from '../live-pixels/registry'
+import { liveReport, liveStatus, UNTRUSTED_NOTE } from '../live-pixels/registry'
 import { runScene, sceneDraft, sceneFrames, sceneControl, sceneContext, sceneMemory, sceneRestore, type ScenePlace } from '../live/run'
 import { isGroupId, type InkGroup, type InkGroupTracker } from './groups'
 import { resolveTarget, sceneOf, type Scene } from './placement'
@@ -102,7 +102,8 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
         size: { w: node.w, h: node.h },
         params: node.params,
         code_length: node.code.length,
-        state: status ? status.state : 'not shown',
+        state: status ? (status.state === 'untrusted' ? 'paused' : status.state) : 'not shown',
+        ...(status?.state === 'untrusted' ? { paused: UNTRUSTED_NOTE } : {}),
         ...(status?.error ? { error: status.error } : {}),
         input: status?.input ?? 'none',
         ...(liveReport(node.id) !== undefined ? { report: liveReport(node.id) } : {}),

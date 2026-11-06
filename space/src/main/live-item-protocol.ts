@@ -71,6 +71,11 @@ export function revokeWorldFiles(token: unknown): void {
   if (typeof token === 'string') grants.delete(token)
 }
 
+/** Every worker's right to read this folder ends (the learner stopped trusting it, U19). */
+export function revokeWorldFilesOf(root: string): void {
+  for (const [token, grant] of grants) if (grant.folder?.root === root) grants.delete(token)
+}
+
 /** The bytes of the files that this worker asked for in the last `ms` milliseconds. A file counts once, however many reads ask for it. */
 export function worldBytesRead(token: unknown, ms: unknown): number {
   const grant = typeof token === 'string' ? grants.get(token) : undefined

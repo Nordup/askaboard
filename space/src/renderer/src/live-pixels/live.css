@@ -37,3 +37,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The paused world's "Trust folder…" (U19): the one control on the board's content layer, so it takes its own press. */
+.node-live__note-action {
+  pointer-events: auto;
+}

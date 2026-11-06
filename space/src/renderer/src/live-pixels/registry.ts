@@ -3,7 +3,9 @@ import type { WorldPointer } from '@shared/world-protocol'
 import { scenePlayer } from '../live/player'
 import { absNow, itemTime, sceneTimelineOf, seedOf, tickOf, TICK_HZ, type ItemClock, type LiveTimeline, type SceneClock, type SceneView } from './clock'
 import { stillAt, worldError } from './stills'
+import { onWorldsTrust, worldsTrusted } from './trust'
 import { WorldHost, type HostEvents, type LiveFrame, type LiveInput, type WorldHit } from './world/host'
+import { endWorldWorkers } from './world/surface'
 
 /**
  * The worlds on the page: their hosts, clocks, status and generations. The
@@ -23,9 +25,15 @@ import { WorldHost, type HostEvents, type LiveFrame, type LiveInput, type WorldH
  *   shows meanwhile.
  * - A lost worker starts a new generation; the third loss in a minute is an
  *   error.
+ * - In a folder the learner has not trusted (U19, trust.ts) no world has a
+ *   host: its state is 'untrusted' and its view shows a note. Trust starts the
+ *   wanted ones at once; the end of trust ends every host and worker.
  */
 
-export type LiveState = 'starting' | 'running' | 'paused' | 'error'
+export type LiveState = 'starting' | 'running' | 'paused' | 'error' | 'untrusted'
+
+/** What agents read about a world in an untrusted folder (list_items, get_item). */
+export const UNTRUSTED_NOTE = 'The learner has not trusted this folder, so its worlds do not run. They can trust it from the note at the world or in Settings › Folder.'
 
 export interface LiveStatus {
   state: LiveState
@@ -165,6 +173,10 @@ export class LiveItem {
     const rest = restClock(node)
     this.clock = rest.clock
     this.scene = rest.scene
+    if (!worldsTrusted()) {
+      this.status = { state: 'untrusted', frames: 0 }
+      onStatus(this.status)
+    }
     items.set(id, this)
     const clock = playbackClocks.get(id)
     if (clock) this.sceneClockChanged(clock)
@@ -187,13 +199,14 @@ export class LiveItem {
   }
 
   private shownState(): LiveState {
+    if (!worldsTrusted()) return 'untrusted'
     return this.visible ? 'running' : 'paused'
   }
 
   // ----- Generations -----
 
   private wantsHost(): boolean {
-    return this.visible || this.scene.active
+    return worldsTrusted() && (this.visible || this.scene.active)
   }
 
   private runs(): boolean {
@@ -390,7 +403,7 @@ export class LiveItem {
       this.host?.dispose()
       this.host = null
       this.stepping = null
-      this.setStatus('paused', undefined, undefined)
+      this.setStatus(worldsTrusted() ? 'paused' : 'untrusted', undefined, undefined)
       this.ensureHost()
       return
     }
@@ -406,6 +419,21 @@ export class LiveItem {
     this.visible = visible
     this.wantChanged()
     if (this.status.state === 'running' || this.status.state === 'paused') this.setStatus(this.shownState())
+  }
+
+  /** The learner trusted the folder (the wanted world starts now) or stopped trusting it (its generations end). */
+  trustChanged(trusted: boolean): void {
+    if (!trusted) {
+      if (entered === this.id) enterLive(null)
+      this.endLeaving()
+      this.host?.dispose()
+      this.host = null
+      this.stepping = null
+      if (this.status.state !== 'error') this.setStatus('untrusted', undefined, undefined)
+      return
+    }
+    if (this.status.state === 'untrusted') this.setStatus(this.visible ? 'running' : 'paused', undefined, undefined)
+    this.wantChanged()
   }
 
   /** The window was hidden or shown: worlds run only while it shows. */
@@ -424,7 +452,7 @@ export class LiveItem {
 
   /** The current pixels and their tick (agent screenshots); a step host makes them when the world has no host. Null when there is no picture. */
   async still(): Promise<LiveFrame | null> {
-    if (this.status.state === 'error') return null
+    if (this.status.state === 'error' || !worldsTrusted()) return null
     if (this.catchingUp && this.stepping) {
       // A stepping generation shows its picture when it reaches its clock.
       await Promise.race([this.stepping.done, new Promise((resolve) => window.setTimeout(resolve, STEP_WAIT_MS))])
@@ -458,6 +486,13 @@ export function nearWorlds(view: { x: number; y: number; width: number; height: 
     item.setVisible(rect.x < view.x + view.width * 2 && rect.x + rect.w > view.x - view.width && rect.y < view.y + view.height * 2 && rect.y + rect.h > view.y - view.height)
   }
 }
+
+const offTrust = onWorldsTrust((trusted) => {
+  for (const item of items.values()) item.trustChanged(trusted)
+  // No world code stays: the board surfaces' workers end too (a step host's watch ends it, stills.ts).
+  if (!trusted) endWorldWorkers()
+})
+import.meta.hot?.dispose(() => offTrust())
 
 document.addEventListener('visibilitychange', () => {
   const shown = document.visibilityState !== 'hidden'
@@ -561,7 +596,7 @@ export function liveSummary(node: LiveNode): string {
     .map(([name, value]) => `${name}=${Math.round(value * 1000) / 1000}`)
     .join(' ')
   const status = liveStatus(node.id)
-  const state = status ? (status.state === 'error' ? 'error (get_item shows it)' : status.state) : 'not shown'
+  const state = status ? (status.state === 'error' ? 'error (get_item shows it)' : status.state === 'untrusted' ? `paused. ${UNTRUSTED_NOTE}` : status.state) : 'not shown'
   return `world${params ? `, params ${params}` : ''}, code ${node.code.length} chars, ${state}`
 }
 

@@ -1,5 +1,6 @@
 import type { LiveNode } from '@shared/board-format'
 import { absNow, seedOf, tickOf, type ItemClock, type LiveTimeline, type SceneView } from './clock'
+import { worldsTrusted } from './trust'
 import { WorldHost, type LiveFrame } from './world/host'
 
 /**
@@ -54,8 +55,9 @@ const NO_SCENE: SceneView = { t: 0, playing: false, active: false, ended: true, 
 /**
  * A step host and a watchdog: `run` gets the host and `watch`, which ends a
  * piece of work with null when the host fails, when its tick does not move
- * for PROGRESS_MS (a setup that never ends, a hung loop), or after `limitMs`,
- * HOST_MOST_MS by default.
+ * for PROGRESS_MS (a setup that never ends, a hung loop), after `limitMs`,
+ * HOST_MOST_MS by default, or when the learner stops trusting the folder.
+ * In an untrusted folder (U19) no host starts, and the result is null.
  */
 async function withStepHost<T>(
   node: Pick<LiveNode, 'code' | 'name' | 'params' | 'w' | 'h'> & Partial<Pick<LiveNode, 'id' | 'data' | 'pins'>>,
@@ -64,8 +66,9 @@ async function withStepHost<T>(
   timeline: LiveTimeline | null,
   run: (host: WorldHost, watch: <R>(work: Promise<R | null>) => Promise<R | null>) => Promise<T>,
   options: { onError?: (message: string) => void; limitMs?: number } = {}
-): Promise<T> {
+): Promise<T | null> {
   return withStepTurn(async () => {
+    if (!worldsTrusted()) return null
     const started = absNow()
     const limitMs = options.limitMs ?? HOST_MOST_MS
     let moved = started
@@ -96,7 +99,7 @@ async function withStepHost<T>(
       new Promise((resolve) => {
         const timer = window.setInterval(() => {
           const now = absNow()
-          if (failed || now - moved > PROGRESS_MS || now - started > limitMs) {
+          if (failed || !worldsTrusted() || now - moved > PROGRESS_MS || now - started > limitMs) {
             clearInterval(timer)
             resolve(null)
           }
@@ -158,14 +161,15 @@ async function itemStills(item: LiveStillRequest, scale: number): Promise<LiveSt
 /** A picture of a world that has no host on the board: a fresh host at the tick of item time t. */
 export async function stillAt(node: LiveNode, params: Record<string, number>, t: number, scale: number): Promise<LiveFrame | null> {
   const tick = tickOf(t)
-  return withStepHost({ ...node, params }, stillScale(node, scale), tick, null, (host, watch) => watch(host.advance(tick, true)))
+  return (await withStepHost({ ...node, params }, stillScale(node, scale), tick, null, (host, watch) => watch(host.advance(tick, true)))) ?? null
 }
 
 /**
  * Check a world before a scene plays it: run its setup and its first ticks
  * in a step host, and return its first error (syntax, a failed import, a
  * runtime error), or null. A world still busy after CHECK_MS (a slow import,
- * a setup that waits) passes.
+ * a setup that waits) passes, and so does every world in an untrusted folder:
+ * it runs nothing there, so there is nothing to check.
  */
 export async function worldError(code: string, params: Record<string, number>, size: [number, number] = [480, 360], data?: unknown): Promise<string | null> {
   let error: string | null = null

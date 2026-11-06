@@ -601,6 +601,14 @@ button:focus-visible {
   margin: auto;
 }
 
+/* The trust question (U19): layout only (centred in the window both ways, a fixed width, the height of its content); the content is shared .menu parts. */
+.menu.trust-dialog {
+  inset: 0;
+  width: min(var(--trust-dialog-width), calc(100vw - 2 * var(--panel-margin-x)));
+  height: fit-content;
+  margin: auto;
+}
+
 /* The performance pill's menu: layout only (position and width); the content is shared .menu parts. */
 .menu.perf-pop {
   position: absolute;
@@ -1389,7 +1397,8 @@ button:focus-visible {
  *   .menu__line            one short line under a row (--warn, --error), with a .menu__fix text button
  *   .menu__status          inline status: green check + text, or .menu__spinner
  *   .menu__separator       hairline
- *   .menu__footer          quiet text action left, a .btn-sm right
+ *   .menu__footer          quiet text action left, a .btn-sm right (in a .menu--panel: a title, a lede and a footer
+ *                          make a small question, in the title's column: the trust question)
  *   .btn-sm, .btn-text     the one small button (the select trigger's look: one rule, "The small control"), and its
  *                          quiet text variant
  */
@@ -1578,6 +1587,15 @@ button:focus-visible {
 .menu--panel > .menu__title {
   flex-shrink: 0;
   padding: var(--space-4) calc(var(--menu-pad) + var(--space-2)) var(--space-1);
+}
+
+/* A panel's lede and footer under its title (the trust question): in the title's column. */
+.menu--panel > .menu__lede {
+  padding: 0 calc(var(--menu-pad) + var(--space-2)) var(--space-3);
+}
+
+.menu--panel > .menu__footer {
+  padding: var(--space-1) calc(var(--menu-pad) + var(--space-2)) var(--space-3);
 }
 
 /* A split panel (the Settings dialog): the section list on the left, the section on the right. */

@@ -9,6 +9,8 @@ export interface FolderSettings {
   root: string
   /** AGENTS.md is at its root (main/setup.ts SETUP_MARKER). */
   setUp: boolean
+  /** Its worlds may run (U19; main owns it, FolderInfo.trusted). */
+  trusted: boolean
 }
 
 /** The folder actions: App's own handlers, the same ones the folder menu, File and the setup flyout run. */
@@ -17,6 +19,8 @@ export interface FolderActions {
   onReveal(): void
   onEditGuide(): void
   onSetUp(): void
+  /** Trust the folder or stop trusting it: main saves it, and the worlds start or stop at once. */
+  onTrust(value: boolean): void
 }
 
 /** Settings > Folder: where the boards are, and the folder's actions. With no folder open: "Open a folder" only. */
@@ -57,6 +61,9 @@ export function FolderSection({ folder, homeDir, actions }: { folder: FolderSett
             Set up…
           </button>
         )}
+      </SettingRow>
+      <SettingRow name="Trusted" description="Worlds in this folder’s boards can run">
+        <button className="menu__switch" role="switch" aria-checked={folder.trusted} aria-label="Trusted" onClick={() => actions.onTrust(!folder.trusted)} />
       </SettingRow>
     </>
   )

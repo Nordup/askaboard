@@ -4,7 +4,7 @@ import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFi
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
-import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, parseBoard, sanitizeBoardName, serializeBoard } from '@shared/board-format'
+import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, isLive, isOldLive, parseBoard, sanitizeBoardName, serializeBoard } from '@shared/board-format'
 import { MAX_ASSET_BYTES } from '@shared/limits'
 import type { BoardChange, BoardList, BoardListEntry, FileNode, FilePreview, FileTree } from '@shared/space-api'
 
@@ -461,6 +461,28 @@ export class FolderSession {
       await new Promise((done) => setImmediate(done))
     }
     return ids
+  }
+
+  /**
+   * A board of the folder holds a world: a live node that runs (decision U19, the trust question at open).
+   * Every board is parsed: a text search would miss a kind written with JSON escapes. A board that cannot
+   * be read counts as one with a world, so the folder asks; a board that does not parse opens as an error.
+   */
+  async hasWorlds(): Promise<boolean> {
+    for (const { path } of await this.boardFiles()) {
+      let text: string
+      try {
+        text = await readFile(join(this.root, path), 'utf8')
+      } catch {
+        return true
+      }
+      try {
+        if (parseBoard(text).nodes.some((node) => isLive(node) && !isOldLive(node))) return true
+      } catch {
+        // A broken board opens as an error and runs nothing.
+      }
+    }
+    return false
   }
 
   /** A board file's text for list_boards. Unlike readBoard, it does not touch the watcher's record of known versions. */

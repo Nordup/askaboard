@@ -212,6 +212,7 @@
   --settings-dialog-width: 760px;
   --settings-dialog-height: 600px; /* the key sheet's two columns fit without scrolling (U15) */
   --panel-nav-width: 208px; /* a split panel's section list (.menu__nav) */
+  --trust-dialog-width: 300px; /* the trust question (U19): a title, one line and a footer; at most the window width − 2 × --panel-margin-x */
   --setting-field-width: 200px; /* a text field as a setting's control (the Gemini key) */
   --radio-size: 14px; /* a choice's radio mark (.menu__radio) */
   --radio-dot: 6px; /* its dot when chosen */

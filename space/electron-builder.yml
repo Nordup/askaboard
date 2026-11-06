@@ -30,6 +30,19 @@ asarUnpack:
 # No native modules in the production dependencies.
 npmRebuild: false
 
+# Electron fuses (decision D13), flipped in the binary at package time.
+# runAsNode stays on: the agent shim runs the relay with ELECTRON_RUN_AS_NODE
+# (src/main/agent-home.ts). grantFileProtocolExtraPrivileges stays on (the
+# default): the window loads out/renderer/index.html from file:// (loadFile),
+# and its module scripts need it.
+electronFuses:
+  runAsNode: true
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+
 mac:
   icon: resources/icon.png
   category: public.app-category.education

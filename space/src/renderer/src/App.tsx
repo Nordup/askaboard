@@ -16,6 +16,7 @@ import {
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
 import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
+import { setTrustAsker, setWorldsTrusted } from './live-pixels/trust'
 import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, BoardList, BoardListEntry, Camera, FailedSave, FileTree, GuideOverrides, ShellState, Snapshot } from '@shared/space-api'
 import { scenePlayer } from './live/player'
 import { handleAgentRequest, type AgentContext } from './agent/handler'
@@ -28,6 +29,7 @@ import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { SearchPanel } from './components/SearchPanel'
+import { TrustDialog } from './components/TrustDialog'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast, type ToastAction } from './components/Toast'
@@ -125,6 +127,8 @@ export function App() {
   const [menuSetup, setMenuSetup] = useState(false)
   /** "Don't ask" or a finished setup: no setup row until the folder opens again. */
   const [offerDismissed, setOfferDismissed] = useState(false)
+  /** The trust question shows (U19): at the open of an untrusted folder with worlds, or from a paused world's note. */
+  const [trustAsk, setTrustAsk] = useState(false)
   const [tools, setTools] = useState<ToolState>(INITIAL_TOOLS)
   /** The selection's style, for the style pill (Board onSelectionStyle). */
   const [selectionStyle, setSelectionStyle] = useState<SelectionStyle | null>(null)
@@ -139,6 +143,26 @@ export function App() {
   const showError = (text: string): void => setToast({ text, kind: 'error' })
   const folder = snapshot?.folder ?? null
   const boards = boardList?.boards ?? NO_BOARDS
+
+  // Folder trust (U19): main's value goes to the worlds after the commit that shows its folder, so a board of the
+  // folder before has left by then (applySnapshot ends the trust of a folder that leaves at once).
+  const folderTrusted = folder?.trusted ?? false
+  useLayoutEffect(() => setWorldsTrusted(folderTrusted), [folderTrusted, folder?.root])
+  useEffect(() => {
+    setTrustAsker(() => setTrustAsk(true))
+    const off = space.onFolderTrust((trust) =>
+      setSnapshot((current) => (current?.folder && current.folder.root === trust.root ? { ...current, folder: { ...current.folder, trusted: trust.trusted } } : current))
+    )
+    return () => {
+      setTrustAsker(null)
+      off()
+    }
+  }, [])
+  const trustFolder = useCallback((value: boolean) => {
+    if (value) setTrustAsk(false)
+    space.setFolderTrusted(value).catch((error: unknown) => setToast({ text: errorMessage(error), kind: 'error' }))
+  }, [])
+  const closeTrust = useCallback(() => setTrustAsk(false), [])
 
   const boardRef = useRef<BoardHandle>(null)
   const cacheRef = useRef(new Map<string, CacheEntry>())
@@ -461,6 +485,10 @@ export function App() {
   const applySnapshot = useCallback((next: Snapshot) => {
     leaveBoard()
     const leaving = rootRef.current
+    // The folder that leaves runs no world from now; the new folder's trust comes after this commit (folderTrusted above).
+    if (leaving !== (next.folder?.root ?? null)) setWorldsTrusted(false)
+    // The trust question is part of opening a folder: it shows now or never for this open.
+    setTrustAsk(!!next.folder && !next.folder.trusted)
     rootRef.current = next.folder?.root ?? null
     cacheRef.current.clear()
     if (leaving !== (next.folder?.root ?? null)) historyChanged(openHistory.clear())
@@ -1446,7 +1474,7 @@ export function App() {
           section={settingsSection}
           onSection={setSettingsSection}
           onClose={closeSettings}
-          folder={folder ? { name: folder.name, root: folder.root, setUp: folder.setUp || hasAgentsFile } : null}
+          folder={folder ? { name: folder.name, root: folder.root, setUp: folder.setUp || hasAgentsFile, trusted: folder.trusted } : null}
           homeDir={shellStart.homeDir}
           folderActions={{
             onOpenFolder: () => void openFolderDialog(),
@@ -1458,10 +1486,12 @@ export function App() {
             onSetUp: () => {
               flushSync(closeSettings)
               setMenuSetup(true)
-            }
+            },
+            onTrust: trustFolder
           }}
         />
       )}
+      {trustAsk && folder && !folder.trusted && <TrustDialog onTrust={() => trustFolder(true)} onClose={closeTrust} />}
       <Tooltips />
     </div>
   )

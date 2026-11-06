@@ -20,6 +20,8 @@ interface PersistedState {
   lastBoards: Record<string, string>
   /** Folder roots where the learner chose "Don't ask" for the setup offer. */
   setupDontAsk: string[]
+  /** Folder roots whose worlds may run (decision U19). Main is the one owner; the folder snapshot carries it. */
+  trustedFolders: string[]
   /** Each agent app's news state per board (see news.ts). Key: `<client label>::<folder root>::<board path>`. */
   agentLooks: Record<string, AgentLook>
   /** View > Show performance. */
@@ -60,18 +62,21 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '', interfaceSize: 'auto' }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], trustedFolders: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '', interfaceSize: 'auto' }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
   try {
     const raw = JSON.parse(readFileSync(statePath(), 'utf8')) as Partial<PersistedState>
+    const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [])
     state = {
       lastFolder: typeof raw.lastFolder === 'string' ? raw.lastFolder : null,
       recent: Array.isArray(raw.recent) ? raw.recent.filter((entry) => typeof entry === 'string') : [],
       cameras: raw.cameras && typeof raw.cameras === 'object' ? raw.cameras : {},
       lastBoards: raw.lastBoards && typeof raw.lastBoards === 'object' ? raw.lastBoards : {},
       setupDontAsk: Array.isArray(raw.setupDontAsk) ? raw.setupDontAsk.filter((entry) => typeof entry === 'string') : [],
+      // A state file from before folder trust: the folders the learner already used are trusted, so they never ask.
+      trustedFolders: Array.isArray(raw.trustedFolders) ? strings(raw.trustedFolders) : [...new Set([...strings(raw.recent), ...strings([raw.lastFolder])])],
       agentLooks: raw.agentLooks && typeof raw.agentLooks === 'object' ? raw.agentLooks : {},
       showPerformance: raw.showPerformance === true,
       sidebarHidden: raw.sidebarHidden === true,
@@ -83,6 +88,8 @@ export function loadState(): void {
       localVoice: LOCAL_VOICES.includes(raw.localVoice as string) ? (raw.localVoice as string) : LOCAL_VOICES[0],
       interfaceSize: (INTERFACE_SIZES as readonly unknown[]).includes(raw.interfaceSize) ? (raw.interfaceSize as number) : 'auto'
     }
+    // Write the seeded list now: a folder opened later must not join it at a second seed.
+    if (!Array.isArray(raw.trustedFolders)) saveStateNow()
   } catch {
     // A missing or broken state file means a fresh start.
   }
@@ -184,6 +191,18 @@ export function setSetupDontAsk(root: string, value: boolean): void {
   state.setupDontAsk = state.setupDontAsk.filter((entry) => entry !== root)
   if (value) state.setupDontAsk.push(root)
   // A rare, deliberate choice: write it now, so a crash cannot lose it.
+  saveStateNow()
+}
+
+/** The folder's worlds may run (decision U19). */
+export function isFolderTrusted(root: string): boolean {
+  return state.trustedFolders.includes(root)
+}
+
+export function setFolderTrusted(root: string, value: boolean): void {
+  state.trustedFolders = state.trustedFolders.filter((entry) => entry !== root)
+  if (value) state.trustedFolders.push(root)
+  // A deliberate choice: write it now, so a crash cannot lose it.
   saveStateNow()
 }
 

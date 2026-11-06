@@ -830,7 +830,9 @@ internal data (a path, an id). One shared tooltip instead
   - Folder: the folder name with its path (`~`, shortened as in the folder
     menu) and Reveal; Change folder (Change folder…); Board guide (Edit);
     Set up for learning (Set up…, which opens the setup flyout, or "Set up"
-    with a check). No folder: one row, "No folder open" with Open a folder.
+    with a check); Trusted (a `.menu__switch`, "Worlds in this folder’s
+    boards can run"; U19: off stops the folder's worlds at once, on starts
+    them). No folder: one row, "No folder open" with Open a folder.
   - Keyboard shortcuts (U15): a `.menu__sheet`. The groups Tools, Edit,
     View flow in two columns (one when the pane has no room for two
     `--keys-column-min` columns); a line is 30 px: the caps in an 80 px
@@ -851,6 +853,24 @@ internal data (a path, an id). One shared tooltip instead
 
 - **Stopped world.** A world that fails or stops answering shows a quiet note
   at its place (`.node-live__note`).
+- **Paused world** (U19). In a folder that is not trusted, a world shows the
+  same note: the title "World paused", the detail "This folder is not
+  trusted" and one `.btn-text` action "Trust folder…", which opens the
+  trust question. The action takes its own press
+  (`.node-live__note-action`), so it starts no selection, drag or ink.
+- **Trust question** (U19, founder's option A, 2026-11-07;
+  `TrustDialog.tsx`). It shows only when a folder opens that is not trusted
+  and has a world in a board, and from a paused world's "Trust folder…".
+  A centred `.menu.menu--panel.trust-dialog` over a `.backdrop`
+  (`ModalPanel.tsx`): `--trust-dialog-width` (300 px), the height of its
+  content, `--bg-elevated`, `--radius-xl`, `--shadow-card`. The
+  `.menu__title` "Trust this folder?"; one `.menu__lede` "Its boards have
+  worlds: programs that run and can use the internet. Trust it only if you
+  know where it came from."; a `.menu__footer` with the `.btn-text` "Not
+  now" at the left and the `.btn-sm` "Trust folder" at the right. In a
+  modal panel, the lede and the footer sit in the title's column (14 px
+  from the sides, 12 px under the lede and the footer). Escape and a
+  backdrop press are Not now.
 
 ## Words
 

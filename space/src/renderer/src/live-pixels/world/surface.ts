@@ -549,6 +549,12 @@ export class WorldSurface {
     this.removals = []
   }
 
+  /** End the worker and clear the picture (the folder is no longer trusted, U19). Its members are gone by then; a new one boots a new worker. */
+  endWorld(): void {
+    if (this.frame) this.recover(null, true)
+    this.show?.(null)
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -590,6 +596,11 @@ export function bindWorldBoard(element: HTMLElement, side: WorldBoard): () => vo
     surfaces.get(element)?.dispose()
     surfaces.delete(element)
   }
+}
+
+/** The learner stopped trusting the folder (registry.ts): every board surface ends its worker. */
+export function endWorldWorkers(): void {
+  for (const surface of boardSurfaces) surface.endWorld()
 }
 
 /** The board has worlds now: a change of their look needs a paint, as ink does. */

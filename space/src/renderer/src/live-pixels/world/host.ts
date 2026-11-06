@@ -1,5 +1,6 @@
 import type { WorldKey, WorldPin, WorldPointer, WorldToPage } from '@shared/world-protocol'
 import type { ItemClock, LiveTimeline, SceneView } from '../clock'
+import { worldsTrusted } from '../trust'
 import { boardSurface, WorldSurface, type WorldMember } from './surface'
 
 /**
@@ -136,6 +137,8 @@ export class WorldHost implements WorldMember {
     private events: HostEvents,
     container: HTMLElement | null
   ) {
+    // The one place where world code starts: an untrusted folder runs none (U19). Callers check worldsTrusted() first.
+    if (!worldsTrusted()) throw new Error('This folder is not trusted: its worlds do not run.')
     this.key = { node: start.id, generation: nextGeneration++ }
     this.pins = start.pins ?? []
     this.step = !container

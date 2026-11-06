@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { isOldLive, type LiveNode } from '@shared/board-format'
 import { LiveItem, type LiveStatus } from './registry'
+import { askTrust } from './trust'
 import './live.css'
 
 /**
  * The view of one world in the content layer: an invisible anchor, so that
  * selection, moving, undo and the layout cache work. The pixels are on the
- * world surface. A failed world shows a quiet note here.
+ * world surface. A failed world shows a quiet note here, and so does a world in
+ * a folder the learner has not trusted (U19), with the way to trust it.
  *
  * In the snapshot window (agent screenshots, preview frames) a world shows on
  * the frame's world layer, from the still that the request carries (made on the
@@ -62,6 +64,7 @@ function LiveRunner({ node, style, common }: Props) {
   }, [node])
 
   const failed = status.state === 'error'
+  const untrusted = status.state === 'untrusted'
   return (
     <div
       {...common}
@@ -69,13 +72,29 @@ function LiveRunner({ node, style, common }: Props) {
         box.current = element as HTMLDivElement | null
         common.ref(element)
       }}
-      className={`node node-live${failed ? ' node-live--note' : ''}`}
+      className={`node node-live${failed || untrusted ? ' node-live--note' : ''}`}
       style={style}
     >
       {failed && (
         <div className="node-live__note">
           <span className="node-live__note-title">World error</span>
           <span className="node-live__note-detail">{firstLine(status.error)}</span>
+        </div>
+      )}
+      {untrusted && (
+        <div className="node-live__note">
+          <span className="node-live__note-title">World paused</span>
+          <span className="node-live__note-detail">This folder is not trusted</span>
+          {/* The press is the button's own: it starts no selection, drag or ink on the board. */}
+          <button
+            className="btn-text node-live__note-action"
+            data-action="trust-folder"
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={askTrust}
+          >
+            Trust folder…
+          </button>
         </div>
       )}
     </div>

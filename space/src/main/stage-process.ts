@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { app, MessageChannelMain, session, WebContentsView, type MessagePortMain, type Session } from 'electron'
 import { parseFromStage, refusedHostId, refusedId, type FromStage, type ToStage } from '@shared/stage-protocol'
+import { refusePermissions } from './permissions'
 import pageScript from '../stage/page.ts?stage'
 import workerScript from '../stage/worker.ts?stage'
 
@@ -68,9 +69,7 @@ function stageSession(): Session {
     if (!allowed) console.warn(`stage: a request was refused: ${details.url.slice(0, 200)}`)
     callback({ cancel: !allowed })
   })
-  ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  ses.setPermissionCheckHandler(() => false)
-  ses.setDevicePermissionHandler(() => false)
+  refusePermissions(ses)
   ses.on('will-download', (event, item) => {
     event.preventDefault()
     item.cancel()
