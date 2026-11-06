@@ -223,15 +223,40 @@
   /* The select (U14): the app's own dropdown (components/Select.tsx, .menu__select and .menu--select in app.css) */
   --bg-field: rgba(255, 255, 255, 0.06); /* a control's soft fill: the select's trigger */
   --bg-field-hover: rgba(255, 255, 255, 0.09);
-  --select-height: 30px;
-  --select-pad: 0 10px 0 12px; /* the chevron side is a little tighter */
-  --select-radius: 8px;
+  --select-chevron-pad: 10px; /* the trigger's chevron side is a little tighter than --control-pad-x */
   --select-list-min-width: 200px; /* at least the trigger's width too */
-  --select-list-max-height: 280px; /* a longer list scrolls inside */
-  --select-list-radius: 12px;
+  --select-list-radius: 12px; /* no max height: the list shows every row, up to the room in the window (Select.tsx) */
   --select-list-pad: 6px;
-  --select-option-height: 30px;
+  --select-option-height: 28px;
   --select-option-pad: 0 10px;
+
+  /* The small control (U15): one look for the select's trigger and the small button (.btn-sm), one CSS rule in app.css */
+  --control-height: 30px;
+  --control-height-menu: 24px; /* the same in a popup menu's compact rows (the agent popover, the setup flyout): the rows' 24 px */
+  --control-pad-x: 12px;
+  --control-radius: 8px;
+
+  /* Settings spacing (U15): the rules every Settings section uses, named for their role, on the 4 px scale */
+  --settings-pane-pad-y: var(--space-6); /* the pane's top and bottom, and the section list's */
+  --settings-pane-pad-x: calc(var(--space-6) + var(--space-1)); /* 28 px: the pane's sides */
+  --settings-title-size: 16px; /* the section title */
+  --settings-title-gap: var(--space-2); /* under the title row */
+  --setting-row-pad-y: var(--space-4); /* above and below a setting's text */
+  --setting-row-gap: var(--space-4); /* between a setting's text and its control */
+  --setting-desc-gap: var(--space-1); /* from a setting's name to its description */
+  --setting-desc-leading: 1.4;
+  --settings-group-gap: var(--space-5); /* above a group heading */
+  --settings-heading-gap: var(--space-1); /* under a group heading */
+  /* The keyboard shortcut sheet (Settings > Keyboard shortcuts) */
+  --keys-line-height: 30px;
+  --keys-column-min: 220px; /* one column when the pane has no room for two of these */
+  --keys-column-gap: var(--space-8);
+  --keys-caps-width: 76px; /* the caps' column, so the names line up (the widest macOS key, Space drag; a longer one pushes its name) */
+  --keys-name-gap: var(--space-3); /* from the caps to the name */
+  --keycap-size: 20px; /* a key cap's least width and its height */
+  --keycap-pad: 0 5px;
+  --keycap-radius: var(--radius-sm);
+  --keycap-gap: 3px; /* between the caps of one combo */
 
   /* Scrollbars (U14): one style for every scroll area (app.css, "Scrollbars"): a 6 px thumb, no track, shown on hover and scroll */
   --scrollbar-size: 6px; /* the thumb's width, and the gutter a .scroll-area takes out of its right padding */

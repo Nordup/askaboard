@@ -108,10 +108,19 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--search-panel-width`, `--search-panel-height`; the Settings dialog's
   `--settings-dialog-width`, `--settings-dialog-height`, `--panel-nav-width`,
   `--setting-field-width`, `--radio-size`, `--radio-dot`
-- The select (U14): `--select-height`, `--select-pad`, `--select-radius`,
-  `--select-list-min-width`, `--select-list-max-height`,
+- The select (U14): `--select-chevron-pad`, `--select-list-min-width`,
   `--select-list-radius`, `--select-list-pad`, `--select-option-height`,
   `--select-option-pad`
+- The small control (U15), one look for the select's trigger and `.btn-sm`:
+  `--control-height`, `--control-height-menu`, `--control-pad-x`,
+  `--control-radius`
+- Settings spacing (U15): `--settings-pane-pad-y`, `--settings-pane-pad-x`,
+  `--settings-title-size`, `--settings-title-gap`, `--setting-row-pad-y`,
+  `--setting-row-gap`, `--setting-desc-gap`, `--setting-desc-leading`,
+  `--settings-group-gap`, `--settings-heading-gap`; the key sheet's
+  `--keys-line-height`, `--keys-column-min`, `--keys-column-gap`,
+  `--keys-caps-width`, `--keys-name-gap`, `--keycap-size`, `--keycap-pad`,
+  `--keycap-radius`, `--keycap-gap`
 - Scrollbars (U14): `--scrollbar-size`, `--scrollbar-thumb`,
   `--scrollbar-thumb-hover`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
@@ -152,13 +161,14 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
 | `.menu__select` (in a `.menu__select-root`) and its list `.menu--select` with `.menu__option` (`.menu__option-label`, `.menu__option-check`) | The app's own dropdown (`Select.tsx`, U14); see "Select" below. Never a native `<select>` |
 | `.menu__switch`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
-| `.menu--split` with `.menu__nav` (`.menu__nav-end`) and `.menu__pane` (`.menu__header`) | A modal panel in two parts: a section list (`--panel-nav-width`, a hairline at its right; `.menu__item` rows, the current one `--current`, a hover fill; `.menu__nav-end` pins rows at the bottom) and a pane: a header (`--panel-field-height`, the title at `--text-lg`, a close `.icon-button`, a hairline under it) over a `.menu__scroll` |
-| `.menu__setting` with `.menu__setting-row`, `.menu__setting-text` (`.menu__name`, `.menu__desc`), `.menu__radio`; `.menu__settings`; `.menu__group` | A setting: the name, a muted description under it (`--text-tertiary`, meta size, wraps), one `.menu__control` at the right, lines under it; a hairline between settings. A row with `role="radio"` is one choice (a 14 px `.menu__radio`, an accent dot when chosen); `.menu__settings` wraps such a group. `.menu__group` is a heading and its rows |
+| `.menu--split` with `.menu__nav` (`.menu__nav-end`) and `.menu__pane` (`.menu__header`) | A modal panel in two parts: a section list (`--panel-nav-width`, a hairline at its right; `.menu__item` rows, the current one `--current`, a hover fill; `.menu__nav-end` pins rows at the bottom) and a pane: a header (the title at `--settings-title-size` in a `--panel-row-height` row, level with the first section row, a close `.icon-button`) over a `.menu__scroll`. Spacing: "Settings spacing" below |
+| `.menu__setting` with `.menu__setting-row`, `.menu__setting-text` (`.menu__name`, `.menu__desc`), `.menu__radio`; `.menu__settings` | A setting: the name, a muted description under it (`--text-tertiary`, meta size, wraps), one `.menu__control` at the right, lines under it; a hairline between settings. A row with `role="radio"` is one choice (a 14 px `.menu__radio`, an accent dot when chosen); `.menu__settings` wraps such a group |
+| `.menu__sheet` with `.menu__sheet-line`, `.menu__keys` (`.menu__key`, `.menu__key-word`) | A key sheet (Settings > Keyboard shortcuts, U15): headings and lines in columns; each line the key caps, then the name |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
 | `.menu__status`, `.menu__spinner` | Inline status: a green check with text, or a spinner |
 | `.menu__separator` | The hairline between groups |
 | `.menu__footer` | A quiet text action on the left, a small button on the right |
-| `.btn-sm` (`--quiet`), `.btn-text` | The one small button and its quiet text variant |
+| `.btn-sm` (`--quiet`), `.btn-text` | The one small button and its quiet text variant. `.btn-sm` is the small control (U15): one CSS rule with the select's trigger, see "Select" |
 
 **Rules:**
 
@@ -191,21 +201,27 @@ The app's own dropdown (decision U14, approved mockup, 2026-11-06):
 `components/Select.tsx` with `value`, `options` (`{ value, label }`),
 `onChange`, `label`. It replaces every native `<select>`.
 
-- Trigger `.menu__select`: `--select-height` (30 px), `--select-pad`
-  (0 10 px 0 12 px), `--select-radius` (8 px), `--bg-field` (hover and
-  open: `--bg-field-hover`), the value in `--text-primary` at 13 px, a
-  14 px `ChevronDown` in `--text-secondary`, 8 px gap. Disabled:
-  `--disabled-opacity`.
+- Trigger `.menu__select`: the small control (U15), one CSS rule shared
+  with `.btn-sm` so the two cannot drift: `--control-height` (30 px),
+  padding 0 `--control-pad-x` (12 px; the chevron side
+  `--select-chevron-pad`, 10 px), `--control-radius` (8 px), `--bg-field`
+  with no border (hover, and open for the trigger: `--bg-field-hover`), 13 px
+  `--text-primary`; disabled `--disabled-opacity`; the buttons'
+  keyboard-only focus ring. The trigger adds a 14 px `ChevronDown` in
+  `--text-secondary`, 8 px gap. In a popup menu (the agent popover, the setup
+  flyout) the control is `--control-height-menu` (24 px), the height of the
+  menu's rows. The text field `.menu__text` takes the same height and radius.
 - List `.menu.menu--select`: fixed under the trigger, right-aligned to it,
   4 px gap; above it when there is less room below; at least
   `--select-list-min-width` (200 px) and the trigger's width;
   `--bg-elevated-2`, 1 px `--border-strong`, `--select-list-radius`
   (12 px), `--select-list-pad` (6 px); rows `.menu__option`
-  `--select-option-height` (30 px), `--radius-md`, `--select-option-pad`.
+  `--select-option-height` (28 px), `--radius-md`, `--select-option-pad`.
   The pointer and the keys move the one `--bg-active` fill
-  (`data-active`); the chosen row has a 14 px `Check` at the right. A
-  long list scrolls inside (`--select-list-max-height`), with the chosen
-  row in view at open.
+  (`data-active`); the chosen row has a 14 px `Check` at the right. The
+  list has no max height of its own (U15): it shows every row up to the
+  room in the window, then scrolls inside, with the chosen row in view at
+  open.
 - Keys: Enter, Space, ↓ or ↑ open; ↑ / ↓ move; Home / End; letters find
   a row by its first letters; Enter or Space chooses; Escape closes the
   list only (in a modal panel the panel stays open); Tab closes. ARIA: the
@@ -236,6 +252,8 @@ buttons, a transparent corner.
   (`scrollbar-gutter: stable`) and comes out of its right padding
   (`--scroll-pad-end`, else `--menu-pad`), so its content never moves when
   it starts to overflow, and lines up with the rows that do not scroll.
+  Its thumb keeps `--scroll-track-inset` (a menu's `--menu-radius`) clear
+  of the top and bottom, so it never runs over a rounded edge (U15).
 - Never style a scrollbar in one component.
 
 ## Pills
@@ -632,6 +650,13 @@ internal data (a path, an id). One shared tooltip instead
     (`Folder`), Keyboard shortcuts (`Keyboard`); About (`Info`) at the
     bottom (`.menu__nav-end`). The pane: the section title in the header,
     then `.menu__setting` rows.
+  - Settings spacing (U15; role-named tokens, every section uses them): the
+    pane 24 px top and bottom, 28 px at the sides; the title 16 px, its row
+    level with the first section row, 8 px under it; a setting row 16 px
+    above and below its text, 16 px from the text to the control; 4 px from
+    the name to the description (12 px `--text-tertiary`, line height 1.4);
+    a group heading 20 px above, 4 px under. The section list: 24 px top
+    and bottom, 12 px at the sides.
   - General: Interface size (a `Select`, "Automatic (N%)" and 80 %
     to 200 %, the labels of View > Interface Size), Show performance (a
     `.menu__switch`).
@@ -651,8 +676,15 @@ internal data (a path, an id). One shared tooltip instead
     menu) and Reveal; Change folder (Change folder…); Board guide (Edit);
     Set up for learning (Set up…, which opens the setup flyout, or "Set up"
     with a check). No folder: one row, "No folder open" with Open a folder.
-  - Keyboard shortcuts: `.menu__group` headings Tools, Edit, View and
-    `.menu__row` rows, keys in `.menu__meta--mono`.
+  - Keyboard shortcuts (U15): a `.menu__sheet`. The groups Tools, Edit,
+    View flow in two columns (one when the pane has no room for two
+    `--keys-column-min` columns); a line is 30 px: the caps in a 76 px
+    column, 12 px, then the name (a long name wraps, never an ellipsis). A
+    cap: at least 20 × 20 px, padding 0 5 px, `--radius-sm`, `--bg-active`,
+    11 px `--text-primary`, 3 px between caps; a combo is one cap per key
+    (⌘ ⇧ ]); "or" and "drag" are plain tertiary words. The one list is
+    `ShortcutsSection.tsx` (from `TOOLS` and `commands.ts`). At 760 × 520 it
+    needs about 80 px more height than the pane has, so it scrolls.
   - About: the product name with "Version N", and the license.
 - **Voice notice.** At the cloud voice's daily limit the board's toast
   (`.toast--warn`: lucide `VolumeX` in `--status-warn`) says "Not enough

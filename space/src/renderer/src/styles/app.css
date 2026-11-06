@@ -1343,7 +1343,8 @@ button:focus-visible {
  *                          .menu__name and a muted .menu__desc under it, then one .menu__control at the right), lines under
  *                          it; a hairline parts two settings. A row with role radio is one choice of a group (.menu__radio);
  *                          .menu__settings wraps such a group (role radiogroup) and keeps the hairlines
- *   .menu__group           a .menu__heading and its rows in a pane (the shortcut list's Tools, Edit, View)
+ *   .menu__sheet           a key sheet: headings and .menu__sheet-line keys (.menu__keys of .menu__key caps) in columns;
+ *                          its parts are in "The key sheet" below
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
@@ -1358,7 +1359,8 @@ button:focus-visible {
  *   .menu__status          inline status: green check + text, or .menu__spinner
  *   .menu__separator       hairline
  *   .menu__footer          quiet text action left, a .btn-sm right
- *   .btn-sm, .btn-text     the one small button, and its quiet text variant
+ *   .btn-sm, .btn-text     the one small button (the select trigger's look: one rule, "The small control"), and its
+ *                          quiet text variant
  */
 .menu {
   --menu-pad: 6px;
@@ -1525,7 +1527,7 @@ button:focus-visible {
   outline: none;
 }
 
-/* A panel's plain rows have the height of its items (the shortcut list). */
+/* A panel's plain rows have the height of its items. */
 .menu--panel .menu__row {
   min-height: var(--panel-row-height);
   padding-block: 0;
@@ -1553,7 +1555,9 @@ button:focus-visible {
   flex-shrink: 0;
   gap: var(--space-half);
   width: var(--panel-nav-width);
-  padding: var(--menu-pad);
+  /* The Settings spacing rules (U15): its first row level with the pane's title row. */
+  --scroll-pad-end: var(--space-3); /* a .scroll-area */
+  padding: var(--settings-pane-pad-y) var(--space-3);
   overflow-y: auto;
   border-right: 1px solid var(--border-subtle);
 }
@@ -1574,26 +1578,40 @@ button:focus-visible {
   min-width: 0;
 }
 
-/* The pane's title row: the title in the rows' column, a close button at the right; a hairline under it. */
+/* The pane's title row (U15): the title in the rows' column, as high as a section-list row and level with the first
+   one; a close button at the right. The section's rows follow --settings-title-gap under it. */
 .menu__header {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   gap: var(--space-2);
-  height: var(--panel-field-height);
-  padding: 0 var(--space-3) 0 calc(var(--menu-pad) + var(--space-2));
-  border-bottom: 1px solid var(--border-subtle);
+  box-sizing: content-box;
+  height: var(--panel-row-height);
+  padding: var(--settings-pane-pad-y) var(--settings-pane-pad-x) var(--settings-title-gap);
 }
 
 .menu__header .menu__title {
   flex: 1;
   min-width: 0;
   padding: 0;
-  font-size: var(--text-lg);
+  font-size: var(--settings-title-size);
 }
 
-.menu__group + .menu__group {
-  margin-top: var(--space-2);
+/* The pane's rows: the pane's sides, its bottom (the header holds its top). */
+.menu__pane > .menu__scroll {
+  --scroll-pad-end: var(--settings-pane-pad-x); /* a .scroll-area */
+  padding: 0 var(--settings-pane-pad-x) var(--settings-pane-pad-y);
+}
+
+/* A plain item in the pane (Agents: "Manual setup and other agents"): its fill reaches out as a setting row's does. */
+.menu__pane > .menu__scroll > .menu__item {
+  width: calc(100% + 2 * var(--space-2));
+  margin-inline: calc(-1 * var(--space-2));
+}
+
+/* A group heading in the pane: --settings-group-gap above it, --settings-heading-gap under it. */
+.menu__pane .menu__heading {
+  padding: var(--settings-group-gap) 0 var(--settings-heading-gap);
 }
 
 .menu__setting + .menu__setting,
@@ -1603,11 +1621,13 @@ button:focus-visible {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* The text sits in the pane's column; the row reaches --space-2 out on both sides for its focus ring. */
 .menu__setting-row {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-2);
+  gap: var(--setting-row-gap);
+  margin-inline: calc(-1 * var(--space-2));
+  padding: var(--setting-row-pad-y) var(--space-2);
   border-radius: var(--menu-item-radius);
 }
 
@@ -1628,14 +1648,14 @@ button:focus-visible {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-half);
+  gap: var(--setting-desc-gap);
   min-width: 0;
 }
 
 .menu__desc {
   color: var(--text-tertiary);
   font-size: var(--menu-meta-font);
-  line-height: 1.35;
+  line-height: var(--setting-desc-leading);
   overflow-wrap: anywhere;
 }
 
@@ -1671,9 +1691,10 @@ button:focus-visible {
   width: var(--setting-field-width);
 }
 
-/* A setting's lines line up with its text. */
+/* A setting's lines line up with its text, --space-2 under the row's text. */
 .menu__setting .menu__line {
-  padding: 0 var(--space-2) var(--space-2);
+  margin-top: calc(var(--space-2) - var(--setting-row-pad-y));
+  padding: 0 0 var(--setting-row-pad-y);
 }
 
 /* The field's icon lines up with the rows' icons (the list padding + the row padding). */
@@ -1768,33 +1789,91 @@ button:focus-visible {
   min-height: 24px;
 }
 
+/* ---------- The key sheet (U15): Settings > Keyboard shortcuts ---------- */
+
+/*
+ * Shared parts for a list of keys:
+ *   .menu__sheet       the groups in columns (two, or one when the pane has no room for two --keys-column-min);
+ *                      a group's heading stays with its first line, a line never splits
+ *   .menu__sheet-line  one key: its .menu__keys, then the name, close together, --keys-line-height high
+ *   .menu__keys        the caps of a key in a --keys-caps-width column: .menu__key caps (a combo is one cap per key)
+ *                      and .menu__key-word plain words between them ("or", "drag")
+ */
+.menu__sheet {
+  columns: var(--keys-column-min) 2;
+  column-gap: var(--keys-column-gap);
+}
+
+/* The space above a heading is a margin: a column break drops it, so every column starts at its top. */
+.menu__sheet .menu__heading {
+  margin-top: var(--settings-group-gap);
+  padding-top: 0;
+  break-after: avoid;
+}
+
+.menu__sheet > .menu__heading:first-child {
+  margin-top: 0;
+}
+
+/* A name too long for its column wraps to a second line in the same height, never an ellipsis. */
+.menu__sheet-line {
+  display: flex;
+  align-items: center;
+  gap: var(--keys-name-gap);
+  min-height: var(--keys-line-height);
+  break-inside: avoid;
+  color: var(--text-primary);
+}
+
+.menu__sheet-line .menu__name {
+  flex: 1;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.menu__keys {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--keycap-gap);
+  min-width: var(--keys-caps-width);
+}
+
+.menu__key {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--keycap-size);
+  height: var(--keycap-size);
+  padding: var(--keycap-pad);
+  border-radius: var(--keycap-radius);
+  background: var(--bg-active);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.menu__key-word {
+  padding: 0 var(--space-half);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 /* ---------- The select (U14): the app's own dropdown (Select.tsx) ---------- */
 
 .menu__select-root {
   display: inline-flex;
 }
 
+/* The trigger is the small control (U15, below with .btn-sm): its own parts are the chevron and its tighter side. */
 .menu__select {
-  display: inline-flex;
-  align-items: center;
   gap: var(--space-2);
-  height: var(--select-height);
-  padding: var(--select-pad);
-  border-radius: var(--select-radius);
-  background: var(--bg-field);
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  white-space: nowrap;
-  transition: background 120ms ease;
+  padding-right: var(--select-chevron-pad);
 }
 
-.menu__select:hover:not(:disabled),
 .menu__select[aria-expanded='true'] {
   background: var(--bg-field-hover);
-}
-
-.menu__select:disabled {
-  opacity: var(--disabled-opacity);
 }
 
 .menu__select-chevron {
@@ -1807,7 +1886,6 @@ button:focus-visible {
   --menu-pad: var(--select-list-pad);
   --menu-radius: var(--select-list-radius);
   min-width: var(--select-list-min-width);
-  max-height: var(--select-list-max-height);
   overflow-y: auto;
   overscroll-behavior: contain;
   border-color: var(--border-strong);
@@ -1850,10 +1928,10 @@ button:focus-visible {
 .menu__text {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  padding: 0 8px;
+  height: var(--control-height);
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   outline: none;
   background: transparent;
   color: var(--text-primary);
@@ -1993,26 +2071,40 @@ button:focus-visible {
   padding: 2px 8px 4px;
 }
 
-/* The one small button, in menus and anywhere else a compact action is needed. */
-.btn-sm {
+/*
+ * The small control (U15): the one small button and the select's trigger share this one rule, so they cannot drift:
+ * --control-height, --control-pad-x, --control-radius, the soft --bg-field (a little brighter on hover), no border,
+ * 13 px --text-primary; disabled at --disabled-opacity; the focus ring is the buttons' keyboard-only one. A popup
+ * menu's compact rows take --control-height-menu (the setting below on .menu).
+ */
+.btn-sm,
+.menu__select {
   display: inline-flex;
   align-items: center;
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: transparent;
+  height: var(--control-height);
+  padding: 0 var(--control-pad-x);
+  border: 0;
+  border-radius: var(--control-radius);
+  background: var(--bg-field);
   color: var(--text-primary);
-  font-size: 12px;
-  line-height: 1.2;
+  font-size: var(--text-base);
+  line-height: 1;
   white-space: nowrap;
+  transition: background 120ms ease;
 }
 
-.btn-sm:hover:not(:disabled) {
-  background: var(--bg-hover);
+.btn-sm:hover:not(:disabled),
+.menu__select:hover:not(:disabled) {
+  background: var(--bg-field-hover);
 }
 
-.btn-sm:disabled {
+.btn-sm:disabled,
+.menu__select:disabled {
   opacity: var(--disabled-opacity);
+}
+
+.menu:not(.menu--panel) {
+  --control-height: var(--control-height-menu);
 }
 
 .btn-sm--quiet {
@@ -2479,8 +2571,14 @@ button:focus-visible {
 .scroll-area {
   overflow-y: auto;
   scrollbar-gutter: stable;
+  /* The thumb keeps clear of a rounded edge (a menu's corners, U15): --scroll-track-inset at its top and bottom. */
+  --scroll-track-inset: var(--menu-radius, 0px);
   padding-right: calc(var(--scroll-pad-end, var(--menu-pad, 0px)) - var(--scrollbar-size));
   transition: --scrollbar-thumb-shown var(--fade);
+}
+
+.scroll-area::-webkit-scrollbar-track {
+  margin-block: var(--scroll-track-inset);
 }
 
 @media (prefers-reduced-motion: reduce) {

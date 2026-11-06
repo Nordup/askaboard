@@ -59,14 +59,15 @@ export function Select<T extends string>({ value, options, onChange, label, disa
     setOpen(true)
   }
 
-  // Place the list at the trigger, inside the window: under it, else above it, else where it has the most room
-  // (it then scrolls inside); the chosen option in view. A scroll or a resize under an open list closes it.
+  // Place the list at the trigger, inside the window: under it, else above it, else where it has the most room. It
+  // shows every row up to that room (no cap of its own, U15), then scrolls inside; the chosen option in view. A scroll
+  // or a resize under an open list closes it.
   useLayoutEffect(() => {
     const trigger = triggerRef.current
     const list = listRef.current
     if (!open || !trigger || !list) return
     const at = trigger.getBoundingClientRect()
-    // Its height within the CSS max-height (a long list scrolls).
+    // Its whole height: the list has no max height until it is placed.
     const height = list.offsetHeight
     const below = window.innerHeight - WINDOW_MARGIN - (at.bottom + LIST_GAP)
     const above = at.top - LIST_GAP - WINDOW_MARGIN
@@ -77,7 +78,7 @@ export function Select<T extends string>({ value, options, onChange, label, disa
       left: Math.max(WINDOW_MARGIN, Math.min(at.right - width, window.innerWidth - WINDOW_MARGIN - width)),
       ...(up ? { bottom: window.innerHeight - at.top + LIST_GAP } : { top: at.bottom + LIST_GAP }),
       minWidth: `max(var(--select-list-min-width), ${at.width}px)`,
-      maxHeight: `min(var(--select-list-max-height), ${Math.floor(room)}px)`
+      maxHeight: Math.floor(room)
     })
   }, [open])
 

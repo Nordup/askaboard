@@ -58,13 +58,3 @@ export function SettingRow({
     </div>
   )
 }
-
-/** A group heading inside a section (`.menu__heading`). */
-export function SettingGroup({ heading, children }: { heading?: string; children: ReactNode }) {
-  return (
-    <section className="menu__group">
-      {heading && <div className="menu__heading">{heading}</div>}
-      {children}
-    </section>
-  )
-}
