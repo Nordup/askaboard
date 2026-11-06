@@ -212,8 +212,9 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 
 - The corner pill (30 px) at the bottom left, 12 px in, centred on the tool
   pill's row: − % + , a divider (1 × 14 px, margin 0 4 px), undo and redo;
-  24 px buttons, 14 px icons. The tool pill (36 px; 28 px buttons, 16 px
-  icons): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
+  24 px buttons, 14 px icons. A click on the % zooms to 100% (no menu; ⇧1
+  and ⇧2 fit the board and the selection, founder 2026-11-06). The tool
+  pill (40 px; 30 px buttons, 17 px icons; founder: "a little bit larger"): keep-tool lock, then the tools of `tools.ts TOOLS` with a divider
   between groups (Select and Hand; the shapes; Pen, Text and Eraser),
   centred on the canvas. The row is a grid `1fr auto 1fr` with a 12 px gap
   and margin, so on a narrow canvas the tool pill moves right and stays
