@@ -55,7 +55,8 @@ export function ModalPanel({ className, label, onClose, focusRef, holdFocus = fa
   const keyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     onKeyDown?.(event)
     event.stopPropagation()
-    if (event.defaultPrevented) return
+    // A key that ends an input method's composition (Escape drops the candidate) belongs to the field.
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'Escape') {
       event.preventDefault()
       onClose()

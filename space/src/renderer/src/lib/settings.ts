@@ -13,6 +13,8 @@ type Listener = (settings: SettingsSnapshot) => void
 let current: SettingsSnapshot | null = null
 const listeners = new Set<Listener>()
 let started = false
+/** Removes the subscription to main's snapshot (a Fast Refresh of this module in dev). */
+let stop: (() => void) | null = null
 
 function take(next: SettingsSnapshot): void {
   current = next
@@ -23,7 +25,7 @@ function start(): void {
   // A window without the main window's API (the snapshot window) has no settings.
   if (started || !window.space?.onSettings) return
   started = true
-  window.space.onSettings(take)
+  stop = window.space.onSettings(take)
   // A push that came first is newer than this answer.
   void window.space.getSettings().then((first) => {
     if (!current) take(first)
@@ -56,3 +58,5 @@ export function useSetting<T>(select: (settings: SettingsSnapshot) => T, fallbac
 export function changeSettings(change: SettingsChange): void {
   void window.space.setSettings(change).catch((error: unknown) => console.error(`settings: ${errorMessage(error)}`))
 }
+
+if (import.meta.hot) import.meta.hot.dispose(() => stop?.())

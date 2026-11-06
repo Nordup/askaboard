@@ -33,18 +33,22 @@ export function VoiceSection({ voice }: { voice: SettingsSnapshot['voice'] }) {
   const [sampleState, setSampleState] = useState<'idle' | 'loading' | 'playing'>('idle')
   const [sampleError, setSampleError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  /** False once the section closed: a sample that arrives later does not play. */
+  const liveRef = useRef(true)
 
-  // A sample stops when the section closes (another section, or the dialog closes).
-  useEffect(
-    () => () => {
+  // A sample stops when the section closes (another section, or the dialog closes), also one still loading.
+  useEffect(() => {
+    // StrictMode runs the effect twice in dev: the second run makes the section live again.
+    liveRef.current = true
+    return () => {
+      liveRef.current = false
       const audio = audioRef.current
       if (audio) {
         audio.pause()
         URL.revokeObjectURL(audio.src)
       }
-    },
-    []
-  )
+    }
+  }, [])
 
   const playSample = async (): Promise<void> => {
     if (sampleState === 'loading') return
@@ -53,6 +57,7 @@ export function VoiceSection({ voice }: { voice: SettingsSnapshot['voice'] }) {
     setSampleState('loading')
     try {
       const bytes = await space.playVoiceSample()
+      if (!liveRef.current) return
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'audio/wav' }))
       const audio = new Audio(url)
       if (audioRef.current) URL.revokeObjectURL(audioRef.current.src)
@@ -61,6 +66,7 @@ export function VoiceSection({ voice }: { voice: SettingsSnapshot['voice'] }) {
       setSampleState('playing')
       await audio.play()
     } catch (error) {
+      if (!liveRef.current) return
       setSampleState('idle')
       setSampleError(errorMessage(error))
     }
