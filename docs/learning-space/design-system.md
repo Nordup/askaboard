@@ -19,7 +19,7 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    mockup, spacing included.
 5. **The canvas belongs to the learner.** UI does not cover the board: menus
    open beside the sidebar or under the top bar, never as cards on the
-   canvas. **Two exceptions.** The script panel floats over the board (the
+   canvas. **Three exceptions.** The script panel floats over the board (the
    founder's request, 2026-10-25), because the learner reads the scene's
    lines next to the drawing. The learner drags it where it is in the way
    least, and hides it into the scene pill. The search panel (⌘K, decision
@@ -38,6 +38,107 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
 **Never hard-code** a colour, font size, spacing value or radius in a
 component or in a new CSS rule. Use a token. If no token fits, add one to
 `tokens.css` and use it.
+
+## How to build UI here
+
+Read this section before you write UI. The sections after it are the
+reference (every token, part and approved screen).
+
+### Find things
+
+All paths are under `space/src/renderer/src/`.
+
+- **Tokens** (`styles/tokens.css`, one `:root`, dark only), in this order:
+  surfaces, lines, text, accent, status, canvas tools, snapshot marks, ink,
+  type, spacing (4 px grid), radii, shadows, glass, layout sizes (sidebar,
+  title row, board controls, style pill, toast, panels), motion, then the
+  blocks for the select, the small control and switch, Settings spacing,
+  the key sheet and scrollbars.
+- **Styles** (`styles/app.css`): one block per area, with a
+  `/* ---------- Name ---------- */` heading. The **menu system's comment
+  block** (search for `.menu__heading`) lists every shared part in one place.
+  Read it before you add a class.
+- **Shared components and libs** (reuse them; do not copy their logic):
+
+| Need | Use |
+| --- | --- |
+| A context or folder menu | `components/Menu.tsx`: `entries` (items, `'separator'`, `{heading}`, `{path}`) |
+| A popover from a button | a `.menu` element with your layout class + `lib/dismiss.ts` `useMenuDismiss(open, rootRef, close)` (outside click, Escape, focus return, drag strips). Examples: `PerfPill.tsx`, `ScenePill.tsx` |
+| A modal over the window | `components/ModalPanel.tsx` (backdrop, Escape, Tab trap, focus return). Examples: `SearchPanel.tsx`, `settings/SettingsDialog.tsx` |
+| A dropdown | `components/Select.tsx` (`value`, `options`, `onChange`, `label`). Never a native `<select>` |
+| A tooltip | `{...tip('Label', shortcut('K'))}` from `components/Tooltip.tsx`. Never a native `title` |
+| A shortcut label | `platform.ts` `shortcut(key)`. Never write "⌘" in a component |
+| A setting row | `components/settings/parts.tsx` `SettingRow` (name, description, the control as children) |
+| A scrolling area | add the class `scroll-area`; `lib/scrollbars.ts` (loaded once in `main.tsx`) does the rest |
+| Focus back after a close | `lib/focus.ts` `markFocus()` at open, `returnFocus(mark)` at close |
+| A user setting | `lib/settings.ts` `useSettings()` / `changeSettings()`; main owns it (`main/settings.ts`) |
+| The title row's left buttons | `components/TitleLead.tsx` (Back, Forward, sidebar button; one group in the strip and the top bar) |
+| Agent connect rows | `components/ConnectAgents.tsx` `ConnectList` (`layout: 'menu' \| 'settings'`) |
+
+### Recipes
+
+- **A menu or popover.** Use the `.menu` parts (`.menu__item`,
+  `.menu__row`, `.menu__heading`, `.menu__separator`, `.menu__footer`,
+  `.btn-sm`). Your class sets only position and width. A missing part goes
+  into the shared block, not into your class.
+- **A button.** `.btn-sm` is the one small button. It shares one rule and
+  the `--control-*` tokens with the dropdown trigger, so the two always look
+  the same (soft `--bg-field` fill, no outline, 30 px; 24 px inside popups
+  through `--control-height-menu`). `.btn-text` is the quiet text button.
+  An icon-only button is `.icon-button` (24 px), `.icon-button--title` in
+  the title row (28 px).
+- **A switch.** `<button className="menu__switch" role="switch"
+  aria-checked>`: 36 × 20 in Settings, 26 × 14 inside popups.
+- **A Settings section.** In `settings/SettingsDialog.tsx`: add the id to
+  `SettingsSection`, the label and icon to `SECTIONS`, and the body to the
+  if-chain. Write the section as a file in `components/settings/` built
+  from `SettingRow`. Open it from anywhere with `openSettings('<id>')`
+  (App).
+- **A new user setting.** (1) `main/state.ts`: the field, its default, its
+  parse in `loadState`, a getter and a setter. (2) `shared/space-api.ts`:
+  add it to `SettingsSnapshot` and `SettingsChange`. (3) `main/settings.ts`:
+  add it to `settingsSnapshot()` and handle it in `changeSettings()`. That
+  function is the only writer; it rebuilds the menu and pushes the snapshot.
+  (4) A menu item, if any, calls `actions.changeSettings` (`main/menu.ts`).
+  (5) The row in its section calls `changeSettings`. Never keep a second
+  copy of a setting in the renderer.
+- **A keyboard shortcut.** Add it where the keys are defined
+  (`board/commands.ts` `KEYS`, or the tool table in `tools.ts`). The
+  Keyboard shortcuts section reads those lists; a few View rows (Pan,
+  Deselect) are written in `settings/ShortcutsSection.tsx` itself, so add a
+  key that is not in those lists there.
+
+### Change the look
+
+- **Corners: by the element's size** (U17). 22–26 px elements
+  `--radius-md` (9); 28–34 px rows and buttons `--row-radius` /
+  `--control-radius` (10); surfaces with content inside `--radius-lg` (12);
+  popups `--popup-radius` (14); modal panels `--radius-xl` (16). A fill
+  inside a padded surface takes the outer radius less the padding, so the
+  corners are concentric (a menu row: 14 − 6 = 8). Circles use `50%`, pills
+  `--radius-pill`.
+- **Shadows** (U16): only `--shadow-float` (popups, tooltips, toasts, the
+  script panel) and `--shadow-card` (modal panels). Both are soft, wide and
+  low in contrast. The board pills have no shadow (U13).
+- **See-through:** popups (menus, popovers, the dropdown list) use
+  `--bg-glass` / `--bg-glass-2` with `--glass-filter`. Modal panels and
+  tooltips stay opaque (the founder, 2026-11-07).
+- **Spacing:** the `--space-*` scale, plus role tokens where a part has
+  rules of its own (`--settings-*`, `--setting-row-*`, `--menu-*`). Change
+  a role token, not one rule.
+- **A change to the whole look** is a token change. Change the token, then
+  search `app.css` for rules that do not use it yet.
+
+### Check it
+
+- Run the dev renderer and drive it with `space/scripts/drive.mjs`
+  (`screenshot`, `element-rect`, `hover`, `click`, `key`, `menu <id>`,
+  `menu-state <id>`, `select <css> [label]`, `window-size`). See
+  `space/README.md` "Dev automation" and [`working-guide.md`](working-guide.md).
+- Measure what you promised (gaps, heights, equal x) with `element-rect`,
+  and compare a screenshot with the mockup.
+- Search for drift: hard-coded colours (`#…`, `rgb(`) and radii outside
+  `tokens.css`; native `title` or `<select>` in components.
 
 ## Tokens (names, grouped)
 
@@ -100,7 +201,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   the title row (see "Title row"): `--window-buttons-end`,
   `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
-  `--title-button-gap`, `--title-icon-size`;
+  `--title-button-gap`;
   `--sidebar-row-height`, `--folder-row-height`,
   `--topbar-rename-width`,
   the board controls (U10, U13): `--tools-pill-height`, `--tool-size`,
@@ -111,9 +212,7 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--option-fill-size`, `--pill-bar-pad`, `--pill-divider-height`,
   `--pill-divider-gap`, `--zoom-label-min`, `--toast-bottom`; `--pill-height`, `--pill-gap`, `--pill-action-size`,
   `--pill-label-max`, `--icon-button-size`, `--status-dot-size`,
-  `--status-dot-size-small`, `--status-dot-ring`, `--item-pill-height`,
-  `--item-pill-pad-left`, `--item-pill-gap`, `--item-pill-inset`,
-  `--item-pill-ring`, `--script-panel-width`, `--script-panel-header`,
+  `--status-dot-size-small`, `--status-dot-ring`, `--script-panel-width`, `--script-panel-header`,
   `--script-panel-footer-pad`, `--step-bar-height`,
   `--step-bar-gap`, `--step-bar-radius`, `--step-bar-hit`,
   `--reading-view-height`, `--reading-view-gap`, `--reading-para-gap`,
@@ -302,11 +401,11 @@ The three quiet pills over the bottom of the canvas (decisions U10, U13;
 approved mockup "bottom_controls_quiet_small_v8"; `BoardControls.tsx`, the
 comment block above `.board-controls` in `app.css`). Each is a `.pill-bar`
 (`--bg-elevated`, 1 px `--border-subtle`, `--radius-pill`, padding 0 4 px,
-gap 2 px, `--shadow-float`, U16) with its own height. Parts: `.tool` (round button,
+gap 2 px, no shadow, U13) with its own height. Parts: `.tool` (round button,
 lucide icon at stroke 1.75; pressed: `--accent-soft` and `--accent`;
 `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider` (1 × 16 px,
-margin 0 5 px), `.swatch` (24 px) with `.swatch__dot` (13 px), `.option`
-(22 px, round, 14 px icon; pressed: `--bg-active`, `--text-primary`;
+margin 0 5 px), `.swatch` (28 px) with `.swatch__dot` (15 px), `.option`
+(26 px, round, 15 px icon; pressed: `--bg-active`, `--text-primary`;
 `.option--text` for a word (12 px), `.option__bar` for a width (as thick
 as the step's shape line: 1.5, 2.5, 4 px), `.option__fill` for a fill (a
 12 px square: outline, light tint, solid), `.option__line` for a line
@@ -349,10 +448,9 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 - Every button has the shared tooltip ("Tooltips"), with the key after
   the label: "Select V or 1", "Undo ⌘Z". The font words (Hand, Plain,
   Code) show their label, so they get none.
-- The zoom % is only here, not in the top bar. A click on it opens the
-  shared `Menu` 8 px above the corner pill: Zoom to 100% (⌘0), Zoom to fit
-  (⇧1), Zoom to selection (⇧2, only with a selection). Both fits glide and
-  never zoom in past 100%.
+- The zoom % is only here, not in the top bar. A click on it zooms to
+  100% (⌘0). The fits are keys: Zoom to fit (⇧1) and Zoom to selection
+  (⇧2). Both fits glide and never zoom in past 100%.
 - `?` opens Settings > Keyboard shortcuts (see "Settings dialog"): the one
   list of the keys, from `TOOLS` and `board/commands.ts`.
 
@@ -366,8 +464,7 @@ button (the `disabled` attribute; Back with no board before) is
 `--text-tertiary` at `--disabled-opacity` (0.5), with no hover fill. It
 keeps its tooltip: the shared tooltip shows on a disabled control as on
 any other, so the name and the key stay findable. `.status-dot` is 7 px; `.status-dot--small` is
-6 px (a panel header). The halo is `--status-dot-ring` wide (2 px; 3 px in an
-item pill).
+6 px (a panel header). The halo is `--status-dot-ring` wide (2 px).
 
 ## Title row
 
@@ -413,11 +510,12 @@ Everything in it shares one centre line at 22 px.
 - The top bar draws its bottom line as an inset shadow, not a border, so
   its content box is 44 px high.
 - Icon buttons in the row are `.icon-button--title`: a 28 px hit area
-  (`--title-button-size`) with a 16 px icon (`--title-icon-size`).
+  (`--title-button-size`) with a 16 px icon (Back and Forward: 20 px
+  chevrons at stroke 1.4, so they read the same size).
 - 4 px between neighbouring buttons (`--title-button-gap`).
 - 16 px from the window buttons' right edge to the first button
   (`--window-buttons-gap`), so it starts at 92 px in a macOS window.
-- 12 px edge inset in full screen, on Linux and on Windows
+- 12 px edge inset in full screen and off macOS
   (`--title-row-inset`), from the top bar's left edge (the sidebar's right
   edge while it shows). `.shell` sets `--chrome-reserve` to one of the
   two; the strip and the top bar with the sidebar hidden use it.
@@ -538,7 +636,7 @@ internal data (a path, an id). One shared tooltip instead
     track `--border-subtle`, fill `--accent` while playing and
     `--text-tertiary` when paused or ended. Each segment's click and hover
     band is 12 px high (`--step-bar-hit`); it looks the same. A click plays
-    from that step; hover shows its name (title).
+    from that step; hover shows its name (the shared tooltip).
   - Reading view, 8 px below the step bar (`--reading-view-gap`): a fixed
     176 px (`--reading-view-height`), so the footer never moves. All the
     scene's lines in order, one paragraph each: 15 px, `--leading-current`

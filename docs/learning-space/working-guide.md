@@ -51,6 +51,12 @@ and what went wrong before.
   the voice, the fix came first and the generation for all scenes came after.
 - The MacBook has little free storage. A new kind of file that the app writes
   needs an owner for its clean-up from the first commit (T35).
+- UI taste (2026-11-06/07): the ChatGPT and Claude Code desktop apps are the
+  references. Soft, wide shadows with no dark band; corners a little round;
+  no outline on status items or buttons (a soft fill instead); no empty
+  strips or gaps that look unused; controls of one family look alike (a
+  button looks like the dropdown next to it). The founder sends screenshots
+  of other apps: copy the feel, not the pixels, and show a mockup first.
 
 ## The workflow that worked
 
@@ -95,6 +101,7 @@ and what went wrong before.
 | Read a real session of the founder | Learning Space trace: `~/.learning-space/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
 | Keep the founder's focus | Launch with `SPACE_NO_FOCUS=1`. On macOS, after launching, also `osascript -e 'tell application "Claude" to activate'`. |
 | Settings and the voice (2026-11-06) | Launch with `SPACE_FOLDER` (the welcome screen has no Settings route), then `node scripts/drive.mjs --port <debug port> menu settings`. A Kokoro install check needs a scratch `HOME` (it writes about 370 MB to `~/.learning-space/models/kokoro/`): delete that folder after the check. A check agent cannot hear: confirm playback from the renderer (an audio element's `currentTime` moves after `play()`). |
+| UI checks (2026-11-07) | `drive.mjs`: `hover x y` (tooltips), `menu <id>` / `menu-state <id>` (CDP keys never reach a menu accelerator such as ⌘K or ⌘[, so drive the menu item), `select <css> [label]` (the app's dropdown), `element-rect <css>` for measured gaps. Full screen without moving the window to a new desktop Space: `SPACE_FAKE_FULL_SCREEN=1` with `SPACE_REMOTE_DEBUG`. Never put a check window into real full screen. |
 | Usage data from a check | A run of the built app (`electron .` on `out/`) sends events by default, tagged `dev`; a dev renderer run sends nothing unless `LEARNING_SPACE_TELEMETRY_ENABLED=true`. Set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in checks that do not test usage data, or filter `dev` in PostHog. |
 
 ## Choosing lab tests (live drawing)
@@ -231,6 +238,22 @@ combine; `meta.json` records `no_html` and `brief`.
 - **A check click can land on the app's own parts** (2026-11-02). A click on a world's bar at y=709 hit the tool palette (y 703 to 749), and the check read as an input fault. Frame the item clear of the palette first.
 - **A check agent must stop its own apps before it reports** (2026-11-02). Apps started as background shells outlived a finished agent and kept running. Name this in the brief, by exact PID.
 - **Name the exact drive command in a check brief** (2026-11-06). A Haiku check agent read `drive.mjs` and reported that it had no menu command, so Settings was out of reach. It has one (`menu <id>`). Give the command, the menu id and `SPACE_FOLDER` in the brief.
+- **Merge into a main checkout that other sessions edit** (2026-11-06/07).
+  Build in a scratch worktree (`git worktree add --detach`, link
+  `space/node_modules`), merge `main` into it there, then fast-forward the
+  main checkout. A fast-forward refuses files with open edits: for each such
+  file, make the 3-way result (`git merge-file <open copy> <HEAD version>
+  <new version>`), put the HEAD version in place, fast-forward, and write
+  the result back. Never stash or restore another session's edits. Run that
+  in `bash -c`: zsh does not split `$FILES` into words.
+- **A push of main carries other sessions' commits** (2026-11-06). List
+  `git log origin/main..HEAD` and name the other sessions' commits to the
+  founder before a push; push only what the founder approved.
+- **A CSS custom property leaks into nested parts** (2026-11-07). A
+  dropdown list inside the Settings pane took the pane's
+  `--scroll-pad-end` (28 px), so its rows had an empty strip on the right.
+  A per-part property is registered as not inherited (`@property … inherits:
+  false`) or set on the part itself.
 - **The Codex review agent returns before Codex ends** (2026-11-06). `codex:codex-rescue` starts the Codex run in the background and hands back at once. Its stdout goes to a file in the session's `tasks/` folder; wait for that file (a background `until grep` loop), then read the findings.
 
 ### On Linux (decision D6, checked 2026-11-02 on Manjaro, GNOME on Wayland, AMD GPU)
