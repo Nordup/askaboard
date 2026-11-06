@@ -24,7 +24,9 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
    lines next to the drawing. The learner drags it where it is in the way
    least, and hides it into the scene pill. The search panel (⌘K, decision
    U7, 2026-11-06) and the Settings dialog (⌘,, U12) cover the window with
-   a backdrop, because the learner opens them.
+   a backdrop, because the learner opens them. The splash (U20, 2026-11-07)
+   covers the window with the backdrop when no folder is open, because there
+   is no board behind it yet.
 
 ## Where the design lives
 
@@ -197,7 +199,7 @@ All paths are under `space/src/renderer/src/`.
   `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
   black 0.14) for popups, tooltips, the script panel, toasts and the board's
   tool pill (U18; the style pill has none); `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black
-  0.16) for the modal panels and the welcome card
+  0.16) for the modal panels and the splash card
 - Layout: `--sidebar-width`, `--topbar-height`, `--titlebar-height`,
   the title row (see "Title row"): `--window-buttons-end`,
   `--window-buttons-gap`, `--title-row-inset`, `--title-button-size`,
@@ -591,8 +593,83 @@ internal data (a path, an id). One shared tooltip instead
   ("Hide sidebar ⌘B", "New board ⌘N", "Undo ⌘Z", "Back ⌘[").
 - A disabled control keeps its tooltip (Back and Forward with nowhere to
   go): it still names the control and its key.
+- `<Tooltips />` removes a stray native `title` from app chrome on hover
+  or focus, before the browser shows it, and warns in the dev console
+  with the element. Board material (inside `.board__content`) keeps its
+  attributes.
 
 ## Approved screens (reference)
+
+- **Splash** (decision U20, 2026-11-07; `components/splash/`). With no folder
+  open, one card in the middle of the window over the `--backdrop`, not
+  dismissible; the title row stays a drag region. Card 700 px
+  (`--splash-width`), `--radius-xl`, `--bg-elevated`, a hairline,
+  `--shadow-card`. A 350 px band (`--splash-band-height`) on `--bg-canvas`
+  shows a quiet work of art, in the background and not loud
+  (`components/splash/art.ts`). Under it always the breathing grid: a dot
+  grid (`--splash-dot-pitch`) where three slow waves lift dots and turn them
+  from `--ink-white` toward `--accent`. Over it one artwork per launch, picked
+  at random from a registry (`ARTWORKS`; with two or more, never the previous
+  launch's pick), each varied by the launch's seed. Now: "Flowing ribbons",
+  42 thin lines from the accent through `--splash-ribbon-violet` into
+  `--splash-ribbon-teal`, faded at both ends. "Blossom tree" (`tree.ts`,
+  after the founder's ink-painting references): a plum tree whose dark
+  gnarled trunk rises from the lower right (about 83 % of the width) with an
+  S-twist, then bends at mid height into one long limb that reaches across
+  to the far left; a crown of fine branches at the upper right; clusters of
+  small five-petal flowers (`--splash-blossom-crimson`, `-rose`, `-pink`,
+  `-pale`, a few `-white`) and buds; a very soft pale disc (`--splash-moon`)
+  behind it; an ink wash and fallen petals at the base. The bark is
+  `--splash-tree-bark` with a dark core (`--splash-tree-core`) toward the
+  shadow side and a broken lit rim and dry-brush streaks
+  (`--splash-tree-rim`) on the upper-left side, so it reads on the dark band.
+  The tree fills about 84 % of the band, light, with air between the
+  branches. Widths follow the pipe model by the length of wood a point
+  carries: every branch thins smoothly from base to tip, and at a fork the
+  way on keeps nearly its width while the side branch starts thin. Every
+  branch is a smooth curve (no straight runs, no angular kinks): side
+  branches leave at 25–45° forward and sweep upward in an arc, long
+  branches bow a little under their weight, twigs curl at the ends. The tree grows
+  in 3.5 s (fast at first, the trunk thick from the start), the flowers open
+  from 1.6 s to 5 s with a small overshoot, then a slow wind with gusts sways
+  the tree as one: two damped springs, a slow one for the limb and the big
+  branches (they carry their twigs) and a quicker, small one for thin wood;
+  the lower trunk stays still. A steady fall of petals (up to about 56 at
+  once) drifts left, turning and fading. Each launch is a new tree in the
+  same composition. Reduced motion: the finished tree, no falling petals.
+  The only pointer effect is the parallax, as depth (no other
+  interaction): the grid and the ground wash move 3 px against the
+  pointer, the moon 5 px, the trunk and the main limb 15 px; each crown
+  branch has its own depth (±40 %, eased from its parent so forks hold),
+  flowers keep their branch's depth, falling petals are nearest (1.3×).
+  Each ribbon line has its own depth around 14 px (±40 % across the
+  sheet), so the sheet shears. The title and the version stay still.
+  Rendering: WebGL (`gl.ts`) paints the band: the ground and the grid
+  (one fragment shader; each pixel finds its nearest dot), the ribbons
+  (one static vertex buffer of thin quads, placed by the vertex shader)
+  and the grown tree: the moon, the wash and the still trunk as bitmaps
+  on their depths, the swaying bark as one mesh, the flowers as instanced
+  sprites from an atlas, the petals instanced; the vertex shader sways and
+  shifts them from a few uniforms (the two springs, the pointer). The
+  tree's growth (its first 5.7 s) is painted by the 2D canvas over the GL
+  grid, then hands over to the GPU. One source of the numbers (`grid.ts`,
+  `RIBBON`, `WIND`, `DEPTH`, `ATLAS`) serves both painters; without
+  WebGL, or when its context is lost, the 2D canvas paints everything. After the entry (6 s) the band paints at most 30 times a
+  second (its motion is slow), and every display frame again while the
+  parallax catches up with the pointer. "Learning Space" (17 px, 600) bottom
+  left, the version bottom right. Under it two columns, Start (Open folder… as the one
+  accent-soft row, Connect an agent; the open dialog makes a new folder too) and Recent (folder name, the
+  parent path at the right; "No recent folders"), rows of 30 px. A recent
+  row's path gives all its width before the name gives any: the name is cut
+  only when it alone is wider than the row; the path is cut at the end. No
+  tooltip on a recent row; a footer with
+  "What's new" and "GitHub". Connect an agent shows the connect rows in the
+  card. The art is laid out in the mockup's 680 × 340 units and scales with
+  the band. In a narrow
+  window the band keeps about 2:1 (`--splash-band-aspect`); in a short
+  window the band shrinks first, to 160 px at least
+  (`--splash-band-min-height`); the lower panel keeps its sizes.
+  Reduced motion: one still frame of the art, no entry motion.
 
 - **Agent popover.** Default view: the agents list (status dot, name,
   "active now" / "12 min ago"), one "Connect an agent" row. Connect view:
@@ -617,8 +694,8 @@ internal data (a path, an id). One shared tooltip instead
   `--row-radius`. The footer opens the folder menu above it
   (`.menu.folder-menu`, the sidebar's width): the path as one quiet
   `.menu__path` line (`~` for home; longer than 32 characters:
-  `~/…/<parent>/<folder>`), a separator, Reveal, Open Learning Folder…,
-  Edit Board Guide…, Recent, then a separator, Settings (⌘,) and Keyboard
+  `~/…/<parent>/<folder>`), a separator, Reveal, Open Folder…,
+  Close Folder (U21: back to the splash), Recent (the board guide opens from Settings › Folder), then a separator, Settings (⌘,) and Keyboard
   shortcuts (?). No folder name, no lede. No folder: the
   footer reads "Open a folder". The boards list shows all boards up to
   15; above 15, the first 10 and "Show N more", and "Show less" when
@@ -751,7 +828,7 @@ internal data (a path, an id). One shared tooltip instead
   U7, mockup "learning_space_search_panel_mockup_v1", 2026-11-06). Opens
   from the sidebar's "Search boards" row and File > Search Boards… (⌘K),
   also with the sidebar hidden; a second ⌘K closes it. No folder: the menu
-  item is disabled and ⌘K does nothing (the welcome card has the open
+  item is disabled and ⌘K does nothing (the splash has the open
   action).
   - A `.backdrop` (`--backdrop`, rgba(0, 0, 0, 0.4)) over the whole window;
     it is no drag region, and the native window buttons stay above it. The

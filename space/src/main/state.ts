@@ -135,6 +135,12 @@ export function rememberFolder(root: string): void {
   scheduleSave()
 }
 
+/** File > Close Folder: the next launch opens no folder; the folder stays in the recent list, at the top. */
+export function forgetLastFolder(): void {
+  state.lastFolder = null
+  scheduleSave()
+}
+
 const cameraKey = (root: string, rel: string): string => `${root}::${rel}`
 
 export function getCamera(root: string, rel: string): Camera | null {

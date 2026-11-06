@@ -3,6 +3,8 @@ import { interfaceSizeLabel, type SettingsChange, type SettingsSnapshot } from '
 
 export interface MenuActions {
   openFolder(): void
+  /** File > Close Folder: the renderer closes the open folder through its folder switch, and the splash shows. */
+  closeFolder(): void
   newBoard(): void
   /** View > Back / Forward (⌘[ / ⌘]): the renderer moves through its board history (U11). */
   back(): void
@@ -35,6 +37,7 @@ export interface MenuActions {
  * the canvas handles ⌘Z / ⌘C itself when no input has focus, and pastes on the page's paste event (Edit > Paste and ⌘V).
  */
 const SETUP_ITEM = 'setup-folder'
+const CLOSE_FOLDER_ITEM = 'close-folder'
 const SEARCH_ITEM = 'search-boards'
 const SETTINGS_ITEM = 'settings'
 const voiceItem = (voice: string): string => `voice:${voice}`
@@ -60,7 +63,7 @@ export function setHistoryMenu(back: boolean, forward: boolean): void {
 
 /** Folder-only menu items are enabled while a learning folder is open. */
 export function setFolderOpen(open: boolean): void {
-  for (const id of [SETUP_ITEM, SEARCH_ITEM]) {
+  for (const id of [SETUP_ITEM, SEARCH_ITEM, CLOSE_FOLDER_ITEM]) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id)
     if (item) item.enabled = open
   }
@@ -125,7 +128,8 @@ export function installMenu(actions: MenuActions): void {
     {
       label: 'File',
       submenu: [
-        { label: 'Open Learning Folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.openFolder() },
+        { label: 'Open Folder…', accelerator: 'CmdOrCtrl+O', click: () => actions.openFolder() },
+        { id: CLOSE_FOLDER_ITEM, label: 'Close Folder', enabled: false, click: () => actions.closeFolder() },
         { label: 'New Board', accelerator: 'CmdOrCtrl+N', click: () => actions.newBoard() },
         // A second ⌘K closes the panel: the accelerator reaches the menu also while the panel's field has focus.
         { id: SEARCH_ITEM, label: 'Search Boards…', accelerator: 'CmdOrCtrl+K', enabled: false, click: () => actions.searchBoards() },

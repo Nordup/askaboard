@@ -12,4 +12,4 @@ export function shortcut(key: string): string {
 export const revealLabel = isMac ? 'Reveal in Finder' : platform === 'win32' ? 'Show in Explorer' : 'Open Containing Folder'
 
 /** The folder menu's open item: the sidebar footer's folder menu and the search panel's action. */
-export const openFolderLabel = 'Open Learning Folder…'
+export const openFolderLabel = 'Open Folder…'

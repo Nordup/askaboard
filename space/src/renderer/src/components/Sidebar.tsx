@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookOpen, ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, Keyboard, LayoutDashboard, Pencil, Search, Settings, SquarePen, Trash } from 'lucide-react'
+import { ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, FolderX, GraduationCap, Keyboard, LayoutDashboard, Pencil, Search, Settings, SquarePen, Trash } from 'lucide-react'
 import { shortAgo } from '@shared/board-digest'
 import type { BoardListEntry, GuideOverrides, RecentFolder } from '@shared/space-api'
 import { GuideOverrideNote } from './GuideOverrideNote'
@@ -29,6 +29,8 @@ interface SidebarProps {
   renaming: string | null
   onOpenFolder(): void
   onOpenRecent(path: string): void
+  /** Close Folder: the folder switch with no folder as its target (App.tsx closeFolder); the splash shows. */
+  onCloseFolder(): void
   onOpenBoard(path: string): void
   onCreateBoard(): void
   /** The "Search boards" row (the search panel). */
@@ -49,8 +51,6 @@ interface SidebarProps {
   onCloseSetup(): void
   onApplySetup(): Promise<void>
   onDontAskSetup(): void
-  /** Open the folder's board guide, .learning-space/guide.md. */
-  onEditGuide(): void
   /** The folder's guide and instructions overrides, shown under the rows. */
   guideOverrides: GuideOverrides | null
   /** Open an override file (the same flow as Edit Board Guide…). */
@@ -107,7 +107,7 @@ export function Sidebar(props: SidebarProps) {
         'separator',
         { label: revealLabel, icon: <ExternalLink {...ICON} />, onSelect: () => props.onReveal('.') },
         { label: openFolderLabel, icon: <FolderOpen {...ICON} />, hint: shortcut('O'), onSelect: props.onOpenFolder },
-        { label: 'Edit Board Guide…', icon: <BookOpen {...ICON} />, onSelect: props.onEditGuide },
+        { label: 'Close Folder', icon: <FolderX {...ICON} />, onSelect: props.onCloseFolder },
         ...(others.length
           ? (['separator', { heading: 'Recent' }] as MenuEntry[]).concat(
               others.map((entry) => ({

@@ -5,7 +5,9 @@ import { createPortal } from 'react-dom'
  * The one tooltip of the app (design-system.md, "Tooltips"). A control asks for it with `{...tip(label, key)}`:
  * two data attributes, no listeners of its own. <Tooltips /> is mounted once (App.tsx) and owns every listener,
  * so a control that unmounts leaks nothing, and StrictMode's second mount adds and removes the same set.
- * No native `title` in app UI: it shows late, unstyled, and often shows internal data.
+ * No native `title` in app UI: it shows late, unstyled, and often shows internal data. <Tooltips /> also takes a stray
+ * `title` off app chrome before the browser can show it (stripTitles), and names the element in dev, so the class of bug
+ * cannot reach the learner. Board material (inside .board__content: agents' HTML and SVG) keeps its own attributes.
  */
 
 /** Hover time before a tooltip shows. */
@@ -27,6 +29,27 @@ interface Shown {
 
 function tipTarget(node: EventTarget | null): HTMLElement | null {
   return node instanceof Element ? node.closest<HTMLElement>('[data-tip]') : null
+}
+
+/** The root of the board's material: what agents and board files put there is theirs, not app chrome. */
+const BOARD_CONTENT = '.board__content'
+const warned = new WeakSet<Element>()
+
+/**
+ * Remove a native `title` from the element under the pointer or focus and from its ancestors, so the browser's own
+ * tooltip never shows in app chrome. It is not turned into a tooltip: a title often holds a path or an id, which the
+ * tooltip rules forbid. In dev, one warning per element tells the developer to use tip() or nothing.
+ */
+function stripTitles(node: EventTarget | null): void {
+  if (!(node instanceof Element) || node.closest(BOARD_CONTENT)) return
+  for (let element: Element | null = node; element && element !== document.documentElement; element = element.parentElement) {
+    if (!element.hasAttribute('title')) continue
+    if (import.meta.env.DEV && !warned.has(element)) {
+      warned.add(element)
+      console.warn(`A native title="${element.getAttribute('title')}" in app UI was removed: use tip() (components/Tooltip.tsx) or no tooltip.`, element)
+    }
+    element.removeAttribute('title')
+  }
 }
 
 function px(element: HTMLElement, name: string): number {
@@ -73,6 +96,7 @@ export function Tooltips() {
     }
 
     const onOver = (event: PointerEvent): void => {
+      stripTitles(event.target)
       const target = tipTarget(event.target)
       if (!target || target === current || target === pending || target === pressed) return
       if (performance.now() - hiddenAt < CHAIN_MS) return show(target)
@@ -92,6 +116,7 @@ export function Tooltips() {
       hide()
     }
     const onFocusIn = (event: FocusEvent): void => {
+      stripTitles(event.target)
       const target = tipTarget(event.target)
       if (target && target === event.target && target.matches(':focus-visible')) show(target)
     }

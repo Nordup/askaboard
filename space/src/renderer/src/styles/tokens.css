@@ -218,6 +218,32 @@
   --radio-dot: 6px; /* its dot when chosen */
   --panel-field-height: 46px; /* a modal panel's field (.menu--panel .menu__field) */
   --panel-row-height: 32px; /* a modal panel's rows (.menu--panel .menu__item) */
+  /* The splash (U20): the start screen with no folder, over the whole window (components/splash) */
+  --splash-width: 700px; /* at most the window width − 2 × --panel-margin-x */
+  --splash-band-height: 350px; /* the drawing band; at most the card width ÷ --splash-band-aspect, and it shrinks first in a short window; the drawing scales with it */
+  --splash-band-aspect: 2; /* the band's width ÷ its height at most */
+  --splash-band-min-height: 160px;
+  --splash-dot-pitch: 20px; /* the breathing grid's pitch in the 680 × 340 mockup units (art.ts reads it and scales it with the band) */
+  --splash-ribbon-violet: rgb(160, 120, 255); /* "Flowing ribbons" (ribbons.ts): from the accent through this violet */
+  --splash-ribbon-teal: rgb(80, 200, 190); /* into this teal, faded out at the band's right edge */
+  --splash-tree-bark: rgb(62, 52, 52); /* "Blossom tree" (tree.ts): the branches, a warm grey that reads on --bg-canvas */
+  --splash-tree-core: rgb(20, 17, 18); /* the dark ink core of the trunk and thick limbs */
+  --splash-tree-rim: rgb(226, 208, 196); /* the lit rim and dry-brush streaks of the bark, the wash at the base */
+  --splash-moon: rgb(255, 242, 226); /* the pale disc behind the tree, drawn at a very low alpha */
+  --splash-blossom-crimson: rgb(204, 30, 58);
+  --splash-blossom-rose: rgb(230, 72, 104);
+  --splash-blossom-pink: rgb(242, 134, 164);
+  --splash-blossom-pale: rgb(250, 198, 212);
+  --splash-blossom-white: rgb(253, 243, 238);
+  --splash-name-font: 17px;
+  --splash-name-left: 18px;
+  --splash-name-bottom: 14px;
+  --splash-panel-gap: 14px;
+  --splash-panel-pad: 14px 12px 12px;
+  --splash-heading-pad: 2px 9px 6px;
+  --splash-row-height: 30px;
+  --splash-row-pad-x: 9px;
+  --splash-footer-pad: 9px 21px 12px;
 
   /* Motion */
   --fade: 220ms ease; /* quiet fade in and out (scene pill, script panel) */
@@ -226,6 +252,14 @@
   --reading-ease: 120ms; /* the reading view's focus and scroll follow their targets with this time constant (exponential) */
   --reading-return: 3000ms; /* while a scene plays, the focus glides back to the reading point this long after the last wheel input */
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1); /* a calm arrival: fast at first, a long soft stop */
+  --splash-rise: 520ms var(--ease-out-soft); /* the splash card rises into place */
+  --splash-rise-offset: 12px;
+  --splash-rise-scale: 0.98;
+  --splash-item: 420ms var(--ease-out-soft); /* the splash's title, rows and footer come in one after the other */
+  --splash-item-offset: 6px;
+  --splash-item-delay: 260ms; /* the first item, after the card starts to rise */
+  --splash-stagger: 45ms;
 
   /* The select (U14): the app's own dropdown (components/Select.tsx, .menu__select and .menu--select in app.css) */
   --bg-field: rgba(255, 255, 255, 0.06); /* a control's soft fill: the select's trigger */

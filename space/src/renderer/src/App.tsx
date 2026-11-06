@@ -40,7 +40,7 @@ import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
 import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
 import { TopBar, type SaveStatus } from './components/TopBar'
 import type { BoardNav } from './components/TitleLead'
-import { WelcomeCard } from './components/WelcomeCard'
+import { Splash } from './components/splash/Splash'
 import { errorMessage, failureText } from './lib/errors'
 import { isEditableTarget } from './lib/keys'
 import { OpenHistory } from './lib/open-history'
@@ -528,18 +528,19 @@ export function App() {
   // ---------- Folder actions ----------
 
   /**
-   * The one folder switch, for every route (the menu, the dialog, the recent list). It runs in
+   * The one folder switch, for every route (the menu, the dialog, the recent list), and for Close Folder: its target
+   * is then null, no folder, and the splash shows. It runs in
    * the save chain, so no save or board change interleaves with it:
    *   1. the open editor commits, and the pending save is written to the folder it belongs to;
    *      a board that cannot be saved is left as at a close (keepUnsaved below), and only when
    *      even its copy cannot be kept does the switch fail (nothing is changed);
    *   2. the main process makes the new folder the open one;
-   *   3. here the open editor and a held stroke commit, and the new folder replaces the old one.
+   *   3. here the open editor and a held stroke commit, and the new folder (or none) replaces the old one.
    * An edit that comes in during step 2, or that step 3 commits, stays pending under the old
    * folder, and the save below writes it there.
    */
   const switchFolder = useCallback(
-    async (path: string): Promise<void> => {
+    async (path: string | null): Promise<void> => {
       const leaving = rootRef.current
       leaveBoard()
       flushCamera()
@@ -611,6 +612,15 @@ export function App() {
       if (path) await switchFolder(path)
     } catch (error) {
       showError(failureText("Can't open the folder", error))
+    }
+  }, [switchFolder])
+
+  /** File > Close Folder and the folder menu's item: the folder switch with no folder as its target. */
+  const closeFolder = useCallback(async () => {
+    try {
+      await switchFolder(null)
+    } catch (error) {
+      showError(failureText("Can't close the folder", error))
     }
   }, [switchFolder])
 
@@ -1030,12 +1040,13 @@ export function App() {
       space.onMenuCommand((command) => {
         // ⌘N, ⌘O, ⌘[, ⌘] and the setup item close the search panel first; the zoom keys do not reach the board under it.
         const opensBoard = command === 'new-board' || command === 'back' || command === 'forward'
-        if (searchOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
+        if (searchOpenRef.current && (command === 'open-folder' || command === 'close-folder' || opensBoard || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
         if (settingsOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsSection(null))
         if (command === 'open-settings') openSettings()
         else if (settingsOpenRef.current && command.startsWith('zoom-')) return
         else if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
         else if (command === 'open-folder') void openFolderDialogRef.current()
+        else if (command === 'close-folder') void closeFolderRef.current()
         else if (command === 'new-board') void createBoardRef.current()
         else if (command === 'back' || command === 'forward') goHistoryRef.current(command === 'back' ? -1 : 1)
         else if (command === 'setup-folder') setMenuSetup(folderRef.current !== null)
@@ -1069,6 +1080,8 @@ export function App() {
   createBoardRef.current = createBoard
   const openFolderDialogRef = useRef(openFolderDialog)
   openFolderDialogRef.current = openFolderDialog
+  const closeFolderRef = useRef(closeFolder)
+  closeFolderRef.current = closeFolder
   // The search panel's rows keep their identity while it is open: an App render (a boards list, an agent's edit) moves no scroll.
   const newBoardFromSearch = useCallback(() => void createBoardRef.current(), [])
   const openFolderFromSearch = useCallback(() => void openFolderDialogRef.current(), [])
@@ -1349,9 +1362,7 @@ export function App() {
   const setupOffer = !!folder && !folder.setUp && !hasAgentsFile && !folder.setupDontAsk && !offerDismissed
 
   let canvasContent = null
-  if (!loading && !folder) {
-    canvasContent = <WelcomeCard recent={recent} onOpenFolder={openFolderDialog} onOpenRecent={openRecent} />
-  } else if (folder && boardError) {
+  if (folder && boardError) {
     canvasContent = (
       <CanvasNotice
         icon={<AlertCircle size={18} strokeWidth={1.75} />}
@@ -1401,6 +1412,7 @@ export function App() {
         renaming={sidebarHidden ? null : renaming}
         onOpenFolder={() => void openFolderDialog()}
         onOpenRecent={(path) => void openRecent(path)}
+        onCloseFolder={() => void closeFolder()}
         onOpenBoard={(path) => void openBoard(path)}
         onCreateBoard={() => void createBoard()}
         onSearch={() => setSearchOpen(true)}
@@ -1416,7 +1428,6 @@ export function App() {
         onCloseSetup={closeSetup}
         onApplySetup={applySetup}
         onDontAskSetup={dontAskSetup}
-        onEditGuide={() => void editGuide()}
         guideOverrides={guideOverrides}
         onOpenOverride={(path) => void editGuide(path)}
         onOpenSettings={openSettings}
@@ -1502,6 +1513,7 @@ export function App() {
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
       </main>
+      {!loading && !folder && <Splash recent={recent} onOpenFolder={openFolderDialog} onOpenRecent={openRecent} />}
       {searchOpen && folder && (
         <SearchPanel
           boards={boards}

@@ -226,6 +226,19 @@ async function snapshot(initial = false): Promise<Snapshot> {
 type FolderVia = 'launch' | 'dialog' | 'recent' | 'menu'
 let folderVia: FolderVia = 'launch'
 
+/**
+ * The one change of the open folder, for an open and for File > Close Folder (next is null): agents and the menu see
+ * it at once, and the next launch opens it (none after a close; the closed folder stays at the top of the recent list).
+ * The folder that leaves keeps its session in `sessions`: the renderer's last saves still reach it.
+ */
+function setSession(next: FolderSession | null): void {
+  session?.stopWatching()
+  session = next
+  if (next) store.rememberFolder(next.root)
+  else store.forgetLastFolder()
+  setFolderOpen(next !== null)
+}
+
 async function openFolder(path: string, via: FolderVia): Promise<void> {
   const opened = await FolderSession.open(path)
   const next = sessions.get(opened.root) ?? opened
@@ -233,12 +246,9 @@ async function openFolder(path: string, via: FolderVia): Promise<void> {
   // Folder trust (U19): a folder whose boards hold no world has nothing to ask about, so it is trusted now, silently.
   // A folder made or set up in the app therefore never asks; only a folder that comes with worlds does, at this open.
   if (!store.isFolderTrusted(next.root) && !(await next.hasWorlds().catch(() => true))) store.setFolderTrusted(next.root, true)
-  session?.stopWatching()
-  session = next
+  setSession(next)
   folderVia = via
   analytics.record('folder.opened', { via, setUp: false })
-  store.rememberFolder(next.root)
-  setFolderOpen(true)
   void cleanFolder(next, agentServer.records).catch((error) => console.error(`storage: ${String(error)}`))
   // A scan under way when the folder changes reports nothing: its folder is not the open one.
   next.startWatching({
@@ -424,8 +434,10 @@ function registerIpc(): void {
   })
   handle(IPC.pickFolder, () => pickFolder())
   handle(IPC.openFolder, async (path: unknown) => {
-    if (typeof path !== 'string' || (path !== pickedFolder && !store.isRecent(path))) throw new Error('That folder is not in the recent list.')
-    await openFolder(path, path === pickedFolder ? 'dialog' : 'recent')
+    // null: File > Close Folder, the same switch with no folder as its target.
+    if (path === null) setSession(null)
+    else if (typeof path !== 'string' || (path !== pickedFolder && !store.isRecent(path))) throw new Error('That folder is not in the recent list.')
+    else await openFolder(path, path === pickedFolder ? 'dialog' : 'recent')
     return snapshot()
   })
   handle(IPC.listFiles, () => requireSession().listFiles())
@@ -750,6 +762,11 @@ function buildMenu(): void {
       void pickFolder()
         .then((path) => (path ? openFolder(path, 'menu') : undefined))
         .catch((error) => console.error(`open folder failed: ${String(error)}`))
+    },
+    closeFolder: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) sendMenuCommand('close-folder')
+      // No window: nothing is open that must be saved.
+      else setSession(null)
     },
     newBoard: () => sendMenuCommand('new-board'),
     back: () => sendMenuCommand('back'),

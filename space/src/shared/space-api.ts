@@ -160,7 +160,7 @@ export interface ShellState {
   homeDir: string
 }
 
-export type MenuCommand = 'open-folder' | 'new-board' | 'back' | 'forward' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'open-settings'
+export type MenuCommand = 'open-folder' | 'close-folder' | 'new-board' | 'back' | 'forward' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'open-settings'
 
 // ---------- Settings (main/settings.ts owns every user setting) ----------
 
@@ -683,8 +683,11 @@ export interface SpaceApi {
   getInitialState(): Promise<Snapshot>
   /** Ask the learner for a folder. Nothing opens yet: openFolder does that, after the renderer saved. */
   pickFolder(): Promise<string | null>
-  /** Make this folder (a picked or a recent one) the open one. The renderer calls it inside its folder switch, after its saves. */
-  openFolder(path: string): Promise<Snapshot>
+  /**
+   * Make this folder (a picked or a recent one) the open one, or with null close the open folder (File > Close Folder).
+   * The renderer calls it inside its folder switch, after its saves.
+   */
+  openFolder(path: string | null): Promise<Snapshot>
   listFiles(): Promise<FileTree>
   /** The boards list now, read from the folder (after a create, rename or trash). Main also sends it: onBoardsChanged. */
   getBoards(): Promise<BoardList>
