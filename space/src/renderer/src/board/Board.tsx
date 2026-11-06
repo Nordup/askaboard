@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type Ref } from 'react'
 import { flushSync } from 'react-dom'
-import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision } from '@shared/board-format'
+import { isContent, isFrame, isInk, isInkHost, isKnown, isLive, isPainted, isShape, newItemId, nodeOpacity, stampChanged, type Author, type BoardDoc, type LiveNode, type NodeStyle, type Removal, type Revision, type ShapeNode } from '@shared/board-format'
 import { isEditableTarget } from '../lib/keys'
 import { isMac } from '../platform'
-import { FONTS, MARKER_SCALE, type DrawStyle, type ToolId, type ToolState } from '../tools'
+import { FONTS, MARKER_SCALE, shapeTool, type DrawStyle, type ToolId, type ToolState } from '../tools'
 import type { BoardCommand, CommandContext } from './commands'
 import { boardKeyAction, hasNodeClipboard, readNodeClipboard, writeNodeClipboard, type BoardKeyAction } from './clipboard'
 import { ContentLayer, measureContent, type ContentContext } from './content'
@@ -13,13 +13,10 @@ import {
   glideCamera,
   HOME_ZOOM,
   inkBounds,
-  inkLocalBounds,
   overlapShare,
   regionContains,
   regionInsidePolygon,
   screenToBoard,
-  strokeHitByCircle,
-  strokeInsidePolygon,
   zoomAt
 } from './geometry'
 import type { BoardHistory } from './history'
@@ -28,6 +25,7 @@ import { MouseInk } from './mouse-ink'
 import { restyle, selectionStyle, type SelectionStyle, type StylePatch } from './style'
 import { huggedNodes } from './hug'
 import { ActiveInk, InkLayers, type PaintInk } from './paint'
+import { hasEnds, moveEnd, newShape, paintedHitByCircle, paintedInsidePolygon, paintedLocalBounds, shapeInBox, shapeTo } from './shapes'
 import { enteredWorld, enterLive, enteredLive, enterWorlds, markWorlds, moveWorlds, nearWorlds, pickWorlds, pressWorlds, sendWorldInk, sendWorldPointer, setLivePlayback, wantsPointerMoves, wheelWorlds } from '../live-pixels/registry'
 import { bindWorldBoard, hasWorlds, syncWorlds } from '../live-pixels/world/surface'
 import type { WorldPointer } from '@shared/world-protocol'
@@ -45,12 +43,12 @@ import {
   withoutScene,
   inkAt,
   inkOffset,
-  inkPaintOrder,
   isFlowed,
   shownNow,
   moveNodes,
   normalizeInk,
   outermost,
+  paintOrder,
   parentKey,
   removeNodes,
   ROOT,
@@ -67,8 +65,8 @@ import './board.css'
 
 /**
  * The board: one document of nodes. Content nodes (frames, text, svg,
- * images) are DOM in the content layer; ink is on the canvas above it, with
- * the same camera. Pointer routing (pen / mouse / touch, coalesced events,
+ * images) are DOM in the content layer; ink and shapes are on the canvas
+ * above it, with the same camera. Pointer routing (pen / mouse / touch, coalesced events,
  * pressure, the pen's eraser end, lasso, pan with Space or the middle button,
  * wheel) is ported from web/src/board/Board.tsx.
  *
@@ -196,9 +194,11 @@ export interface BoardProps {
   style: DrawStyle
   /** What a drag on an empty board does with the Select tool: a rectangle or a lasso picks items. */
   selectMode: ToolState['selectMode']
+  /** Keep a shape tool after one shape (Q). Without it, a new shape ends selected, in the Select tool. */
+  lock?: boolean
   onDocChange(doc: BoardDoc): void
   onCameraChange(camera: Camera): void
-  /** The board changes the tool: a text edit ends by key, Escape with nothing selected, the first pen press. */
+  /** The board changes the tool: a text edit ends by key, Escape with nothing selected, the first pen press, a new shape. */
   onToolChange?(tool: ToolId): void
   /**
    * A commit stamped nodes: the ones that left the board (erase, cut, delete,
@@ -268,8 +268,9 @@ const MIN_SIZE = 8
 const MIN_FONT_SIZE = 6
 /** Shift snaps a rotation to this many degrees. */
 const ROTATE_SNAP = 15
-type DragKind = 'pan' | 'lasso' | 'box' | 'move' | 'ink' | 'erase' | 'resize' | 'none'
-type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | 'rotate'
+type DragKind = 'pan' | 'lasso' | 'box' | 'move' | 'ink' | 'erase' | 'resize' | 'shape' | 'none'
+/** The box handles, a text's rotate handle, and the two ends of an arrow or a line. */
+type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw' | 'rotate' | 'start' | 'end'
 
 /** The selection handle a pointer event is on (every part of a handle carries data-handle), or undefined. */
 function handleOf(target: EventTarget | null): Handle | undefined {
@@ -288,7 +289,7 @@ interface DragState {
   startCamera: Camera
   startSelectedIds: string[]
   changed: boolean
-  /** Lasso: every pointer sample, in board coordinates. Box: the start, in board coordinates. */
+  /** Lasso: every pointer sample, in board coordinates. Box and shape: the start, in board coordinates. */
   lasso: Point[]
   /** Move: the ids that move. */
   moveIds?: Set<string>
@@ -296,8 +297,10 @@ interface DragState {
   added?: BoardNode[]
   /** Move and resize: how far the pointer is from the start, in board points. */
   delta?: Point
-  /** Resize: Shift keeps the aspect ratio; on the rotate handle, it snaps. */
+  /** Resize and shape: Shift keeps the aspect ratio (a square, a circle); on the rotate handle or a line, it snaps the angle. */
   keepAspect?: boolean
+  /** Shape: the shape being drawn. It shows once the drag is longer than a tap (changed). */
+  shape?: ShapeNode
   /** Erase: the ids erased so far. */
   erased?: Set<string>
   /** Move: the clicked node, to select alone when the press was a click. */
@@ -379,10 +382,11 @@ function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   } as CSSProperties
 }
 
-/** Which handles a node shows. Text turns, scales from its corners and sets its wrap width; flowed nodes keep their place. */
+/** Which handles a node shows. Text turns, scales from its corners and sets its wrap width; an arrow or a line moves its ends; flowed nodes keep their place. */
 function handlesFor(node: BoardNode | undefined): Handle[] {
   if (!node || !isKnown(node) || node.locked) return []
   if (node.kind === 'text') return ['nw', 'ne', 'e', 'se', 'sw', 'w', 'rotate']
+  if (node.kind === 'shape' && hasEnds(node)) return ['start', 'end']
   return ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 }
 
@@ -460,7 +464,7 @@ function withoutLostPins(nodes: BoardNode[]): BoardNode[] {
   return nodes.map((node) => (isLive(node) && node.pins?.some((pin) => !ids.has(pin.id)) ? { ...node, pins: node.pins.filter((pin) => ids.has(pin.id)) } : node))
 }
 
-export function Board({ doc, history, initialCamera, tool, style, selectMode, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, onContextMenu, ref }: BoardProps) {
+export function Board({ doc, history, initialCamera, tool, style, selectMode, lock = false, onDocChange, onCameraChange, onToolChange, onChanges, onSelectionChange, onSelectionStyle, onContextMenu, ref }: BoardProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const inkRef = useRef<HTMLCanvasElement>(null)
   const penRef = useRef<HTMLDivElement>(null)
@@ -561,6 +565,8 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
   const glideRef = useRef(0)
   const styleRef = useRef(style)
   styleRef.current = style
+  const lockRef = useRef(lock)
+  lockRef.current = lock
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const onDocChangeRef = useRef(onDocChange)
@@ -600,14 +606,14 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
 
   // ---------- Painting (batched to one frame) ----------
 
-  /** Every ink node with its world offset, in paint order: the same array while the nodes and the layout are the same. */
+  /** Every ink node and shape with its world offset, in paint order: the same array while the nodes and the layout are the same. */
   const paintInksRef = useRef<{ index: SceneIndex | null; layout: LayoutMap | null; list: readonly PaintInk[] }>({ index: null, layout: null, list: [] })
   const paintInks = useCallback((): readonly PaintInk[] => {
     const memo = paintInksRef.current
     const layout = restLayoutRef.current
     const index = indexRef.current
     if (memo.index !== index || memo.layout !== layout) {
-      const list: PaintInk[] = inkPaintOrder(index).map((node) => {
+      const list: PaintInk[] = paintOrder(index).map((node) => {
         const box = layout.get(node.id)
         return { node, offset: box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout) }
       })
@@ -616,6 +622,14 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     }
     return memo.list
   }, [])
+
+  /** The ink for the worlds that listen (registry sendWorldInk): strokes only, as before shapes; the same array while the paint list is the same. */
+  const worldInkRef = useRef<{ from: readonly PaintInk[] | null; list: Array<PaintInk & { node: InkNode }> }>({ from: null, list: [] })
+  const worldInk = useCallback((): Array<PaintInk & { node: InkNode }> => {
+    const inks = paintInks()
+    if (worldInkRef.current.from !== inks) worldInkRef.current = { from: inks, list: inks.filter((ink): ink is PaintInk & { node: InkNode } => ink.node.kind === 'ink') }
+    return worldInkRef.current.list
+  }, [paintInks])
 
   const applyContentTransform = useCallback(() => {
     const root = contentRootRef.current
@@ -633,7 +647,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     const ghosts = ghostNodesRef.current
     if (ghostInksRef.current.ghosts !== ghosts) {
       const list: PaintInk[] = []
-      for (const node of ghosts) if (isInk(node)) list.push({ node, offset: [node.x, node.y] })
+      for (const node of ghosts) if (isPainted(node)) list.push({ node, offset: [node.x, node.y] })
       ghostInksRef.current = { ghosts, list }
     }
     return ghostInksRef.current.list
@@ -670,7 +684,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const element = mine ?? ghostElementsRef.current.get(id)
       const node = override && element?.isConnected ? (mine ? indexRef.current.byId.get(id) : ghostByIdRef.current.get(id)) : undefined
       if (before && before !== element) clearElementOverride(before)
-      if (!override || !element || !node || isInk(node)) {
+      if (!override || !element || !node || isPainted(node)) {
         if (before === element && before) clearElementOverride(before)
         applied.delete(id)
         return
@@ -902,12 +916,12 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
         placeLinks()
         if (selectedIdsRef.current.includes(id)) setLayoutVersion((version) => version + 1)
       },
-      wants: () => sendWorldInk(paintInks()),
+      wants: () => sendWorldInk(worldInk()),
       cursor: (value) => {
         board.style.cursor = value
       }
     })
-  }, [followPoints, paintInks, placeLinks, requestPaint, worldPlace])
+  }, [followPoints, placeLinks, requestPaint, worldInk, worldPlace])
 
   // ---------- Layout cache ----------
 
@@ -940,13 +954,13 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     for (const id of linksRef.current.keys()) if (!linked.has(id)) linksRef.current.delete(id)
     followPoints(worldPointsRef.current)
     placeLinks()
-    sendWorldInk(paintInks())
+    sendWorldInk(worldInk())
     // Back on, from the new layout (an element's transform is relative to its layout box).
     if (playing || playbackRef.current || linksRef.current.size) applyPlaybackRef.current()
     setLayoutVersion((version) => version + 1)
     requestPaint({ committed: true })
     if (!inkOnly) fitHugsRef.current()
-  }, [followPoints, linkedNodes, paintInks, placeLinks, requestPaint])
+  }, [followPoints, linkedNodes, placeLinks, requestPaint, worldInk])
 
   /** Measure on the next frame (images, fonts and math settle late). */
   const requestMeasure = useCallback(() => {
@@ -1138,6 +1152,16 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const updated = resizedText(node, info, info.text, drag.delta ?? [0, 0], !!drag.keepAspect, isFlowed(node, byId))
       return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
     }
+    if (node.kind === 'shape') {
+      let updated: ShapeNode
+      if (info.handle === 'start' || info.handle === 'end') updated = moveEnd(node, info.handle, drag.delta ?? [0, 0], !!drag.keepAspect)
+      else {
+        // The box of the shape itself (its strokes reach a little past it), in world points: its local 0, 0 is at ox, oy.
+        const own = { x: info.box.ox, y: info.box.oy, width: node.w, height: node.h }
+        updated = shapeInBox(node, resizedBox(own, info.handle, drag.delta ?? [0, 0], !!drag.keepAspect), [info.box.ox - node.x, info.box.oy - node.y])
+      }
+      return drag.startNodes.map((entry) => (entry.id === info.id ? updated : entry))
+    }
     const aspect = !!drag.keepAspect || (node.kind === 'image' && info.handle.length === 2)
     const next = resizedBox(info.box, info.handle, drag.delta ?? [0, 0], aspect)
     const dx = next.x - info.box.x
@@ -1176,6 +1200,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       if (drag.kind === 'move' && drag.moveIds) return moveNodes(drag.added ? [...drag.startNodes, ...drag.added] : drag.startNodes, drag.moveIds, drag.delta ?? [0, 0])
       if (drag.kind === 'resize') return resizeTo(drag)
       if (drag.kind === 'erase' && drag.erased) return drag.startNodes.filter((node) => !drag.erased?.has(node.id))
+      if (drag.kind === 'shape' && drag.shape) return [...drag.startNodes, drag.shape]
       return drag.startNodes
     },
     [resizeTo]
@@ -1184,7 +1209,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
   /** The drag that shows on the nodes: a stroke, a pan or a lasso does not change them. */
   const openDrag = useCallback((): DragState | null => {
     const drag = dragRef.current
-    return drag && (drag.kind === 'move' || drag.kind === 'resize' || drag.kind === 'erase') ? drag : null
+    return drag && (drag.kind === 'move' || drag.kind === 'resize' || drag.kind === 'erase' || drag.kind === 'shape') ? drag : null
   }, [])
 
   /** The document: the nodes of the last commit, without what the learner has open. */
@@ -1308,7 +1333,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const box = layout.get(node.id)
       const { parent: _parent, ...free } = node as BoardNode & { parent?: string }
       if (!box) return { ...free, z: z++ } as BoardNode
-      return { ...free, x: isInk(node) ? box.ox : box.x, y: isInk(node) ? box.oy : box.y, z: z++ } as BoardNode
+      return { ...free, x: isPainted(node) ? box.ox : box.x, y: isPainted(node) ? box.oy : box.y, z: z++ } as BoardNode
     })
   }, [])
 
@@ -1387,11 +1412,12 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const drag = dragRef.current
       if (!drag) return
       let hit = false
+      // A shape goes whole, as a stroke does.
       for (const node of nodesRef.current) {
-        if (!isInk(node) || !shown(node)) continue
+        if (!isPainted(node) || !shown(node)) continue
         const box = layout.get(node.id)
         const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, indexRef.current.byId, layout)
-        if (!strokeHitByCircle(node, offset, point, radius)) continue
+        if (!paintedHitByCircle(node, offset, point, radius)) continue
         ;(drag.erased ??= new Set()).add(node.id)
         hit = true
       }
@@ -1526,7 +1552,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
   /** The scope for click selection: the parent of the current selection (ROOT when top level). */
   const selectionScope = (): string => {
     const byId = indexRef.current.byId
-    const first = selectedIdsRef.current.map((id) => byId.get(id)).find((node) => node && !isInk(node))
+    const first = selectedIdsRef.current.map((id) => byId.get(id)).find((node) => node && !isPainted(node))
     return first ? parentKey(first, byId) : ROOT
   }
 
@@ -1559,7 +1585,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     return regionContains(box, point, SELECTION_PAD / cameraRef.current.zoom)
   }
 
-  /** The node a click at a board point hits: ink first (it is on top), then content. */
+  /** The node a click at a board point hits: ink and shapes first (they are on top), then content. */
   const hitAt = (point: Point): BoardNode | null => {
     const index = indexRef.current
     const layout = layoutRef.current
@@ -1651,10 +1677,12 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
 
     const shouldPan = !penEraser && (event.button === 1 || spaceRef.current || event.pointerType === 'touch' || tool === 'hand')
     // The session's first pen press draws: it switches to Pen first (penSeen).
-    const penSwitch = event.pointerType === 'pen' && !penSeen && !shouldPan && !penEraser && tool !== 'pen' && tool !== 'eraser'
+    // A shape tool the learner chose draws its shape with the pen too.
+    const penSwitch = event.pointerType === 'pen' && !penSeen && !shouldPan && !penEraser && tool !== 'pen' && tool !== 'eraser' && !shapeTool(tool)
     if (event.pointerType === 'pen') penSeen = true
     if (penSwitch) onToolChangeRef.current?.('pen')
     const pressTool: ToolId = penSwitch ? 'pen' : tool
+    const pressShape = shapeTool(pressTool)
     let kind: DragKind
     let moveIds: Set<string> | undefined
     let clicked: string | undefined
@@ -1708,7 +1736,8 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
           clicked = undefined
         }
       }
-    } else if (pressTool === 'pen') kind = 'ink'
+    } else if (pressShape) kind = 'shape'
+    else if (pressTool === 'pen') kind = 'ink'
     else kind = 'none'
 
     try {
@@ -1760,6 +1789,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       eraseAt(screen)
     } else if (kind === 'lasso' || kind === 'box') {
       setLassoPoints([startBoard])
+    } else if (kind === 'shape' && pressShape) {
+      // A shape is top level: unlike a stroke (commitStroke), it never joins the frame it is drawn on.
+      const { color, width, fill, line, heads } = styleRef.current
+      dragRef.current.shape = newShape(newItemId('n'), pressShape, startBoard, { color, width, fill, line, heads }, zAbove(indexRef.current.children.get(ROOT) ?? []))
     }
   }
 
@@ -1842,6 +1875,9 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       drag.keepAspect = event.shiftKey
       drag.changed = true
       showResize(drag)
+    } else if (drag.kind === 'shape') {
+      drag.keepAspect = event.shiftKey
+      showShape(drag)
     } else if (drag.kind === 'lasso') {
       const native = event.nativeEvent
       const samples = typeof native.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : []
@@ -1898,6 +1934,25 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     if (next && shown && (Math.abs(next.x - shown.x) > 0.01 || Math.abs(next.y - shown.y) > 0.01)) flushSync(() => setNodes(view))
   }
 
+  /** Show the shape being drawn, from the press to the pointer. A drag no longer than a tap shows none. */
+  const showShape = (drag: DragState): void => {
+    if (!drag.shape) return
+    if (!drag.changed && Math.hypot(drag.last[0] - drag.start[0], drag.last[1] - drag.start[1]) < TAP_SIZE) return
+    drag.changed = true
+    drag.shape = shapeTo(drag.shape, drag.lasso[0], screenToBoard(drag.last, viewportRef.current, cameraRef.current), !!drag.keepAspect)
+    setNodes(dragView(drag))
+  }
+
+  /** Shift pressed or let go while a shape is drawn: the shape follows at once, as it follows the pointer. */
+  const shapeShift = (held: boolean): void => {
+    const drag = dragRef.current
+    if (drag?.kind !== 'shape' || !!drag.keepAspect === held) return
+    drag.keepAspect = held
+    showShape(drag)
+  }
+  const shapeShiftRef = useRef(shapeShift)
+  shapeShiftRef.current = shapeShift
+
   /** The drag's changes to the nodes on show become a commit. */
   const commitDrag = (drag: DragState): void => {
     if (!drag.changed) return
@@ -1940,13 +1995,28 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       drag.lasso.push(screenToBoard(screen, viewportRef.current, cameraRef.current))
       finishPick(drag, drag.lasso)
     },
+    shape: (drag, screen) => {
+      drag.last = screen
+      showShape(drag)
+      const shape = drag.shape
+      // A press, or a drag that came back to about where it began, makes nothing.
+      if (!drag.changed || !shape || Math.max(Math.abs(shape.w), Math.abs(shape.h)) * cameraRef.current.zoom < TAP_SIZE) {
+        if (drag.changed) setNodes(drag.startNodes)
+        return
+      }
+      commitNodes([...drag.startNodes, shape], drag.startNodes)
+      // One shape, then Select with the shape selected; the lock keeps the tool for the next one.
+      if (lockRef.current) return
+      setSelectedIds([shape.id])
+      onToolChangeRef.current?.('select')
+    },
     box: (drag, screen) => {
       drag.points.push(screen)
       finishPick(drag, boxPolygon(drag.lasso[0], screenToBoard(screen, viewportRef.current, cameraRef.current)))
     }
   }
 
-  /** The items a lasso or a box holds: top-level content by its box, ink anywhere by its length (ink inside a picked frame moves with it). */
+  /** The items a lasso or a box holds: top-level content by its box, ink and shapes anywhere by their length (those inside a picked frame move with it). */
   const pickInPolygon = (polygon: readonly Point[]): string[] => {
     const index = indexRef.current
     const layout = layoutRef.current
@@ -1956,11 +2026,11 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const box = layout.get(node.id)
       if (box && regionInsidePolygon(box, polygon)) picked.push(node.id)
     }
-    for (const node of inkPaintOrder(index)) {
+    for (const node of paintOrder(index)) {
       if (!shown(node)) continue
       const box = layout.get(node.id)
       const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
-      if (strokeInsidePolygon(node, offset, polygon)) picked.push(node.id)
+      if (paintedInsidePolygon(node, offset, polygon)) picked.push(node.id)
     }
     return outermost(picked, index.byId)
   }
@@ -2010,7 +2080,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
     if (!drag) return
     dragRef.current = null
     activeRef.current = null
-    if (drag.kind === 'move' || drag.kind === 'erase' || drag.kind === 'resize') setNodes(drag.startNodes)
+    if (drag.kind === 'move' || drag.kind === 'erase' || drag.kind === 'resize' || drag.kind === 'shape') setNodes(drag.startNodes)
     if (drag.kind === 'move' || drag.kind === 'lasso' || drag.kind === 'box' || drag.kind === 'resize') setSelectedIds(drag.startSelectedIds)
     if (drag.kind === 'pan') {
       applyCamera(drag.startCamera)
@@ -2414,14 +2484,14 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
         if (ghostsChanged) {
           ghostNodesRef.current = ghosts
           ghostByIdRef.current = new Map(ghosts.map((node) => [node.id, node]))
-          const content = ghosts.filter((node) => !isInk(node))
+          const content = ghosts.filter((node) => !isPainted(node))
           // The ghost layer renders before this returns, so its elements get their overrides now.
           flushSync(() => setGhostIndex(content.length ? buildIndex(content) : null))
         }
         const changed = ghostsChanged ? null : (frame?.changed ?? null)
         applyPlaybackToDom(changed)
         inkLayersRef.current.note(frame ? changed : null)
-        // The ink canvas paints again when an ink node's override changed, or for pen tips and changing ink.
+        // The ink canvas paints again when an ink node's or a shape's override changed, or for pen tips and changing ink.
         const moment = inkMomentRef.current
         const tips = frame?.tips.length ?? 0
         const inks = frame?.inks?.length ?? 0
@@ -2430,7 +2500,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
           const byId = indexRef.current.byId
           for (const id of changed) {
             const node = byId.get(id) ?? ghostByIdRef.current.get(id)
-            if (node && isInk(node)) {
+            if (node && isPainted(node)) {
               ink = true
               break
             }
@@ -2497,9 +2567,9 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       const roots = new Set(clip.roots)
       const rootNodes = clip.nodes.filter((node) => roots.has(node.id) && isKnown(node)) as (BoardNode & { x: number; y: number })[]
       const anchor = pasteAnchorRef.current ?? cameraRef.current.center
-      // The roots' world top-left: ink points may sit far from the node's x, y (v1 ink has x = y = 0).
+      // The roots' world top-left: ink points may sit far from the node's x, y (v1 ink has x = y = 0), and an arrow may point up and left of it.
       const left = (node: BoardNode & { x: number; y: number }): Point => {
-        const local = isInk(node) ? inkLocalBounds(node) : null
+        const local = isPainted(node) ? paintedLocalBounds(node) : null
         return [node.x + (local?.x ?? 0), node.y + (local?.y ?? 0)]
       }
       const minX = Math.min(...rootNodes.map((node) => left(node)[0]))
@@ -2563,6 +2633,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
 
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
   keyHandlerRef.current = (event: KeyboardEvent) => {
+    if (event.key === 'Shift') {
+      shapeShiftRef.current(true)
+      return
+    }
     if (event.key === 'Escape') {
       if (enteredLive()) enterLive(null)
       else if (dragRef.current) cancelDrag()
@@ -2620,6 +2694,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
       keyHandlerRef.current(event)
     }
     const up = (event: KeyboardEvent): void => {
+      if (event.key === 'Shift') shapeShiftRef.current(false)
       if (event.code === 'Space') {
         spaceRef.current = false
         setPanReady(false)
@@ -2647,6 +2722,13 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
   const selectionTurn = selection?.rotation ?? 0
   const single = selectedIds.length === 1 ? index.byId.get(selectedIds[0]) : undefined
   const handles = selection && single && tool === 'select' ? handlesFor(single) : []
+  /** An end handle of an arrow or a line sits on its end, inside the selection's border. */
+  const endStyle = (handle: Handle): CSSProperties | undefined => {
+    const box = single && isShape(single) ? layoutRef.current.get(single.id) : undefined
+    if ((handle !== 'start' && handle !== 'end') || !box || !single || !isShape(single) || !selectionTopLeft) return undefined
+    const [sx, sy] = boardToScreen(handle === 'start' ? [box.ox, box.oy] : [box.ox + single.w, box.oy + single.h], viewport, camera)
+    return { left: `calc(${sx - selectionTopLeft[0] + SELECTION_PAD}px - var(--selection-border))`, top: `calc(${sy - selectionTopLeft[1] + SELECTION_PAD}px - var(--selection-border))` }
+  }
   const flashTopLeft = flashRect ? boardToScreen([flashRect.rect.x, flashRect.rect.y], viewport, camera) : null
   const cursorTool = panning ? 'panning' : panReady || tool === 'hand' ? 'pan' : tool
 
@@ -2696,7 +2778,7 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, on
         >
           {handles.includes('rotate') && <span className="board__rotate-stem" data-handle="rotate" />}
           {handles.map((handle) => (
-            <span key={handle} className="board__handle" data-handle={handle} style={selectionTurn ? { cursor: handleCursor(handle, selectionTurn) } : undefined} />
+            <span key={handle} className="board__handle" data-handle={handle} style={endStyle(handle) ?? (selectionTurn ? { cursor: handleCursor(handle, selectionTurn) } : undefined)} />
           ))}
         </div>
       )}

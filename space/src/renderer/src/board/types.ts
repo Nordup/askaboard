@@ -1,7 +1,7 @@
-import type { BoardNode, ContentNode, FrameNode, ImageNode, InkNode, SvgNode, TextNode } from '@shared/board-format'
+import type { BoardNode, ContentNode, FrameNode, ImageNode, InkNode, PaintedNode, ShapeNode, SvgNode, TextNode } from '@shared/board-format'
 import type { Camera } from '@shared/space-api'
 
-export type { BoardNode, Camera, ContentNode, FrameNode, ImageNode, InkNode, SvgNode, TextNode }
+export type { BoardNode, Camera, ContentNode, FrameNode, ImageNode, InkNode, PaintedNode, ShapeNode, SvgNode, TextNode }
 
 /** A 2D point: board points or screen (CSS) pixels, by context. */
 export type Point = [number, number]

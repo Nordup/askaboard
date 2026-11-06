@@ -26,6 +26,7 @@
  *   node scripts/drive.mjs close-answer try|close   answer the sheet "Couldn't save your board"
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
+ *   node scripts/drive.mjs frames <ms>          count the window's display frames for ms (run it beside a drag): fps and the longest frame
  *
  * Strokes are in board coordinates (points, origin at the centre, +y down);
  * p is pen pressure 0..1. Each stroke is sent as pen input
@@ -67,6 +68,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
   camera <x> <y>                                 centre the view on board point (x, y); prints zoom, centre, canvas
+  frames <ms>                                    count display frames for ms: {frames, fps, longestMs}
 The port defaults to $SPACE_REMOTE_DEBUG, then 9339.`
 
 class Failure extends Error {}
@@ -581,6 +583,17 @@ async function main() {
       await requireDevHook(cdp)
       await evaluate(cdp, `window.__spaceDev.closeAnswer(${rest[0] === 'try' ? 0 : 1})`)
       await sleep(100)
+    }
+  } else if (command === 'frames') {
+    const ms = Number(rest[0] ?? 2000)
+    if (!(ms > 0)) throw new Failure('frames needs a duration in ms, for example 2000.')
+    run = async (cdp) => {
+      // requestAnimationFrame in the page: a frame the page could not paint in time shows as a long gap.
+      const reading = await evaluate(
+        cdp,
+        `new Promise((resolve) => { const start = performance.now(); let last = start; let frames = 0; let longest = 0; const tick = (now) => { frames++; longest = Math.max(longest, now - last); last = now; if (now - start < ${ms}) requestAnimationFrame(tick); else resolve({ frames, fps: Math.round((frames * 10000) / (now - start)) / 10, longestMs: Math.round(longest * 10) / 10 }) }; requestAnimationFrame(tick) })`
+      )
+      console.log(JSON.stringify(reading))
     }
   } else if (command === 'eval-state') {
     run = async (cdp) => {

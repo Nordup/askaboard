@@ -1,5 +1,5 @@
 import { MAX_COORD, MAX_HTML_DEPTH, MAX_HTML_ELEMENTS, MAX_STYLE_CHARS } from '@shared/limits'
-import { isContent, isInk, isKnown, newItemId, nodeRotation, STYLE_KEYS, styleKey, type BoardNode, type NodeStyle } from '@shared/board-format'
+import { isContent, isInk, isKnown, isShape, newItemId, nodeRotation, SHAPE_WORDS, STYLE_KEYS, styleKey, type BoardNode, type NodeStyle } from '@shared/board-format'
 import { sanitizeSvg } from './content'
 import { parseMarkup, type Run } from './markup'
 import { normalRotation } from './rotation'
@@ -449,6 +449,11 @@ export function nodesToHtml(rootId: string, index: SceneIndex, includeIds: boole
       return
     }
     if (isInk(node)) return
+    if (isShape(node)) {
+      const size = node.shape === 'arrow' || node.shape === 'line' ? `to ${node.x + node.w},${node.y + node.h}` : `${node.w}×${node.h}`
+      lines.push(`${pad}<!-- ${SHAPE_WORDS[node.shape]} ${escapeHtml(node.id)} at ${node.x},${node.y} ${size}, drawn as ink (not HTML; get_item has its fields) -->`)
+      return
+    }
     const position: Record<string, string> = placed ? { position: 'absolute', left: `${node.x}px`, top: `${node.y}px` } : {}
     const style = styleText(node.style, position)
     const styleAttr = style ? ` style="${escapeAttribute(style)}"` : ''
@@ -458,7 +463,7 @@ export function nodesToHtml(rootId: string, index: SceneIndex, includeIds: boole
         const ink = children.filter(isInk)
         const free = node.style.display !== 'flex'
         lines.push(`${pad}<div${attrs(node)}${styleAttr}>`)
-        for (const child of children) if (isContent(child) || !isKnown(child)) emit(child, depth + 1, free)
+        for (const child of children) if (isContent(child) || isShape(child) || !isKnown(child)) emit(child, depth + 1, free)
         if (ink.length) {
           const learner = ink.filter((stroke) => stroke.author === 'learner').length
           lines.push(`${pad}  <!-- ink: ${ink.length} stroke(s) inside (${learner} by the learner); kept on replace -->`)

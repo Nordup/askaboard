@@ -1,9 +1,10 @@
-import { isKnown, isOldLive, nodeRotation, type BoardNode } from '@shared/board-format'
+import { isKnown, isOldLive, nodeRotation, SHAPE_WORDS, type BoardNode } from '@shared/board-format'
 import { followsText } from '@shared/world-links'
 import { liveParts } from '../live-pixels/registry'
 import type { AgentToolName, BoardRect } from '@shared/space-api'
 import type { BoardHandle } from '../board/Board'
 import { ownBox } from '../board/rotation'
+import { hasEnds } from '../board/shapes'
 import { parentKey, ROOT, isFlowed } from '../board/scene'
 import type { Region } from '../board/types'
 import { liveReport, liveStatus } from '../live-pixels/registry'
@@ -86,7 +87,12 @@ export function getNodeInfo(s: Scene, id: unknown): unknown {
     if (node.locked) info.locked = true
     if (node.follows) info.follows = followsText(node.follows)
     if (node.kind === 'ink') Object.assign(info, { tool: node.tool, color: node.color, width: node.width, points: node.points.length })
-    else info.style = node.style
+    else if (node.kind === 'shape') {
+      // The learner's shape: its size, or for an arrow or a line its start and end on the board.
+      const [x, y] = box ? [box.ox, box.oy] : [node.x, node.y]
+      const ends = hasEnds(node) ? { start: { x: r1(x), y: r1(y) }, end: { x: r1(x + node.w), y: r1(y + node.h) } } : { size: { w: node.w, h: node.h }, fill: node.fill }
+      Object.assign(info, { shape: SHAPE_WORDS[node.shape], color: node.color, width: node.width, line: node.line, ...ends, ...(node.shape === 'arrow' ? { heads: node.heads } : {}) })
+    } else info.style = node.style
     if (node.kind === 'text') info.text = node.text
     if (nodeRotation(node)) info.rotation = nodeRotation(node)
     if (node.kind === 'image') info.src = node.src

@@ -1,13 +1,14 @@
 import { createElement, createRef, type RefObject } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { isContent, isFrame, isInk, isKnown, type BoardNode, type ContentNode, type InkNode } from '@shared/board-format'
+import { isContent, isFrame, isInk, isKnown, isPainted, isShape, type BoardNode, type ContentNode, type InkNode } from '@shared/board-format'
 import type { SceneDraft } from '@shared/live-scene'
 import type { BoardHandle } from '../board/Board'
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { checkDrafts, draftsToNodes, htmlToDrafts, nodesToHtml, walkDrafts, type Draft } from '../board/html'
 import { buildIndex, inkOffset, isFlowed, ROOT, topLevelOf, withDescendants, zAbove } from '../board/scene'
 import { ownBox, placedLayout } from '../board/rotation'
+import { shapeLook } from '../board/shapes'
 import type { LayoutBox } from '../board/types'
 import { coveredOf } from '../agent/covered'
 import { anchorFor, findSpace, obstacles, viewOf, type Scene } from '../agent/placement'
@@ -201,7 +202,7 @@ async function htmlAnswer(ctx: HostContext, request: Record<string, unknown>): P
     const s = ctx.scene()
     const ref = String(into.ref ?? '')
     const target = s.index.byId.get(ref)
-    if (!target || !isKnown(target) || isInk(target)) return { error: `there is no frame or material "${ref}" on the board` }
+    if (!target || !isKnown(target) || isPainted(target)) return { error: `there is no frame or material "${ref}" on the board` }
     const replace = into.mode === 'replace'
     if (!replace && !isFrame(target)) return { error: `"${ref}" is a ${target.kind}, not a frame; html goes into frames (or use mode "replace")` }
     const top = topLevelOf(target, s.index.byId)
@@ -272,6 +273,8 @@ async function itemAnswer(ctx: HostContext, request: Record<string, unknown>): P
   const node = s.index.byId.get(ref)
   if (!node || !isKnown(node)) return { error: `there is no item "${ref}" on the board` }
   if (isInk(node)) return { kind: 'ink', strokes: [strokeOf(node)] }
+  // A learner's shape copies as the ink it is drawn with (its strokes carry its id, so they sit where it sits).
+  if (isShape(node)) return { kind: 'ink', strokes: shapeLook(node).strokes.map(strokeOf) }
   if (node.kind === 'live') return { error: `"${ref}" is a world or an older item, which a scene cannot change this way; make it again with world()` }
   const drafts = htmlToDrafts(nodesToHtml(node.id, s.index, false))
   const box = s.layout.get(node.id)

@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { CopyPlus, Ellipsis, Highlighter, Lock, LockOpen, Minus, PenLine, Plus, Redo2, Trash2, Undo2, type LucideIcon } from 'lucide-react'
 import { isMac, shortcut } from '../platform'
-import { FONTS, INK_COLORS, LassoIcon, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
+import { ARROW_HEADS, FILLS, FONTS, INK_COLORS, LassoIcon, LINE_STYLES, LOCK_KEY, PEN_KINDS, STROKE_WIDTHS, TEXT_ALIGNS, TEXT_SIZES, TOOLS, toolTitle, type PenKind, type StyleField, type ToolState } from '../tools'
 import { styleFields, type SelectionStyle, type StylePatch } from '../board/style'
 import { commandRow, type BoardCommand, type CommandContext } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
@@ -76,6 +76,13 @@ export function BoardControls(props: BoardControlsProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const styleRef = useRef<HTMLDivElement>(null)
   const styleKey = style ? `${style.fields.join(' ')} ${style.selection ? `commands ${style.selection.editable}` : ''}` : ''
+  /**
+   * The style pill of this key leaves out Duplicate and Delete (More still has them): its whole width does not
+   * fit in the canvas. `fullWidth` is that whole width, measured while the pill had them.
+   */
+  const [compactKey, setCompactKey] = useState<string | null>(null)
+  const compact = compactKey === styleKey && !!style?.selection
+  const fullWidthRef = useRef(0)
 
   // The style pill is centred on the tool pill; one measured shift keeps it a margin inside the canvas.
   useLayoutEffect(() => {
@@ -87,6 +94,12 @@ export function BoardControls(props: BoardControlsProps) {
       const margin = parseFloat(getComputedStyle(root).paddingLeft) || 0
       const bounds = root.getBoundingClientRect()
       const box = pill.getBoundingClientRect()
+      if (!compact) fullWidthRef.current = box.width
+      const tooWide = !!style?.selection && fullWidthRef.current > bounds.width - margin * 2
+      if (tooWide !== compact) {
+        setCompactKey(tooWide ? styleKey : null)
+        return
+      }
       const over = bounds.left + margin - box.left
       const under = bounds.right - margin - box.right
       const shift = over > 0 ? over : under < 0 ? Math.max(under, over) : 0
@@ -98,7 +111,9 @@ export function BoardControls(props: BoardControlsProps) {
     observer.observe(root)
     observer.observe(pill)
     return () => observer.disconnect()
-  }, [styleKey])
+    // style.selection is in styleKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [styleKey, compact])
 
   return (
     <div className="board-controls" ref={rootRef}>
@@ -129,7 +144,7 @@ export function BoardControls(props: BoardControlsProps) {
           <div className="pill-bar board-controls__style" ref={styleRef} role="toolbar" aria-label="Style">
             <StyleOptions state={style} onStyle={props.onStyle} />
             {style.selection && (
-              <SelectionCommands divider={style.fields.length > 0} editable={style.selection.editable} onCommand={props.onCommand} commandContext={props.commandContext} />
+              <SelectionCommands divider={style.fields.length > 0} editable={style.selection.editable} compact={compact} onCommand={props.onCommand} commandContext={props.commandContext} />
             )}
           </div>
         )}
@@ -202,6 +217,26 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
         <span className="option__bar" style={{ height: Math.max(1.5, width.px / 2) }} />
       </button>
     ))
+  } else if (field === 'fill') {
+    options = FILLS.map((fill) => (
+      <button key={fill.id} className="option" title={fill.label} aria-label={fill.label} aria-pressed={values.fill === fill.id} onClick={() => onStyle({ fill: fill.id })}>
+        <span className="option__fill" data-fill={fill.id} />
+      </button>
+    ))
+  } else if (field === 'line') {
+    options = LINE_STYLES.map((line) => (
+      <button key={line.id} className="option" title={line.label} aria-label={line.label} aria-pressed={values.line === line.id} onClick={() => onStyle({ line: line.id })}>
+        <svg className="option__line" viewBox="0 0 18 4" aria-hidden="true">
+          <line x1="2" y1="2" x2="16" y2="2" strokeDasharray={line.id === 'dashed' ? '4 3' : line.id === 'dotted' ? '0 3.5' : undefined} />
+        </svg>
+      </button>
+    ))
+  } else if (field === 'heads') {
+    options = ARROW_HEADS.map(({ id, label, Icon }) => (
+      <button key={id} className="option" title={label} aria-label={label} aria-pressed={values.heads === id} onClick={() => onStyle({ heads: id })}>
+        <Icon {...ICON} />
+      </button>
+    ))
   } else if (field === 'size') {
     options = TEXT_SIZES.map((size) => (
       <button key={size.id} className="option option--text" title={`${size.label} text`} aria-label={`${size.label} text`} aria-pressed={values.size === size.px} onClick={() => onStyle({ size: size.px })}>
@@ -238,8 +273,11 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
   )
 }
 
-/** The end of the style pill for a selection: Duplicate, Delete and More, a menu of every board command (the right-click menu's list). */
-function SelectionCommands(props: { divider: boolean; editable: boolean; onCommand(command: BoardCommand): void; commandContext(): CommandContext | null }) {
+/**
+ * The end of the style pill for a selection: Duplicate, Delete and More, a menu of every board command (the right-click menu's list).
+ * `compact`: the pill would not fit in the canvas, so it shows More alone.
+ */
+function SelectionCommands(props: { divider: boolean; editable: boolean; compact: boolean; onCommand(command: BoardCommand): void; commandContext(): CommandContext | null }) {
   const { onCommand, commandContext } = props
   const moreRef = useRef<HTMLButtonElement>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; context: CommandContext } | null>(null)
@@ -260,10 +298,12 @@ function SelectionCommands(props: { divider: boolean; editable: boolean; onComma
   return (
     <>
       {props.divider && <span className="pill-bar__divider" />}
-      <button className="option" title={`${duplicate.label} — ${duplicate.keys}`} aria-label={duplicate.label} onClick={() => onCommand('duplicate')}>
-        <CopyPlus {...ICON} />
-      </button>
-      {props.editable && (
+      {!props.compact && (
+        <button className="option" title={`${duplicate.label} — ${duplicate.keys}`} aria-label={duplicate.label} onClick={() => onCommand('duplicate')}>
+          <CopyPlus {...ICON} />
+        </button>
+      )}
+      {props.editable && !props.compact && (
         <button className="option" title={`${remove.label} — ${remove.keys}`} aria-label={remove.label} onClick={() => onCommand('delete')}>
           <Trash2 {...ICON} />
         </button>

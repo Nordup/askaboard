@@ -1,16 +1,17 @@
-import { inkBounds, pressureWidth, regionsIntersect } from './geometry'
+import { pressureWidth, regionsIntersect } from './geometry'
 import { InkGrid, TileCache, tileLevel, type TileContext } from './ink-tiles'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackMatrix, type PlaybackTip } from './playback'
-import type { Camera, InkNode, Point, Region } from './types'
+import { isMarker, LIGHT_FILL_ALPHA, paintedBounds, shapeLook } from './shapes'
+import type { Camera, InkNode, PaintedNode, Point, Region, ShapeNode } from './types'
 
 type StrokeItem = InkNode
 
 /** A canvas or a tile: stroke code draws on both. */
 type InkContext = CanvasRenderingContext2D | TileContext
 
-/** An ink node with its world offset (the world position of its local 0,0). */
+/** An ink node or a shape with its world offset (the world position of its local 0,0). */
 export interface PaintInk {
-  node: InkNode
+  node: PaintedNode
   offset: Point
 }
 
@@ -205,19 +206,48 @@ const evenPressure = (points: StrokeItem['points']): boolean => points.every((po
 const revealTail = new Float64Array(14)
 
 /**
- * Draw one ink node at its world offset; a playback override moves, fades, recolours or partly draws it.
+ * Draw one ink node or shape at its world offset; a playback override moves, fades, recolours or partly draws it.
  * committed: the node is on the board, so its points never change. Ink of a stream is not.
  */
 function drawInk(context: InkContext, ink: PaintInk, minWidth = 0, override?: NodeOverride, committed = false): void {
   context.save()
   if (override?.matrix) context.transform(...override.matrix)
   context.translate(ink.offset[0], ink.offset[1])
-  const whole = committed ? ink.node.points : undefined
-  if (override && (override.reveal !== undefined || override.color !== undefined)) {
-    const points = override.reveal === undefined ? ink.node.points : revealPoints(ink.node.points, override.reveal)
-    drawStroke(context, { ...ink.node, points, color: override.color ?? ink.node.color }, minWidth, override.opacity ?? 1, whole)
-  } else drawStroke(context, ink.node, minWidth, override?.opacity ?? 1, whole)
+  const node = ink.node
+  if (node.kind === 'shape') drawShape(context, node, minWidth, override?.opacity ?? 1, override?.color)
+  else {
+    const whole = committed ? node.points : undefined
+    if (override && (override.reveal !== undefined || override.color !== undefined)) {
+      const points = override.reveal === undefined ? node.points : revealPoints(node.points, override.reveal)
+      drawStroke(context, { ...node, points, color: override.color ?? node.color }, minWidth, override.opacity ?? 1, whole)
+    } else drawStroke(context, node, minWidth, override?.opacity ?? 1, whole)
+  }
   context.restore()
+}
+
+/**
+ * A shape in its local coordinates: the fill, then its strokes as committed ink (their points
+ * never change, so their paths are kept). A scene's reveal does not draw a shape in part: it
+ * shows whole once it shows at all.
+ */
+function drawShape(context: InkContext, node: ShapeNode, minWidth: number, alpha: number, color?: string): void {
+  if (alpha <= 0) return
+  const look = shapeLook(node)
+  if (look.fill) {
+    look.fillPath ??= polygonPath(look.fill)
+    context.globalAlpha = (node.fill === 'light' ? LIGHT_FILL_ALPHA : 1) * Math.min(1, alpha)
+    context.fillStyle = color ?? node.color
+    context.fill(look.fillPath)
+    context.globalAlpha = 1
+  }
+  for (const stroke of look.strokes) drawStroke(context, color ? { ...stroke, color } : stroke, minWidth, alpha, stroke.points)
+}
+
+function polygonPath(polygon: readonly Point[]): Path2D {
+  const path = new Path2D()
+  polygon.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y)))
+  path.closePath()
+  return path
 }
 
 /**
@@ -278,13 +308,17 @@ function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha
 /** The selection glow colour (the --accent token). */
 const SELECTION_GLOW = '#6e8bff'
 
-/** A soft accent band under a selected stroke, a few screen pixels wider than its ink. */
+/** A soft accent band under a selected stroke or shape, a few screen pixels wider than its ink. */
 function drawGlow(context: CanvasRenderingContext2D, ink: PaintInk, zoom: number): void {
-  const stroke = ink.node
+  const node = ink.node
+  for (const stroke of node.kind === 'shape' ? shapeLook(node).paths : [node]) glowStroke(context, stroke, ink.offset, zoom)
+}
+
+function glowStroke(context: CanvasRenderingContext2D, stroke: InkNode, offset: Point, zoom: number): void {
   const points = stroke.points
   if (!points.length) return
   context.save()
-  context.translate(ink.offset[0], ink.offset[1])
+  context.translate(offset[0], offset[1])
   const maxPressure = Math.max(...points.map((point) => point[2]))
   const inkWidth = stroke.width * (stroke.tool === 'highlighter' ? 1 : pressureWidth(maxPressure))
   context.strokeStyle = SELECTION_GLOW
@@ -503,9 +537,9 @@ export class InkLayers {
   private drawAt(context: InkContext, at: number): boolean {
     const ink = this.order[at]
     const override = this.overrides?.get(ink.node.id)
-    const points = ink.node.points
-    // A one-point stroke has nothing to reveal: it shows whole.
-    if (!points.length || (override?.opacity ?? 1) <= 0 || (points.length > 1 && (override?.reveal ?? 1) <= 0)) return false
+    // A one-point stroke has nothing to reveal: it shows whole. A shape has no part to reveal either.
+    const points = ink.node.kind === 'ink' ? ink.node.points.length : 2
+    if (!points || (override?.opacity ?? 1) <= 0 || (points > 1 && (override?.reveal ?? 1) <= 0)) return false
     drawInk(context, ink, 0, override, true)
     return true
   }
@@ -514,7 +548,7 @@ export class InkLayers {
   private touch(ink: PaintInk): void {
     const place = this.moved.get(ink.node.id)
     if (place) this.tiles.invalidate(place)
-    const bounds = inkBounds(ink.node, ink.offset)
+    const bounds = paintedBounds(ink.node, ink.offset)
     if (bounds) this.tiles.invalidate(bounds)
   }
 
@@ -526,7 +560,7 @@ export class InkLayers {
     const position = new Map(next.map((ink, i) => [ink.node.id, i]))
     /** A stroke's new bounds, and its cells in the grid. */
     const place = (ink: PaintInk, was: Region | null): Region | null => {
-      const bounds = inkBounds(ink.node, ink.offset)
+      const bounds = paintedBounds(ink.node, ink.offset)
       if (was) this.grid.remove(ink.node.id, was)
       if (bounds) this.grid.add(ink.node.id, bounds)
       return bounds
@@ -592,8 +626,8 @@ export class InkLayers {
       this.inks = input.inks
       this.ghosts = input.ghosts
       const all = input.ghosts.length ? [...input.inks, ...input.ghosts] : input.inks
-      this.reorder([...all.filter((ink) => ink.node.tool === 'highlighter'), ...all.filter((ink) => ink.node.tool !== 'highlighter')])
-      this.highlighters = this.order.findIndex((ink) => ink.node.tool !== 'highlighter')
+      this.reorder([...all.filter((ink) => isMarker(ink.node)), ...all.filter((ink) => !isMarker(ink.node))])
+      this.highlighters = this.order.findIndex((ink) => !isMarker(ink.node))
       if (this.highlighters < 0) this.highlighters = this.order.length
       reordered = true
     }
@@ -800,12 +834,12 @@ export function paintItems(
   const strokes = all.filter((ink) => {
     // A moving stroke is drawn wherever it is now: skip only unmoved strokes outside the view.
     if (overrides?.get(ink.node.id)?.matrix) return true
-    const bounds = inkBounds(ink.node, ink.offset)
+    const bounds = paintedBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, visible)
   })
   if (selected.size) for (const ink of strokes) if (selected.has(ink.node.id) && !overrides?.has(ink.node.id)) drawGlow(context, ink, camera.zoom)
-  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
-  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
+  for (const ink of strokes) if (isMarker(ink.node)) drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
+  for (const ink of strokes) if (!isMarker(ink.node)) drawInk(context, ink, 0, overrides?.get(ink.node.id), true)
   drawTips(context, playback?.tips ?? [], camera.zoom)
 }
 
@@ -1001,11 +1035,11 @@ export function renderRegion(
   context.lineJoin = 'round'
   const minWidth = MIN_EXPORT_INK_PX / scale
   const strokes = inks.filter((ink) => {
-    const bounds = inkBounds(ink.node, ink.offset)
+    const bounds = paintedBounds(ink.node, ink.offset)
     return bounds !== null && regionsIntersect(bounds, rect)
   })
-  for (const ink of strokes) if (ink.node.tool === 'highlighter') drawInk(context, ink, minWidth, undefined, true)
-  for (const ink of strokes) if (ink.node.tool !== 'highlighter') drawInk(context, ink, minWidth, undefined, true)
+  for (const ink of strokes) if (isMarker(ink.node)) drawInk(context, ink, minWidth, undefined, true)
+  for (const ink of strokes) if (!isMarker(ink.node)) drawInk(context, ink, minWidth, undefined, true)
 
   // Outlines in image pixels, so they stay thin at any scale.
   context.setTransform(1, 0, 0, 1, 0, 0)

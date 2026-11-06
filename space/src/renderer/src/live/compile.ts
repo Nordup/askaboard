@@ -1,14 +1,15 @@
 import { ownSteps, stepAt } from '@shared/scene-story'
-import { isContent, isFrame, isInk, isKnown, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type SvgNode, type TextNode } from '@shared/board-format'
+import { isContent, isFrame, isInk, isKnown, isPainted, isShape, newItemId, type BoardNode, type ContentNode, type FrameNode, type InkNode, type InkPoint, type LiveNode, type PaintedNode, type ShapeNode, type SvgNode, type TextNode } from '@shared/board-format'
 import { mulberry32, type StageFollows, type SceneBounds, type SceneDescription, type SceneEase, type SceneGroupObject, type SceneHtmlObject, type SceneInkObject, type SceneLiveObject, type SceneObjectDesc, type ScenePartObject, type SceneSample, type SceneShapeObject, type SceneStep, type SceneStyle, type SceneTextObject } from '@shared/live-scene'
 import { joinPath, splitPath, type FrameKind, type MomentsFailure } from '@shared/frames'
 import { MAX_COORD } from '@shared/limits'
 import { flattenPath, parsePath, type PathSegment } from '@shared/path-geometry'
 import { polylineInk } from '@shared/ink-points'
-import { humanize, strokeSeed } from '../agent/ink'
+import { humanize, strokeSeed } from '../board/hand'
 import type { Scene } from '../agent/placement'
 import { ownBox } from '../board/rotation'
 import { inkOffset, isFlowed, normalizeInk, removeNodes, ROOT, withDescendants, zAbove } from '../board/scene'
+import { paintedBounds, shapeLength } from '../board/shapes'
 import type { Point, Region } from '../board/types'
 import { textHtml } from '../board/content'
 import { checkDrafts, draftsToNodes } from '../board/html'
@@ -282,7 +283,7 @@ function refIds(s: Scene, ref: string): string[] {
 }
 
 /** The world offset of an ink node's points. */
-function offsetOf(s: Scene, node: InkNode): Point {
+function offsetOf(s: Scene, node: PaintedNode): Point {
   const box = s.layout.get(node.id)
   return box ? [box.ox, box.oy] : inkOffset(node, s.index.byId, s.layout)
 }
@@ -369,7 +370,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     const ids = refIds(s, object.ref)
     const first = s.index.byId.get(ids[0])
     if (!first || !isKnown(first)) return undefined
-    if (first.kind === 'ink') return first.color
+    if (first.kind === 'ink' || first.kind === 'shape') return first.color
     return first.style.color
   }
   const timeline = new Timeline(desc, nodeColor)
@@ -749,7 +750,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       if (place) {
         const target = currentNode(place.ref)
         // The item it goes into is gone: it draws nothing.
-        if (!target || !isKnown(target) || isInk(target) || removed.has(place.ref)) continue
+        if (!target || !isKnown(target) || isPainted(target) || removed.has(place.ref)) continue
         const replacing = place.mode === 'replace'
         parent = replacing ? (target.parent as string | undefined) : target.id
         const siblings = (s.index.children.get(parent ?? ROOT) ?? []).filter((node) => node.id !== place.ref)
@@ -895,6 +896,28 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
           if (next !== node) changed.set(id, next)
           continue
         }
+        if (isShape(node)) {
+          // A learner's shape paints as ink: the scene moves, fades and recolours it on the ink canvas. On the board it
+          // keeps its size and angle, as content does (inside a moved frame it moves with the frame).
+          const offset = offsetOf(s, node)
+          lengths.push(shapeLength(node))
+          if (isRemoved) {
+            removed.add(id)
+            ghosts.push({ ...node, parent: undefined, x: offset[0], y: offset[1] } as BoardNode)
+            play.targets.push({ nodeId: id, ink: true, inverseBaked: IDENTITY, offset, tipWidth: node.width })
+            continue
+          }
+          const inside = insideMoved(node)
+          const moves = !inside && (Math.abs(translation[0]) > 0.05 || Math.abs(translation[1]) > 0.05)
+          let next: ShapeNode = moves ? { ...node, x: r1(node.x + translation[0]), y: r1(node.y + translation[1]) } : node
+          if (timeline.hasTrack(object.id, 'color')) next = { ...next, color: finalColor(object.id) }
+          const opacity = timeline.number(object.id, 'opacity', END)
+          if (opacity < 0.999) next = { ...next, color: withOpacity(next.color.startsWith('var(') ? drawColor(next.color).hex : next.color, opacity) }
+          if (next !== node) changed.set(id, next)
+          const baked: Matrix = inside ? rigidMove : moves ? [1, 0, 0, 1, translation[0], translation[1]] : IDENTITY
+          play.targets.push({ nodeId: id, ink: true, inverseBaked: invert(baked), offset, tipWidth: node.width })
+          continue
+        }
         const content = node as ContentNode
         const box = s.layout.get(id)
         if (isRemoved) {
@@ -951,6 +974,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
     return (nodesOf.get(object.id) ?? []).map((id) => byId.get(id)).filter((node): node is BoardNode => !!node)
   }
   const boxOf = (node: BoardNode): Region | null => {
+    if (isShape(node)) return paintedBounds(node, [node.x, node.y])
     if (isInk(node)) {
       const box = linesBounds([node.points.map(([x, y]) => [node.x + x, node.y + y] as Point)])
       return { x: box.x - node.width, y: box.y - node.width, width: box.width + node.width * 2, height: box.height + node.width * 2 }
@@ -1045,7 +1069,7 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
       const node = currentNode(id)
       if (!node || !isKnown(node) || removed.has(id)) continue
       let after: BoardNode = node
-      const edit: PlayEdit = { nodeId: id, at: change.at, dur: change.dur, ease: change.ease, ink: isInk(node), before: {}, after: {} }
+      const edit: PlayEdit = { nodeId: id, at: change.at, dur: change.dur, ease: change.ease, ink: isPainted(node), before: {}, after: {} }
       // A text that is not a string, or text for an item that is not text, is ignored.
       if (typeof change.text === 'string' && node.kind === 'text') {
         if (object.kind === 'text') {
@@ -1061,9 +1085,9 @@ export function compileScene(desc: SceneDescription, s: Scene, sceneId: string, 
         }
       }
       if (change.style) {
-        // Styles the board does not take are ignored; ink takes a colour only.
+        // Styles the board does not take are ignored; ink and shapes take a colour only.
         const styles = normalizeStyles(change.style, new Set<string>())
-        if (isInk(node)) {
+        if (isPainted(node)) {
           const color = styles.color ?? styles.backgroundColor
           if (color) {
             const hex = drawColor(color).hex

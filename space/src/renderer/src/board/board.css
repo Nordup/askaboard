@@ -178,6 +178,9 @@
 .board__handle[data-handle='s'] { left: 50%; top: 100%; cursor: ns-resize; }
 .board__handle[data-handle='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
 .board__handle[data-handle='w'] { left: 0; top: 50%; cursor: ew-resize; }
+/* The two ends of an arrow or a line: round, placed on the end by Board.tsx. */
+.board__handle[data-handle='start'],
+.board__handle[data-handle='end'] { border-radius: var(--radius-pill); cursor: move; }
 
 /* The rotate handle of a text: a stem from the middle of the top edge, to a circle above it. Children count from inside the selection's border. */
 .board__handle[data-handle='rotate'] {

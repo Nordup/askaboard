@@ -1,4 +1,4 @@
-import { isInk, isKnown, type BoardDoc } from './board-format'
+import { isInk, isKnown, isShape, type BoardDoc } from './board-format'
 
 /**
  * The learner's new or changed nodes in one save: the body of a learner_edit
@@ -25,9 +25,17 @@ export function learnerEditSince(doc: BoardDoc, since: number): LearnerEditDelta
   for (const node of doc.nodes) {
     if (node.seq < since || !isKnown(node) || node.author !== 'learner') continue
     ids.push(node.id)
+    const half = (isInk(node) || isShape(node) ? node.width : 0) / 2
+    if (isShape(node)) {
+      // Its box (or the line from its start to its end), with half its width: the wobble stays inside that.
+      minX = Math.min(minX, node.x, node.x + node.w) - half
+      minY = Math.min(minY, node.y, node.y + node.h) - half
+      maxX = Math.max(maxX, node.x, node.x + node.w) + half
+      maxY = Math.max(maxY, node.y, node.y + node.h) + half
+      continue
+    }
     if (!isInk(node)) continue
     strokes++
-    const half = node.width / 2
     for (const [px, py] of node.points) {
       const x = node.x + px
       const y = node.y + py
@@ -39,7 +47,7 @@ export function learnerEditSince(doc: BoardDoc, since: number): LearnerEditDelta
   }
   if (!ids.length) return null
   const bounds =
-    strokes && Number.isFinite(minX)
+    Number.isFinite(minX)
       ? { x: Math.round(minX), y: Math.round(minY), width: Math.round(maxX - minX), height: Math.round(maxY - minY) }
       : null
   return { ids, strokes, bounds }

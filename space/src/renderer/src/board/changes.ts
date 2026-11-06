@@ -1,6 +1,6 @@
-import { isInk, type Author, type BoardNode, type Removal, type Revision } from '@shared/board-format'
+import { isInk, isPainted, type Author, type BoardNode, type Removal, type Revision } from '@shared/board-format'
 import type { ItemChange } from '@shared/space-api'
-import { inkBounds } from './geometry'
+import { paintedBounds } from './shapes'
 import type { Region } from './types'
 
 /** A removed node, kept in memory so agents can learn what was erased. */
@@ -142,7 +142,7 @@ export class ChangeLog {
     const at = Date.now()
     for (const { node, seq, bounds, by } of removed) {
       // The Board passes world bounds; a reload from disk does not, so top-level ink falls back to its own position.
-      const fallback = isInk(node) ? inkBounds(node, [node.x, node.y]) : null
+      const fallback = isPainted(node) ? paintedBounds(node, [node.x, node.y]) : null
       this.tombstones.push({ id: node.id, kind: node.kind, bounds: bounds ?? fallback, seq, at, ...(by ? { by } : {}), ...(isInk(node) ? {} : { node }) })
     }
     if (this.tombstones.length > MAX_TOMBSTONES) this.tombstones.splice(0, this.tombstones.length - MAX_TOMBSTONES)

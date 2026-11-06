@@ -238,6 +238,7 @@ to 20 s for that window and its dev hook to load.
 | `eval-state` | Board, zoom, tool, selection and nodes as JSON |
 | `recent <folder>`, `draw … --then-recent <folder>` | The sidebar's recent-folder item; with `draw`, right after the last pen-up |
 | `close`, `close-answer try\|close` | Closes the window, as the red button does; answers the sheet "Couldn't save your board" |
+| `frames <ms>` | Counts the window's display frames for that long (run it beside a `drag`): fps and the longest frame. A window in the background may get fewer frames |
 
 The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
 

@@ -1,5 +1,5 @@
 import { authorOf, clusterByPlace, contextOf, firstWords, isItem, isOrphan, itemTexts, matchText, matchWords, nameOf, num, placeText as place, plural, q, relation, sceneIdOf, shownText, unionRegions, wholeRect } from '@shared/board-digest'
-import { boardName, isFrame, isInk, isKnown, isLive, nodeRotation, savedInkPoints, type Author, type BoardNode, type InkNode } from '@shared/board-format'
+import { boardName, isFrame, isInk, isKnown, isLive, isShape, kindWord, nodeRotation, savedInkPoints, type Author, type BoardNode, type InkNode, type ShapeNode } from '@shared/board-format'
 import type { BoardRect, ChangedItem, InkGroupSummary, RemovedItem } from '@shared/space-api'
 import type { BoardHandle, LiveBoardState } from '../board/Board'
 import { describeChange, type ChangeDescription, type ChangeLog, type Tombstone } from '../board/changes'
@@ -109,7 +109,7 @@ function about(chars: number): string {
 interface Unit {
   /** A node id or an ink group id. */
   id: string
-  /** "ink" for an ink group, else the node kind. */
+  /** "ink" for an ink group, else the node kind (a shape's own word: "rectangle", "arrow"…). */
   kind: string
   author: Author
   scene?: string
@@ -189,7 +189,7 @@ function buildModel(ctx: ReadContext): Model {
         }
       }
     }
-    units.push({ id: node.id, kind: node.kind, author: authorOf(node), ...(scene ? { scene } : {}), ...(name ? { name } : {}), ...(title ? { title } : {}), bounds: state.bounds(node.id), node, parent: key, inside, ...(orphan ? { orphan } : {}), ...(known ? {} : { legacy: true }) })
+    units.push({ id: node.id, kind: kindWord(node), author: authorOf(node), ...(scene ? { scene } : {}), ...(name ? { name } : {}), ...(title ? { title } : {}), bounds: state.bounds(node.id), node, parent: key, inside, ...(orphan ? { orphan } : {}), ...(known ? {} : { legacy: true }) })
   }
   const unitById = new Map(units.map((unit) => [unit.id, unit]))
 
@@ -299,7 +299,17 @@ function holds(m: Model, unit: Unit): string {
     const length = String((node as { markup?: unknown }).markup ?? '').length
     return [words ? `“${words}”` : '', length >= 5000 ? `markup ${num(length)} characters` : ''].filter(Boolean).join(' · ')
   }
+  if (isShape(node)) return shapeHolds(node)
   return ''
+}
+
+/** A learner's shape in a few words: how it is drawn, beyond a plain outline; an arrow's head says which way it points. */
+function shapeHolds(node: ShapeNode): string {
+  const parts: string[] = []
+  if ((node.shape === 'rect' || node.shape === 'ellipse') && node.fill !== 'none') parts.push(`${node.fill} fill`)
+  if (node.line !== 'solid') parts.push(node.line)
+  if (node.shape === 'arrow') parts.push(node.heads === 'both' ? 'heads at both ends' : node.heads === 'none' ? 'no heads' : `head at ${Math.round(node.x + node.w)},${Math.round(node.y + node.h)}`)
+  return parts.join(', ')
 }
 
 /** One outline line: kind "name" id · place · what it holds · references. */
@@ -630,7 +640,7 @@ function resolveName(m: Model, text: string, tool: string): Resolved {
   const node = m.byId.get(text)
   if (node || m.groupById.has(text)) {
     const unit = m.unitById.get(text)
-    options.push({ form: { kind: 'ids', ids: [text] }, arg: `{id: ${q(text)}}`, what: unit ? unitLine(m, unit) : node ? `${node.kind} ${text}` : `ink ${text}` })
+    options.push({ form: { kind: 'ids', ids: [text] }, arg: `{id: ${q(text)}}`, what: unit ? unitLine(m, unit) : node ? `${kindWord(node)} ${text}` : `ink ${text}` })
   }
   for (const info of m.scenes.values()) {
     if (info.name === text || info.id === text) options.push({ form: { kind: 'scene', info }, arg: `{scene: ${q(info.id === text ? info.id : text)}}`, what: sceneLine(info) })
@@ -643,7 +653,7 @@ function resolveName(m: Model, text: string, tool: string): Resolved {
   // Named nodes inside units (an html() root's named parts).
   for (const candidate of m.state.nodes) {
     if (m.unitById.has(candidate.id) || isInk(candidate)) continue
-    if (nameOf(candidate)?.toLowerCase() === lower) options.push({ form: { kind: 'ids', ids: [candidate.id] }, arg: `{id: ${q(candidate.id)}}`, what: `${candidate.kind} ${q(nameOf(candidate) as string)} ${candidate.id} · ${place(m.state.bounds(candidate.id))}` })
+    if (nameOf(candidate)?.toLowerCase() === lower) options.push({ form: { kind: 'ids', ids: [candidate.id] }, arg: `{id: ${q(candidate.id)}}`, what: `${kindWord(candidate)} ${q(nameOf(candidate) as string)} ${candidate.id} · ${place(m.state.bounds(candidate.id))}` })
   }
   if (options.length === 1) return options[0].form
   if (!options.length) throw new Error(`No item, ink group or scene has the id or name ${q(text)}. ${knownScenes(m)} list_items() lists the board; list_items({query: ${q(text)}}) searches the text.`)
@@ -681,8 +691,8 @@ function treeLines(m: Model, nodeId: string, depth: number, indent: string, line
 function childLine(m: Model, node: BoardNode): string {
   const unit = m.unitById.get(node.id)
   if (unit) return unitLine(m, unit, { scene: true, author: true }).replace(/ · inside [^·]+$/, '')
-  const parts = [`${node.kind}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id}`, place(m.state.bounds(node.id))]
-  const pseudo: Unit = { id: node.id, kind: node.kind, author: authorOf(node), bounds: null, node, parent: ROOT, inside: isFrame(node) ? withDescendants([node.id], m.index).size - 1 : 0 }
+  const parts = [`${kindWord(node)}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id}`, place(m.state.bounds(node.id))]
+  const pseudo: Unit = { id: node.id, kind: kindWord(node), author: authorOf(node), bounds: null, node, parent: ROOT, inside: isFrame(node) ? withDescendants([node.id], m.index).size - 1 : 0 }
   const what = holds(m, pseudo)
   if (what) parts.push(what)
   if (isKnown(node) && isFrame(node) && node.style.display === 'flex') parts.push(`flex ${node.style.flexDirection ?? 'row'}`)
@@ -801,7 +811,7 @@ function findText(m: Model, query: string, rect: Region | null, explicit: boolea
     if (isInk(node)) continue
     const bounds = m.state.bounds(node.id)
     if (rect && !intersects(bounds, rect)) continue
-    const label = `${node.kind}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id}`
+    const label = `${kindWord(node)}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id}`
     const key = parentKey(node, m.byId)
     const inside = key !== ROOT ? ` · inside ${frameLabel(m, key)}` : ''
     const scene = sceneIdOf(node)
@@ -1008,7 +1018,7 @@ function oneItem(m: Model, key: string, as: ItemAs, includeIds: boolean): unknow
       if (!strokes.length) throw new Error(`"${id}" is not ink: as "points" is for ink groups and strokes.`)
       return strokes.map((stroke) => pointsEntry(m, stroke))
     case 'svg':
-      if (!node || node.kind !== 'svg') throw new Error(`"${id}" is ${node ? `a ${node.kind}` : 'an ink group'}, not an SVG item: as "svg" is for svg items.`)
+      if (!node || node.kind !== 'svg') throw new Error(`"${id}" is ${node ? `a ${kindWord(node)}` : 'an ink group'}, not an SVG item: as "svg" is for svg items.`)
       return String((node as { markup?: unknown }).markup ?? '')
     case 'source':
       if (!node || !isLive(node)) throw new Error(`"${id}" is not a world: as "source" is for worlds.`)
@@ -1125,8 +1135,8 @@ function changedItem(state: LiveBoardState, entry: IntervalChange): ChangedItem 
   const node = entry.node
   return {
     id: node.id,
-    kind: node.kind,
-    ...(isInk(node) ? { tool: node.tool, color: node.color } : {}),
+    kind: kindWord(node),
+    ...(isInk(node) ? { tool: node.tool, color: node.color } : isShape(node) ? { color: node.color } : {}),
     ...(typeof node.name === 'string' ? { name: node.name } : {}),
     ...(entry.by ? { by: entry.by } : {}),
     change: entry.change.change,
@@ -1140,7 +1150,7 @@ function changedItem(state: LiveBoardState, entry: IntervalChange): ChangedItem 
 function removedItem(tombstone: Tombstone & { back: boolean }): RemovedItem & { back_now?: boolean } {
   return {
     id: tombstone.id,
-    kind: tombstone.kind,
+    kind: tombstone.node ? kindWord(tombstone.node) : tombstone.kind,
     ...(typeof tombstone.node?.name === 'string' ? { name: tombstone.node.name } : {}),
     ...(tombstone.by ? { by: tombstone.by } : {}),
     bounds: boardRect(tombstone.bounds),
@@ -1173,7 +1183,7 @@ const CHANGE_WORDS: Record<string, string> = { added: 'new', restored: 'back (un
 function itemWords(m: Model, entry: IntervalChange, all: boolean): string {
   const node = entry.node
   const unit = m.unitById.get(node.id)
-  const label = unit ? unitLine(m, unit) : `${node.kind}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id} · ${place(m.state.bounds(node.id))}`
+  const label = unit ? unitLine(m, unit) : `${kindWord(node)}${nameOf(node) ? ` ${q(nameOf(node) as string)}` : ''} ${node.id} · ${place(m.state.bounds(node.id))}`
   const what = all ? 'on the board' : CHANGE_WORDS[entry.change.change] ?? entry.change.change
   const offset = entry.change.offset ? ` by ${entry.change.offset.dx},${entry.change.offset.dy}` : ''
   return `${label} · ${what}${offset}${entry.after ? ' (changed again after the interval)' : ''}`
@@ -1227,7 +1237,7 @@ function actorLines(m: Model, entries: IntervalChange[], removed: Array<Tombston
     const scene = actor === 'agent' ? sceneIdOf(entry.node) : undefined
     if (scene) {
       const slot = tally(scene, all ? 'on the board' : CHANGE_WORDS[entry.change.change] ?? entry.change.change)
-      slot.kinds.set(entry.node.kind, (slot.kinds.get(entry.node.kind) ?? 0) + 1)
+      slot.kinds.set(kindWord(entry.node), (slot.kinds.get(kindWord(entry.node)) ?? 0) + 1)
     } else loose.push(entry)
   }
   for (const [scene, words] of scenes) {
@@ -1242,7 +1252,7 @@ function actorLines(m: Model, entries: IntervalChange[], removed: Array<Tombston
   if (loose.length > SUMMARY_AT) {
     const counts = new Map<string, number>()
     for (const entry of loose) {
-      const word = `${entry.node.kind} ${all ? 'on the board' : CHANGE_WORDS[entry.change.change] ?? entry.change.change}`
+      const word = `${kindWord(entry.node)} ${all ? 'on the board' : CHANGE_WORDS[entry.change.change] ?? entry.change.change}`
       counts.set(word, (counts.get(word) ?? 0) + 1)
     }
     lines.push(`  other items: ${[...counts].map(([word, count]) => `${num(count)} ${word}`).join(', ')} (each one: detail "items")`)
@@ -1259,8 +1269,9 @@ function actorLines(m: Model, entries: IntervalChange[], removed: Array<Tombston
     const parent = tombstone.node && isKnown(tombstone.node) ? (tombstone.node as { parent?: string }).parent : undefined
     return !parent || !goneIds.has(parent)
   })
-  if (top.length > SUMMARY_AT) lines.push(`  removed: ${kindCounts(top.map((tombstone) => ({ id: tombstone.id, kind: tombstone.kind, author: actor, bounds: null, parent: ROOT, inside: 0 })))} (each one: detail "items")`)
-  else for (const tombstone of top) lines.push(`  ${tombstone.kind}${tombstone.node && nameOf(tombstone.node) ? ` ${q(nameOf(tombstone.node) as string)}` : ''} ${tombstone.id} · removed from ${place(tombstone.bounds)}${tombstone.back ? ' (back on the board now)' : ''}`)
+  const word = (tombstone: Tombstone): string => (tombstone.node ? kindWord(tombstone.node) : tombstone.kind)
+  if (top.length > SUMMARY_AT) lines.push(`  removed: ${kindCounts(top.map((tombstone) => ({ id: tombstone.id, kind: word(tombstone), author: actor, bounds: null, parent: ROOT, inside: 0 })))} (each one: detail "items")`)
+  else for (const tombstone of top) lines.push(`  ${word(tombstone)}${tombstone.node && nameOf(tombstone.node) ? ` ${q(nameOf(tombstone.node) as string)}` : ''} ${tombstone.id} · removed from ${place(tombstone.bounds)}${tombstone.back ? ' (back on the board now)' : ''}`)
   return lines
 }
 

@@ -150,9 +150,10 @@
   --tool-size: 34px; /* a tool button (17 px icon) */
   --swatch-size: 26px; /* a colour swatch's hit area */
   --swatch-dot: 16px; /* the colour dot inside it */
-  --option-size: 28px; /* a style option (width, pen or marker; later size, font, align) */
+  --option-size: 28px; /* a style option (width, pen or marker, fill, line, heads, size, font, align) */
   --option-text-pad: 9px; /* the side padding of a text option (S, M, L, XL) */
-  --option-bar-width: 14px; /* the bar of a width option */
+  --option-bar-width: 14px; /* the bar of a width or line option */
+  --option-fill-size: 12px; /* the square of a fill option (none, light, solid) */
   --pill-divider-height: 22px; /* the line between groups in a pill */
   --zoom-label-min: 52px; /* the zoom pill's % label */
   /* A toast shows above the tool pill and the style pill */

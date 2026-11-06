@@ -187,7 +187,9 @@ px round button, 17 px lucide icon, stroke 1.75; pressed: `--accent-soft`
 and `--accent`; `.tool--quiet` is `--text-tertiary`), `.pill-bar__divider`
 (1 × 22 px), `.swatch` with `.swatch__dot`, `.option` (28 px, round;
 pressed: `--bg-active`, `--text-primary`; `.option--text` for a word,
-`.option__bar` for a width) and `.zoom-label`.
+`.option__bar` for a width, `.option__fill` for a fill (a 12 px square:
+outline, light tint, solid), `.option__line` for a line style (a bar:
+solid, dashed, dotted)) and `.zoom-label`.
 
 - Zoom pill (− % +) at the bottom left, the undo pill (undo, redo) 8 px
   after it, the tool pill (keep-tool lock, divider, the tools of
@@ -195,12 +197,18 @@ pressed: `--bg-active`, `--text-primary`; `.option--text` for a word,
   with a 12 px gap and margin, so on a narrow canvas the tool pill moves
   right and stays 12 px after the undo pill.
 - The style pill shows for a tool with style fields, or for a selection
-  with the Select tool (`board/style.ts`): colours, width, pen or marker,
-  text size (S M L XL, `.option--text`), font (Hand, Plain, Code,
-  `.option--text`), align (three icons), with dividers between groups. For a
-  selection it ends with Duplicate, Delete (only when an item may change)
-  and More. It sits 8 px above the tool pill, centred on it, and shifts to
-  stay 12 px inside the canvas.
+  with the Select tool (`board/style.ts`): colours, fill, width, line,
+  arrowheads (one, two, none: icons), pen or marker, text size (S M L XL,
+  `.option--text`), font (Hand, Plain, Code, `.option--text`), align (three
+  icons), with dividers between groups. Rectangle and ellipse: colour,
+  fill, width, line; arrow: colour, width, line, heads; line: colour,
+  width, line. For a selection it ends with Duplicate, Delete (only when an
+  item may change) and More; when the whole pill would be wider than the
+  canvas less 24 px, it shows More alone. It sits 8 px above the tool pill,
+  centred on it, and shifts to stay 12 px inside the canvas.
+- Shapes (B71) are drawn on the board as ink: a light fill is the colour at
+  0.18 alpha. A selected arrow or line has two round end handles in place
+  of the box handles.
 - The board menu (`BoardMenu.tsx`, the shared `Menu`): one command list
   (`board/commands.ts`) feeds the right-click menu (at the pointer) and the
   More menu (8 px above the style pill). Rows have key hints; a command

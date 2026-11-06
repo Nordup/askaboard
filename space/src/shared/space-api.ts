@@ -238,7 +238,8 @@ export interface NewsGroup {
  * resized (per ink group).
  */
 export interface NewsItem {
-  change: ItemChange | 'deleted'
+  /** 'drawn' and 'erased' are a learner's shapes, which the news tells as it tells strokes. */
+  change: ItemChange | 'deleted' | 'drawn' | 'erased'
   /** The item in words: 'your image "Fig 2A"', 'ink group g3', '2 strokes of ink group g3'. */
   label: string
   /** Its bounds now (for a deletion: when it was removed). */

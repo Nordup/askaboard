@@ -1,9 +1,10 @@
 import { copiedLinks } from '@shared/world-links'
-import { isContent, isFrame, isInk, isInkHost, isKnown, newItemId, parentKey, ROOT, type NodeStyle } from '@shared/board-format'
-import { inkBounds, inkLocalBounds, regionContains, strokeHitByCircle } from './geometry'
+import { isContent, isFrame, isInkHost, isKnown, isPainted, newItemId, parentKey, ROOT, type NodeStyle } from '@shared/board-format'
+import { inkLocalBounds, regionContains } from './geometry'
 import type { NodeOverride } from './playback'
 import { placedBox } from './rotation'
-import type { BoardNode, ContentNode, InkNode, LayoutBox, Point, Region } from './types'
+import { isMarker, paintedBounds, paintedHitByCircle } from './shapes'
+import type { BoardNode, ContentNode, InkNode, LayoutBox, PaintedNode, Point, Region } from './types'
 
 /**
  * The node tree: parent/child index, draw order, the layout cache and the
@@ -93,15 +94,15 @@ export function isFlowed(node: BoardNode, byId: ReadonlyMap<string, BoardNode>):
 }
 
 /**
- * The index without ink, for the content layer: `last` itself when the content is the same.
- * So an edit of ink renders no content.
+ * The index without ink and shapes, for the content layer: `last` itself when the content is the same.
+ * So an edit of ink or of a shape renders no content.
  */
 export function contentOnly(index: SceneIndex, last: SceneIndex | null): SceneIndex {
   const byId = new Map<string, BoardNode>()
-  for (const [id, node] of index.byId) if (!isInk(node)) byId.set(id, node)
+  for (const [id, node] of index.byId) if (!isPainted(node)) byId.set(id, node)
   const children = new Map<string, BoardNode[]>()
   for (const [key, list] of index.children) {
-    const kept = list.filter((node) => !isInk(node))
+    const kept = list.filter((node) => !isPainted(node))
     if (kept.length) children.set(key, kept)
   }
   const same =
@@ -130,12 +131,12 @@ export function contentPaintOrder(index: SceneIndex): ContentNode[] {
   return out
 }
 
-/** Ink nodes in draw order: top-level ink by z, then each frame's ink (frames in paint order). */
-export function inkPaintOrder(index: SceneIndex): InkNode[] {
-  const out: InkNode[] = []
+/** Ink and shapes in draw order: top-level ones by z, then each frame's (frames in paint order). */
+export function paintOrder(index: SceneIndex): PaintedNode[] {
+  const out: PaintedNode[] = []
   const walk = (key: string): void => {
     const list = index.children.get(key) ?? []
-    for (const node of list) if (isInk(node)) out.push(node)
+    for (const node of list) if (isPainted(node)) out.push(node)
     for (const node of list) if (isInkHost(node)) walk(node.id)
   }
   walk(ROOT)
@@ -153,8 +154,8 @@ export function zAbove(siblings: readonly BoardNode[]): number {
 
 export type LayoutMap = Map<string, LayoutBox>
 
-/** The world position of an ink node's local 0,0. */
-export function inkOffset(node: InkNode, byId: ReadonlyMap<string, BoardNode>, layout: ReadonlyMap<string, LayoutBox>): Point {
+/** The world position of an ink node's or a shape's local 0,0. */
+export function inkOffset(node: PaintedNode, byId: ReadonlyMap<string, BoardNode>, layout: ReadonlyMap<string, LayoutBox>): Point {
   const key = parentKey(node, byId)
   if (key === ROOT) return [node.x, node.y]
   const parent = layout.get(key)
@@ -172,12 +173,12 @@ export function inkOffset(node: InkNode, byId: ReadonlyMap<string, BoardNode>, l
   return [x, y]
 }
 
-/** Add every ink node's world bounds to the layout map (content entries come from the DOM). */
+/** Add the world bounds of every ink node and shape to the layout map (content entries come from the DOM). */
 export function addInkLayout(index: SceneIndex, layout: LayoutMap): void {
   for (const node of index.byId.values()) {
-    if (!isInk(node)) continue
+    if (!isPainted(node)) continue
     const offset = inkOffset(node, index.byId, layout)
-    const bounds = inkBounds(node, offset)
+    const bounds = paintedBounds(node, offset)
     if (bounds) layout.set(node.id, { ...bounds, ox: offset[0], oy: offset[1] })
     else layout.delete(node.id)
   }
@@ -204,19 +205,19 @@ export function shownNow(node: BoardNode, byId: ReadonlyMap<string, BoardNode>, 
     return !!override && ((override.opacity !== undefined && override.opacity <= 0) || (override.reveal !== undefined && override.reveal <= 0))
   }
   if (hidden(node.id)) return false
-  return isInk(node) || !ancestorIds(node, byId).some(hidden)
+  return isPainted(node) || !ancestorIds(node, byId).some(hidden)
 }
 
-/** The top-most ink under a point that shows now: pen above highlighter, later above earlier. */
-export function inkAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point, radius: number, shown: Shown): InkNode | null {
-  const strokes = inkPaintOrder(index)
-  for (const tool of ['pen', 'highlighter'] as const) {
-    for (let i = strokes.length - 1; i >= 0; i--) {
-      const stroke = strokes[i]
-      if (stroke.tool !== tool || !shown(stroke)) continue
-      const box = layout.get(stroke.id)
-      const offset: Point = box ? [box.ox, box.oy] : inkOffset(stroke, index.byId, layout)
-      if (strokeHitByCircle(stroke, offset, point, radius)) return stroke
+/** The top-most ink or shape under a point that shows now: pen ink and shapes above markers, later above earlier. */
+export function inkAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutBox>, point: Point, radius: number, shown: Shown): PaintedNode | null {
+  const order = paintOrder(index)
+  for (const marker of [false, true]) {
+    for (let i = order.length - 1; i >= 0; i--) {
+      const node = order[i]
+      if (isMarker(node) !== marker || !shown(node)) continue
+      const box = layout.get(node.id)
+      const offset: Point = box ? [box.ox, box.oy] : inkOffset(node, index.byId, layout)
+      if (paintedHitByCircle(node, offset, point, radius)) return node
     }
   }
   return null
@@ -240,7 +241,7 @@ export function contentAt(index: SceneIndex, layout: ReadonlyMap<string, LayoutB
  * the scope is not an ancestor of the hit, the top-level node.
  */
 export function selectTarget(hit: BoardNode, scope: string, byId: ReadonlyMap<string, BoardNode>): BoardNode {
-  if (isInk(hit)) return hit
+  if (isPainted(hit)) return hit
   const chain = [hit.id, ...ancestorIds(hit, byId)] // nearest first
   if (scope !== ROOT) {
     const at = chain.indexOf(scope)
@@ -391,7 +392,7 @@ export function copySubtrees(
     if (isRoot && options.detach && isKnown(node)) {
       delete copy.parent
       const box = layout.get(id)
-      if (isInk(node)) {
+      if (isPainted(node)) {
         const offset = box ? [box.ox, box.oy] : [node.x, node.y]
         ;(copy as InkNode).x = offset[0]
         ;(copy as InkNode).y = offset[1]

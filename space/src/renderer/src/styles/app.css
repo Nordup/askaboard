@@ -954,6 +954,32 @@ button:focus-visible {
   background: currentColor;
 }
 
+/* A shape's fill: a small square in outline, at a light tint, or solid (tools.ts FILLS). */
+.option__fill {
+  width: var(--option-fill-size);
+  height: var(--option-fill-size);
+  border: 1.5px solid currentColor;
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+
+.option__fill[data-fill='light'] {
+  background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.option__fill[data-fill='solid'] {
+  background: currentColor;
+}
+
+/* A shape's line: a bar in its pattern (tools.ts LINE_STYLES). */
+.option__line {
+  width: var(--option-bar-width);
+  height: 4px;
+  overflow: visible;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 /* ---------- Welcome card ---------- */
 
 .overlay-center {

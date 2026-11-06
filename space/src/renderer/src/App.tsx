@@ -1278,6 +1278,7 @@ export function App() {
                 tool={tools.tool}
                 style={tools.style}
                 selectMode={tools.selectMode}
+                lock={tools.lock}
                 onDocChange={onDocChange}
                 onCameraChange={onCameraChange}
                 onToolChange={(tool) => setTools((current) => ({ ...current, tool }))}

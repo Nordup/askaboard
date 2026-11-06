@@ -1,8 +1,8 @@
 /**
  * The board file format: `*.board.json` in the learning folder.
  *
- * Version 2: the board is one document of nodes (ink, frame, text, svg,
- * image, live). The file must stay small in Git diffs, so the serializer writes one
+ * Version 2: the board is one document of nodes (ink, shape, frame, text,
+ * svg, image, live). The file must stay small in Git diffs, so the serializer writes one
  * node per line, rounds coordinates to 1 decimal and pressure to 2 decimals,
  * and keeps a fixed key order. Board coordinates are logical points, origin at
  * the centre, +y down. The camera is NOT stored here (see state.json).
@@ -155,6 +155,40 @@ export interface InkNode extends NodeBase {
   points: InkPoint[]
 }
 
+export type ShapeKind = 'rect' | 'ellipse' | 'arrow' | 'line'
+export type ShapeFill = 'none' | 'light' | 'solid'
+export type ShapeLine = 'solid' | 'dashed' | 'dotted'
+export type ShapeHeads = 'end' | 'both' | 'none'
+
+export const SHAPE_KINDS: readonly ShapeKind[] = ['rect', 'ellipse', 'arrow', 'line']
+const SHAPE_FILLS: readonly ShapeFill[] = ['none', 'light', 'solid']
+const SHAPE_LINES: readonly ShapeLine[] = ['solid', 'dashed', 'dotted']
+const SHAPE_HEADS: readonly ShapeHeads[] = ['end', 'both', 'none']
+
+/**
+ * A shape the learner drew with a shape tool (decision B71): it keeps its kind and its style, so it
+ * stays editable, and the board paints it as ink strokes (renderer board/shapes.ts) made from these
+ * fields and `seed`, so the same shape looks the same each time.
+ * Rect and ellipse: x, y is the top-left of the box and w, h its size (not negative).
+ * Arrow and line: x, y is the start and w, h the vector to the end (either may be negative).
+ * `fill` counts for rect and ellipse, `heads` for an arrow; the other kinds keep them unused.
+ * Like ink, a shape paints on the ink canvas and can belong to a frame or a world (parentKey).
+ */
+export interface ShapeNode extends NodeBase {
+  kind: 'shape'
+  shape: ShapeKind
+  w: number
+  h: number
+  color: string
+  /** Nominal stroke width in board points, as ink's. */
+  width: number
+  fill: ShapeFill
+  line: ShapeLine
+  heads: ShapeHeads
+  /** The seed of the hand-drawn wobble (a 32-bit unsigned integer). */
+  seed: number
+}
+
 /**
  * A box. Children: with `display: flex` the browser lays them out (their x, y
  * are ignored); otherwise each child is absolutely placed at its x, y.
@@ -252,8 +286,10 @@ export interface ForeignNode {
   [key: string]: unknown
 }
 
-export type KnownNode = InkNode | FrameNode | TextNode | SvgNode | ImageNode | LiveNode
+export type KnownNode = InkNode | ShapeNode | FrameNode | TextNode | SvgNode | ImageNode | LiveNode
 export type ContentNode = FrameNode | TextNode | SvgNode | ImageNode | LiveNode
+/** The kinds the ink canvas paints: ink strokes and shapes. Every other known kind is content (DOM). */
+export type PaintedNode = InkNode | ShapeNode
 export type BoardNode = KnownNode | ForeignNode
 
 export interface BoardDoc {
@@ -314,6 +350,18 @@ function validKnown(node: BoardNode): boolean {
         Array.isArray(raw.points) &&
         raw.points.every((point) => Array.isArray(point) && finite(point[0]) && finite(point[1]) && finite(point[2]))
       )
+    case 'shape':
+      return (
+        SHAPE_KINDS.includes(raw.shape as ShapeKind) &&
+        finite(raw.w) &&
+        finite(raw.h) &&
+        typeof raw.color === 'string' &&
+        finite(raw.width) &&
+        SHAPE_FILLS.includes(raw.fill as ShapeFill) &&
+        SHAPE_LINES.includes(raw.line as ShapeLine) &&
+        SHAPE_HEADS.includes(raw.heads as ShapeHeads) &&
+        finite(raw.seed)
+      )
     case 'frame':
       return validStyle(raw.style)
     case 'text':
@@ -352,8 +400,17 @@ export function isInk(node: BoardNode): node is InkNode {
   return node.kind === 'ink' && isKnown(node)
 }
 
+export function isShape(node: BoardNode): node is ShapeNode {
+  return node.kind === 'shape' && isKnown(node)
+}
+
+/** Ink or a shape: the ink canvas paints it, and it has no DOM element. */
+export function isPainted(node: BoardNode): node is PaintedNode {
+  return (node.kind === 'ink' || node.kind === 'shape') && isKnown(node)
+}
+
 export function isContent(node: BoardNode): node is ContentNode {
-  return node.kind !== 'ink' && isKnown(node)
+  return node.kind !== 'ink' && node.kind !== 'shape' && isKnown(node)
 }
 
 export function isFrame(node: BoardNode): node is FrameNode {
@@ -369,7 +426,7 @@ export function isLive(node: BoardNode): node is LiveNode {
   return node.kind === 'live' && isKnown(node)
 }
 
-/** A node that ink can belong to (decision B7): a frame or a world. */
+/** A node that ink and shapes can belong to (decision B7): a frame or a world. */
 export function isInkHost(node: BoardNode): node is FrameNode | LiveNode {
   return (node.kind === 'frame' || node.kind === 'live') && isKnown(node)
 }
@@ -377,11 +434,19 @@ export function isInkHost(node: BoardNode): node is FrameNode | LiveNode {
 /** Map key for top-level nodes. */
 export const ROOT = ''
 
-/** The parent key of a node: its parent when that is a frame on the board (or a live item, for ink), else ROOT. */
+/** The parent key of a node: its parent when that is a frame on the board (or a live item, for ink and shapes), else ROOT. */
 export function parentKey(node: BoardNode, byId: ReadonlyMap<string, BoardNode>): string {
   const parent = typeof node.parent === 'string' ? byId.get(node.parent) : undefined
   if (!parent || parent.id === node.id) return ROOT
-  return isFrame(parent) || (isInkHost(parent) && node.kind === 'ink') ? parent.id : ROOT
+  return isFrame(parent) || (isInkHost(parent) && (node.kind === 'ink' || node.kind === 'shape')) ? parent.id : ROOT
+}
+
+/** A shape's kind in words, for agents and people: "rectangle", "ellipse", "arrow", "line". */
+export const SHAPE_WORDS: Record<ShapeKind, string> = { rect: 'rectangle', ellipse: 'ellipse', arrow: 'arrow', line: 'line' }
+
+/** The word for a node's kind in what agents read: its kind, or for a shape the shape's own word. */
+export function kindWord(node: BoardNode): string {
+  return isShape(node) ? SHAPE_WORDS[node.shape] : node.kind
 }
 
 export function emptyBoard(): BoardDoc {
@@ -454,6 +519,7 @@ const round = (value: number, digits: number): number => {
 const COMMON_KEYS = ['id', 'kind', 'name', 'parent', 'x', 'y', 'z', 'author', 'seq', 'locked'] as const
 const KIND_KEYS: Record<string, readonly string[]> = {
   ink: ['tool', 'color', 'width'],
+  shape: ['shape', 'w', 'h', 'color', 'width', 'fill', 'line', 'heads', 'seed'],
   frame: ['hug', 'style'],
   text: ['text', 'rotation', 'style'],
   svg: ['style', 'markup'],

@@ -4,7 +4,7 @@ import type { SnapshotMark, SnapshotOverlays, SnapshotRequest } from '@shared/sp
 import { ContentLayer, measureContent, type ContentContext } from '../board/content'
 import { paintItems } from '../board/paint'
 import { applyElementOverride, type NodeOverride, type PlaybackTip } from '../board/playback'
-import { addInkLayout, buildIndex, inkOffset, inkPaintOrder, type SceneIndex } from '../board/scene'
+import { addInkLayout, buildIndex, inkOffset, paintOrder, type SceneIndex } from '../board/scene'
 import type { LayoutBox } from '../board/types'
 import '../board/board.css'
 import './snapshot.css'
@@ -261,7 +261,7 @@ function SnapshotFrame({ req, cell, onDone }: { req: SnapshotRequest; cell: Cell
         applyElementOverride(element, override, [box.x, box.y], nodeOpacity(cell.index.byId.get(id) as { style?: { opacity?: unknown } } | undefined))
       }
       await showWorlds(worldsRef.current, root, cell.index, layout, overrides)
-      const inks = inkPaintOrder(cell.index).map((node) => {
+      const inks = paintOrder(cell.index).map((node) => {
         const box = layout.get(node.id)
         return { node, offset: (box ? [box.ox, box.oy] : inkOffset(node, cell.index.byId, layout)) as [number, number] }
       })

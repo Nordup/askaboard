@@ -4,24 +4,28 @@
  * style pill reads items through styleOf and changes them through restyle.
  */
 
-import { isKnown, type NodeStyle } from '@shared/board-format'
+import { isKnown, type NodeStyle, type ShapeKind } from '@shared/board-format'
 import { FONTS, MARKER_SCALE, TEXT_ALIGNS, TEXT_SIZES, type DrawStyle, type StyleField } from '../tools'
 import type { BoardNode } from './types'
 
 /** A part of DrawStyle: what one press in the style pill changes. */
 export type StylePatch = Partial<DrawStyle>
 
-/** The item kinds that take a style. */
-export type StyleKind = 'ink' | 'text' | 'frame'
+/** The item kinds that take a style. A shape counts by its own kind: an arrow has heads, a rectangle a fill. */
+export type StyleKind = 'ink' | 'text' | 'frame' | ShapeKind
 
 const KIND_FIELDS: Record<StyleKind, readonly StyleField[]> = {
   ink: ['color', 'width'],
   text: ['color', 'size', 'font', 'align'],
-  frame: ['color']
+  frame: ['color'],
+  rect: ['color', 'fill', 'width', 'line'],
+  ellipse: ['color', 'fill', 'width', 'line'],
+  arrow: ['color', 'width', 'line', 'heads'],
+  line: ['color', 'width', 'line']
 }
 
-/** The order of the style pill's groups. */
-const FIELD_ORDER: readonly StyleField[] = ['color', 'width', 'pen', 'size', 'font', 'align']
+/** The order of the style pill's groups (each tool's own list in tools.ts follows it). */
+const FIELD_ORDER: readonly StyleField[] = ['color', 'fill', 'width', 'line', 'heads', 'pen', 'size', 'font', 'align']
 
 /** The fields that items of these kinds use, in the style pill's order. */
 export function styleFields(kinds: readonly StyleKind[]): StyleField[] {
@@ -31,6 +35,7 @@ export function styleFields(kinds: readonly StyleKind[]): StyleField[] {
 /** The style kind of an item the learner may restyle, or null (locked, foreign, or a kind with no style). */
 export function styleKind(node: BoardNode): StyleKind | null {
   if (!isKnown(node) || node.locked) return null
+  if (node.kind === 'shape') return node.shape
   return node.kind === 'ink' || node.kind === 'text' || node.kind === 'frame' ? node.kind : null
 }
 
@@ -60,6 +65,16 @@ export function styleOf(node: BoardNode): StylePatch {
     const color = node.style.backgroundColor
     return typeof color === 'string' ? { color } : {}
   }
+  if (node.kind === 'shape') {
+    const fields = KIND_FIELDS[node.shape]
+    return {
+      color: node.color,
+      width: r2(node.width),
+      line: node.line,
+      ...(fields.includes('fill') ? { fill: node.fill } : {}),
+      ...(fields.includes('heads') ? { heads: node.heads } : {})
+    }
+  }
   return {}
 }
 
@@ -85,6 +100,17 @@ export function restyle(node: BoardNode, patch: StylePatch): BoardNode {
     }
     const same = Object.entries(next).every(([key, value]) => node.style[key] === value)
     return same ? node : { ...node, style: { ...node.style, ...next } }
+  }
+  if (node.kind === 'shape') {
+    const next = {
+      color: color ?? node.color,
+      width: patch.width ?? node.width,
+      line: patch.line ?? node.line,
+      fill: fields.includes('fill') ? (patch.fill ?? node.fill) : node.fill,
+      heads: fields.includes('heads') ? (patch.heads ?? node.heads) : node.heads
+    }
+    const same = next.color === node.color && next.width === node.width && next.line === node.line && next.fill === node.fill && next.heads === node.heads
+    return same ? node : { ...node, ...next }
   }
   if (color === undefined) return node
   if (node.kind === 'frame') {

@@ -138,6 +138,7 @@ function areasOf<T>(entries: readonly T[], boundsOf: (entry: T) => BoardRect | n
 
 /** The verbs, in the order the line names them. */
 const VERBS: Array<[NewsItem['change'], string]> = [
+  ['drawn', 'drew'],
   ['added', 'added'],
   ['restored', 'restored'],
   ['moved', 'moved'],
@@ -145,7 +146,8 @@ const VERBS: Array<[NewsItem['change'], string]> = [
   ['turned', 'turned'],
   ['edited', 'edited'],
   ['changed', 'changed'],
-  ['deleted', 'deleted']
+  ['deleted', 'deleted'],
+  ['erased', 'erased']
 ]
 
 /** "600 pt right, 40 pt up", or '' for no offset. */
@@ -160,7 +162,8 @@ function offsetWords(offset: NewsItem['offset']): string {
 /** One item: 'your image "Fig 2A" 600 pt right (now 4200,0 1100×800)'. */
 function itemWords(item: NewsItem): string {
   const offset = offsetWords(item.offset)
-  const where = item.bounds && item.change !== 'deleted' ? ` (${item.change === 'added' ? '' : 'now '}${box(item.bounds)})` : ''
+  const gone = item.change === 'deleted' || item.change === 'erased'
+  const where = item.bounds && !gone ? ` (${item.change === 'added' || item.change === 'drawn' ? '' : 'now '}${box(item.bounds)})` : ''
   return `${item.label}${offset ? ` ${offset}` : ''}${where}`
 }
 

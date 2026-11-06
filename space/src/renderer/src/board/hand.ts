@@ -1,11 +1,12 @@
 import type { InkPoint } from '@shared/board-format'
 import { INK_STEP } from '@shared/ink-points'
-import type { Point } from '../board/types'
+import type { Point } from './types'
 
 /**
- * Ink that looks drawn by hand, for live scenes: a pressure profile with a
- * taper at both ends and a slight wobble. The stage makes the points of pen
- * shapes (shared/ink-points.ts).
+ * Ink that looks drawn by hand: a pressure profile with a taper at both ends
+ * and a slight wobble. Live scenes draw their pen ink with it (the stage makes
+ * the points of pen shapes, shared/ink-points.ts), and the learner's shapes
+ * get their strokes from it (shapes.ts), so both have one hand.
  */
 
 /**

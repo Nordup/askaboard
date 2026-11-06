@@ -5,12 +5,13 @@
  * tooltips: a tool exists in all three or in none.
  */
 
-import { AlignCenter, AlignLeft, AlignRight, Eraser, Hand, Lasso, MousePointer2, PenLine, Type, type LucideIcon } from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight, Circle, Eraser, Hand, Lasso, Minus, MousePointer2, MoveHorizontal, MoveRight, MoveUpRight, PenLine, Slash, Square, Type, type LucideIcon } from 'lucide-react'
+import type { ShapeFill, ShapeHeads, ShapeKind, ShapeLine } from '@shared/board-format'
 
 export type ToolId = 'select' | 'hand' | 'rect' | 'ellipse' | 'arrow' | 'line' | 'pen' | 'text' | 'eraser'
 
 /** The fields of DrawStyle that a tool or an item kind uses: the style pill shows these. */
-export type StyleField = 'color' | 'width' | 'pen' | 'size' | 'font' | 'align'
+export type StyleField = 'color' | 'fill' | 'width' | 'line' | 'heads' | 'pen' | 'size' | 'font' | 'align'
 
 export interface ToolDef {
   id: ToolId
@@ -28,6 +29,10 @@ export interface ToolDef {
 export const TOOLS: readonly ToolDef[] = [
   { id: 'select', label: 'Select', key: 'V', digit: '1', Icon: MousePointer2, style: [] },
   { id: 'hand', label: 'Hand', key: 'H', Icon: Hand, style: [] },
+  { id: 'rect', label: 'Rectangle', key: 'R', digit: '2', Icon: Square, style: ['color', 'fill', 'width', 'line'] },
+  { id: 'ellipse', label: 'Ellipse', key: 'O', digit: '3', Icon: Circle, style: ['color', 'fill', 'width', 'line'] },
+  { id: 'arrow', label: 'Arrow', key: 'A', digit: '4', Icon: MoveUpRight, style: ['color', 'width', 'line', 'heads'] },
+  { id: 'line', label: 'Line', key: 'L', digit: '5', Icon: Slash, style: ['color', 'width', 'line'] },
   { id: 'pen', label: 'Pen', key: 'P', digit: '6', Icon: PenLine, style: ['color', 'width', 'pen'] },
   { id: 'text', label: 'Text', key: 'T', digit: '7', Icon: Type, style: ['color', 'size', 'font', 'align'] },
   { id: 'eraser', label: 'Eraser', key: 'E', digit: '0', Icon: Eraser, style: [] }
@@ -35,6 +40,11 @@ export const TOOLS: readonly ToolDef[] = [
 
 /** The Select button's icon in lasso mode. */
 export const LassoIcon = Lasso
+
+/** The tools that draw a shape (board-format ShapeNode): the tool id is the shape's kind. */
+export function shapeTool(tool: ToolId): ShapeKind | null {
+  return tool === 'rect' || tool === 'ellipse' || tool === 'arrow' || tool === 'line' ? tool : null
+}
 
 /** The tool for a key without modifiers (a letter in any case, or a digit), or undefined. */
 export function toolForKey(key: string): ToolId | undefined {
@@ -122,12 +132,36 @@ export const TEXT_ALIGNS: readonly { id: TextAlign; label: string; Icon: LucideI
   { id: 'right', label: 'Align right', Icon: AlignRight }
 ]
 
+/** A shape's fill: none, the colour at a low alpha, or the colour. Shown as small squares. */
+export const FILLS: readonly { id: ShapeFill; label: string }[] = [
+  { id: 'none', label: 'No fill' },
+  { id: 'light', label: 'Light fill' },
+  { id: 'solid', label: 'Solid fill' }
+]
+
+/** A shape's line. Shown as a bar in its pattern. */
+export const LINE_STYLES: readonly { id: ShapeLine; label: string }[] = [
+  { id: 'solid', label: 'Solid line' },
+  { id: 'dashed', label: 'Dashed line' },
+  { id: 'dotted', label: 'Dotted line' }
+]
+
+/** An arrow's heads: at its end, at both ends, or none. */
+export const ARROW_HEADS: readonly { id: ShapeHeads; label: string; Icon: LucideIcon }[] = [
+  { id: 'end', label: 'One head', Icon: MoveRight },
+  { id: 'both', label: 'Two heads', Icon: MoveHorizontal },
+  { id: 'none', label: 'No heads', Icon: Minus }
+]
+
 /** The one style that every tool draws with; each tool uses some of its fields (ToolDef.style). */
 export interface DrawStyle {
   /** A hex colour from INK_COLORS (any colour string on an item). */
   color: string
   /** The nominal pen width in board points (STROKE_WIDTHS). */
   width: number
+  fill: ShapeFill
+  line: ShapeLine
+  heads: ShapeHeads
   pen: PenKind
   /** The text size in board points (TEXT_SIZES). */
   size: number
@@ -148,7 +182,7 @@ export const INITIAL_TOOLS: ToolState = {
   tool: 'select',
   selectMode: 'box',
   lock: false,
-  style: { color: INK_COLORS[0].value, width: STROKE_WIDTHS[1].px, pen: 'pen', size: TEXT_SIZES[1].px, font: 'hand', align: 'left' }
+  style: { color: INK_COLORS[0].value, width: STROKE_WIDTHS[1].px, fill: 'none', line: 'solid', heads: 'end', pen: 'pen', size: TEXT_SIZES[1].px, font: 'hand', align: 'left' }
 }
 
 /** Choose a tool: a press on Select while it is active switches between the box and the lasso. */

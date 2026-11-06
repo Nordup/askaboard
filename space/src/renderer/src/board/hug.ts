@@ -1,4 +1,4 @@
-import { hugsChildren, isInk, type BoardNode, type FrameNode } from '@shared/board-format'
+import { hugsChildren, isPainted, type BoardNode, type FrameNode } from '@shared/board-format'
 import { placedBox } from './rotation'
 import type { LayoutBox } from './types'
 
@@ -44,7 +44,7 @@ export function huggedNodes(nodes: readonly BoardNode[], layout: ReadonlyMap<str
       const measured = boxes.get(node.id)
       if (!measured) continue
       const child = placedBox(measured)
-      const pad = isInk(node) ? node.width : 0
+      const pad = isPainted(node) ? node.width : 0
       x0 = Math.min(x0, child.x - pad)
       y0 = Math.min(y0, child.y - pad)
       x1 = Math.max(x1, child.x + child.width + pad)

@@ -1,5 +1,5 @@
 import { boardTexts, digestBoard, placeText, relation, searchTexts, unionRegions } from '@shared/board-digest'
-import { boardName, isContent, isInk, isKnown, isLive, isOldLive, type BoardNode } from '@shared/board-format'
+import { boardName, isContent, isInk, isKnown, isLive, isOldLive, isShape, kindWord, type BoardNode } from '@shared/board-format'
 import type {
   AgentMethods,
   BoardChangeOp,
@@ -131,7 +131,7 @@ const KIND_WORDS: Record<string, string> = { svg: 'svg', frame: 'frame', text: '
  * `owner` false: "a text \"Find x\"" (for a new item).
  */
 function materialLabel(node: BoardNode, owner = true): string {
-  const kind = KIND_WORDS[node.kind] ?? node.kind
+  const kind = KIND_WORDS[node.kind] ?? kindWord(node)
   const who = owner ? (node.author === 'agent' ? 'your' : "the learner's") : /^[aeiou]|^svg/i.test(kind) ? 'an' : 'a'
   let label = typeof node.name === 'string' ? node.name.trim() : ''
   if (!label && node.kind === 'text') label = String((node as { text?: unknown }).text ?? '').replace(/[*$\\]/g, '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
@@ -145,7 +145,7 @@ function materialLabel(node: BoardNode, owner = true): string {
 
 /** 'your SVG', "the learner's text": whose and what kind, for news summaries of many items. */
 function materialUnit(node: BoardNode): string {
-  return `${node.author === 'agent' ? 'your' : "the learner's"} ${KIND_WORDS[node.kind] ?? node.kind}`
+  return `${node.author === 'agent' ? 'your' : "the learner's"} ${KIND_WORDS[node.kind] ?? kindWord(node)}`
 }
 
 /**
@@ -221,7 +221,8 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
       inkMoves.set(key, entry)
       continue
     }
-    const item: NewsItem = { change, label: materialLabel(node, change !== 'added'), unit: materialUnit(node), bounds: rect(state.bounds(node.id)), ...(offset ? { offset } : {}), ...(at ? { at } : {}) }
+    // A new shape is drawn, as a stroke is.
+    const item: NewsItem = { change: change === 'added' && isShape(node) ? 'drawn' : change, label: materialLabel(node, change !== 'added'), unit: materialUnit(node), bounds: rect(state.bounds(node.id)), ...(offset ? { offset } : {}), ...(at ? { at } : {}) }
     const parent = isKnown(node) ? node.parent : undefined
     if (change === 'added') placed.push({ item, ...(parent ? { parent } : {}) })
     else items.push(item)
@@ -248,7 +249,8 @@ function learnerNews(context: AgentContext, since: number): LearnerNews | null {
     // The contents of a deleted frame go with it.
     const parent = isKnown(tombstone.node) ? tombstone.node.parent : undefined
     if (parent && deletedIds.has(parent)) continue
-    items.push({ change: 'deleted', label: materialLabel(tombstone.node), unit: materialUnit(tombstone.node), bounds: rect(tombstone.bounds), at: tombstone.at })
+    // A shape is erased, as a stroke is (by the eraser or by Delete).
+    items.push({ change: tombstone.kind === 'shape' ? 'erased' : 'deleted', label: materialLabel(tombstone.node), unit: materialUnit(tombstone.node), bounds: rect(tombstone.bounds), at: tombstone.at })
   }
 
   const newsGroupIds = new Set(added.flatMap((stroke) => (stroke.group ? [stroke.group] : [])))
