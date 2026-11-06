@@ -298,6 +298,11 @@ button:focus-visible {
   -webkit-app-region: no-drag;
 }
 
+/* While a menu is open the strips take clicks (lib/dismiss.ts, useDragStripsOff): a press there closes the menu, as on macOS. */
+:root[data-menu-open] :is(.topbar, .sidebar__strip) {
+  -webkit-app-region: no-drag;
+}
+
 .topbar__title {
   display: flex;
   align-items: center;
