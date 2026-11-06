@@ -10,9 +10,9 @@ import { AgentServer } from './mcp'
 import { SnapshotRenderer } from './snapshot'
 import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revokeWorldFiles, worldBytesRead } from './live-item-protocol'
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
-import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setHistoryMenu, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
-import { registerSettings, settingsChanged } from './settings'
-import { automaticSize, interfaceFactor, stepSize, windowButtonPosition, windowButtonsEnd, type InterfaceSize } from './interface-size'
+import { devClickMenu, devMenuItem, devSidebarMenu, installMenu, setFolderOpen, setHistoryMenu, setSidebarMenu } from './menu'
+import { changeSettings, registerSettings, settingsChanged, settingsSnapshot, stepInterfaceSize } from './settings'
+import { automaticSize, interfaceFactor, windowButtonPosition, windowButtonsEnd } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -141,7 +141,7 @@ const agentServer = new AgentServer({
   status: (status) => send(IPC.agentStatus, status),
   activity: (activity) => send(IPC.agentActivity, activity),
   folderRoot: () => session?.root ?? null,
-  readLines: readLinesNow,
+  readLines: () => store.readLinesOn(),
   voiceNotice: showVoiceNotice,
   shownBoard: () => (session ? store.getLastBoard(session.root) : null),
   folder: () => session,
@@ -163,21 +163,6 @@ function setSidebarHidden(hidden: boolean): void {
   if (hidden !== store.getSidebarHidden()) store.setSidebarHidden(hidden)
   setSidebarMenu(hidden)
   send(IPC.sidebarHidden, hidden)
-}
-
-/** What the menu and the renderer show of Read Lines Aloud. */
-let readLinesShown: boolean | null = null
-
-/** Read Lines Aloud as it stands, the one way to read it. A change reaches the menu and the renderer here. */
-function readLinesNow(): boolean {
-  const on = store.readLinesOn()
-  if (on !== readLinesShown) {
-    readLinesShown = on
-    setReadLinesChecked(on)
-    send(IPC.readLines, on)
-    settingsChanged()
-  }
-  return on
 }
 
 /** The day (local date) the daily-limit notice last showed: at most once a day per app run, not on every scene. */
@@ -361,6 +346,9 @@ function registerIpc(): void {
   ipcMain.on(IPC.devClickMenu, (event, id: unknown) => {
     event.returnValue = remoteDebugPort !== null && typeof id === 'string' ? devClickMenu(id) : false
   })
+  ipcMain.on(IPC.devMenuItem, (event, id: unknown) => {
+    event.returnValue = remoteDebugPort !== null && typeof id === 'string' ? devMenuItem(id) : null
+  })
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     const buttonsEnd = win && win === liveMainWindow() ? windowButtonsEnd(interfaceFactor(store.getInterfaceSize(), win)) : null
@@ -481,8 +469,6 @@ function registerIpc(): void {
     return result
   })
   handle(IPC.setSetupDontAsk, (value: unknown) => store.setSetupDontAsk(requireSession().root, value === true))
-  handle(IPC.getShowPerformance, () => store.getShowPerformance())
-  handle(IPC.getReadLines, readLinesNow)
   handle(IPC.getUncappedFrames, () => ({ on: store.getUncappedFrames(), launched: uncappedAtLaunch }))
   handle(IPC.setUncappedFrames, (on: unknown) => store.setUncappedFrames(on === true))
   handle(IPC.boardGuidePath, async () => {
@@ -718,17 +704,15 @@ registerIpc()
 registerSettings({
   handle,
   send,
-  setReadLines: (on) => {
-    store.setReadLines(on)
-    readLinesNow()
-  },
-  menuChanged: () => setVoiceMenu(store.getVoice(), store.getPace())
+  rebuildMenu: buildMenu,
+  applyInterfaceSize: () => applyInterfaceSize(liveMainWindow()),
+  automaticSize: () => menuAutomaticSize
 })
 
 /** The automatic interface size that the menu shows (the screen module works only once the app is ready). */
 let menuAutomaticSize = 1
 
-/** The app menu with the settings as they stand. It is built again when Interface Size changes, so its radio items and the automatic percent stay true. */
+/** The app menu with the settings as they stand (main/settings.ts builds it again after every settings change, so its items stay true). */
 function buildMenu(): void {
   installMenu({
     openFolder: () => {
@@ -750,42 +734,15 @@ function buildMenu(): void {
     selectAll: () => sendMenuCommand('select-all'),
     sidebarHidden: store.getSidebarHidden(),
     toggleSidebar: () => setSidebarHidden(!store.getSidebarHidden()),
-    showPerformance: store.getShowPerformance(),
-    setShowPerformance: (on) => {
-      store.setShowPerformance(on)
-      sendMenuCommand(on ? 'show-performance' : 'hide-performance')
-    },
-    readLines: readLinesNow(),
-    setReadLines: (on) => {
-      store.setReadLines(on)
-      readLinesNow()
-    },
-    voice: store.getVoice(),
-    setVoice: (voice) => {
-      store.setVoice(voice)
-      settingsChanged()
-    },
-    pace: store.getPace(),
-    setPace: (pace) => {
-      store.setPace(pace)
-      settingsChanged()
-    },
     openSettings: () => sendMenuCommand('open-settings'),
-    interfaceSize: store.getInterfaceSize(),
-    automaticSize: menuAutomaticSize,
-    setInterfaceSize,
-    stepInterfaceSize: (direction) => setInterfaceSize(stepSize(interfaceFactor(store.getInterfaceSize(), liveMainWindow()), direction))
+    settings: settingsSnapshot(),
+    changeSettings,
+    stepInterfaceSize
   })
   setFolderOpen(session !== null)
 }
 
 const liveMainWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
-
-function setInterfaceSize(size: InterfaceSize): void {
-  store.setInterfaceSize(size)
-  buildMenu()
-  applyInterfaceSize(liveMainWindow())
-}
 
 /**
  * View > Interface Size on the main window: the page zoom from the setting, and the menu's automatic percent. The window
@@ -795,7 +752,8 @@ function applyInterfaceSize(win: BrowserWindow | null): void {
   const automatic = automaticSize(win)
   if (automatic !== menuAutomaticSize) {
     menuAutomaticSize = automatic
-    buildMenu()
+    // The menu and the dialog show "Automatic (N%)".
+    settingsChanged()
   }
   if (!win || win.isDestroyed()) return
   const factor = interfaceFactor(store.getInterfaceSize(), win)

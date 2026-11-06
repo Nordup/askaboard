@@ -298,6 +298,11 @@ button:focus-visible {
   -webkit-app-region: no-drag;
 }
 
+/* While a menu is open the strips take clicks (lib/dismiss.ts, useDragStripsOff): a press there closes the menu, as on macOS. */
+:root[data-menu-open] :is(.topbar, .sidebar__strip) {
+  -webkit-app-region: no-drag;
+}
+
 .topbar__title {
   display: flex;
   align-items: center;
@@ -583,27 +588,16 @@ button:focus-visible {
 /* The search panel (⌘K): layout only (centred in the window both ways, a fixed width and height); the content is shared .menu parts. */
 .menu.search-panel {
   inset: 0;
-  width: min(var(--search-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
-  height: min(var(--search-panel-height), calc(100vh - 2 * var(--search-panel-margin-y)));
+  width: min(var(--search-panel-width), calc(100vw - 2 * var(--panel-margin-x)));
+  height: min(var(--search-panel-height), calc(100vh - 2 * var(--panel-margin-y)));
   margin: auto;
 }
 
-/* The keys panel (?): layout only (centred in the window both ways, a fixed width, as tall as its rows); the content is shared .menu parts. */
-.menu.keys-panel {
+/* The Settings dialog (⌘,, U12): layout only (centred in the window both ways, a fixed width and height that shrink to the window); the content is shared .menu parts. */
+.menu.settings-dialog {
   inset: 0;
-  width: min(var(--keys-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
-  height: fit-content;
-  max-height: calc(100vh - 2 * var(--search-panel-margin-y));
-  margin: auto;
-  outline: none;
-}
-
-/* The Settings panel (⌘,): layout only (centred in the window both ways, a fixed width, the height of its rows); the content is shared .menu parts. */
-.menu.settings-panel {
-  inset: 0;
-  width: min(var(--settings-panel-width), calc(100vw - 2 * var(--search-panel-margin-x)));
-  height: fit-content;
-  max-height: calc(100vh - 2 * var(--search-panel-margin-y));
+  width: min(var(--settings-dialog-width), calc(100vw - 2 * var(--panel-margin-x)));
+  height: min(var(--settings-dialog-height), calc(100vh - 2 * var(--panel-margin-y)));
   margin: auto;
 }
 
@@ -835,7 +829,7 @@ button:focus-visible {
   background-position: calc(var(--canvas-dot-pitch) / 2) calc(var(--canvas-dot-pitch) / 2);
 }
 
-/* ---------- Board controls (decisions U10, U12) ---------- */
+/* ---------- Board controls (decisions U10, U13) ---------- */
 
 /*
  * The bottom row over the canvas: the corner pill (zoom and undo) at the
@@ -1332,12 +1326,19 @@ button:focus-visible {
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__sub             dim text right after a .menu__label (a board's folder); the .menu__hint goes to the right
  *   .menu__match           the part of a label that matches the typed text (--accent)
- *   .menu--panel           a modal panel over a .backdrop (the search panel): --bg-glass over a blur (--glass-filter),
+ *   .menu--panel           a modal panel over a .backdrop (ModalPanel.tsx: the search panel, the Settings dialog): --bg-glass over a blur (--glass-filter),
  *                          --radius-xl, --border-strong, --shadow-card, rows of --panel-row-height; the selection is
  *                          the one fill (hover moves it); the instance sets the panel's height
  *   .menu__field/__input   the panel's search field at the top: a 17 px icon, 15 px text, a hairline under it
  *                          (a panel without a field starts with a .menu__title, padded as the field)
- *   .menu__columns         sections side by side (each a heading and its rows); they wrap below each other in a narrow window
+ *   .menu--split           a modal panel in two parts side by side: .menu__nav (the section list: .menu__item rows,
+ *                          the current one --current, a hover fill; .menu__nav-end pins its last rows at the bottom) and
+ *                          .menu__pane (a .menu__header, the section's title and a close .icon-button, over a .menu__scroll)
+ *   .menu__setting         one setting: a .menu__setting-row (an optional .menu__radio, .menu__setting-text with a
+ *                          .menu__name and a muted .menu__desc under it, then one .menu__control at the right), lines under
+ *                          it; a hairline parts two settings. A row with role radio is one choice of a group (.menu__radio);
+ *                          .menu__settings wraps such a group (role radiogroup) and keeps the hairlines
+ *   .menu__group           a .menu__heading and its rows in a pane (the shortcut list's Tools, Edit, View)
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
@@ -1490,7 +1491,7 @@ button:focus-visible {
   color: var(--accent);
 }
 
-/* A modal panel (the search panel): over a .backdrop, a little see-through over a blur; the instance sets its position, width and height. */
+/* A modal panel (ModalPanel.tsx: the search panel, the Settings dialog): over a .backdrop, a little see-through over a blur; the instance sets its position, width and height. */
 .menu--panel {
   --menu-radius: var(--radius-xl);
   --menu-item-radius: var(--radius-md);
@@ -1513,12 +1514,12 @@ button:focus-visible {
   padding-block: 0;
 }
 
-/* A panel that holds the focus itself (the Settings panel, for its keys) shows no ring: its controls show theirs. */
+/* A panel that holds the focus itself (the Settings dialog, for its keys) shows no ring: its controls show theirs. */
 .menu--panel:focus-visible {
   outline: none;
 }
 
-/* A panel's plain rows have the height of its items (the Settings panel). */
+/* A panel's plain rows have the height of its items (the shortcut list). */
 .menu--panel .menu__row {
   min-height: var(--panel-row-height);
   padding-block: 0;
@@ -1535,11 +1536,138 @@ button:focus-visible {
   padding: var(--space-4) calc(var(--menu-pad) + var(--space-2)) var(--space-1);
 }
 
-.menu__columns {
+/* A split panel (the Settings dialog): the section list on the left, the section on the right. */
+.menu--split {
+  flex-direction: row;
+}
+
+.menu__nav {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--space-half);
+  width: var(--panel-nav-width);
+  padding: var(--menu-pad);
+  overflow-y: auto;
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* The list's rows choose a section: the pointer does not move a selection, so a hovered row has its fill. */
+.menu--panel .menu__nav .menu__item:not(.menu__item--current):hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.menu__nav-end {
+  margin-top: auto;
+}
+
+.menu__pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The pane's title row: the title in the rows' column, a close button at the right; a hairline under it. */
+.menu__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--panel-field-height);
+  padding: 0 var(--space-3) 0 calc(var(--menu-pad) + var(--space-2));
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.menu__header .menu__title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font-size: var(--text-lg);
+}
+
+.menu__group + .menu__group {
+  margin-top: var(--space-2);
+}
+
+.menu__setting + .menu__setting,
+.menu__setting + .menu__settings,
+.menu__settings + .menu__setting,
+.menu__settings > .menu__setting + .menu__setting {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.menu__setting-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--menu-item-radius);
+}
+
+.menu__setting-row[role='radio'] {
+  cursor: pointer;
+}
+
+.menu__setting-row[role='radio'][aria-disabled='true'] {
+  cursor: default;
+}
+
+.menu__setting-row[role='radio']:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+}
+
+.menu__setting-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-half);
+  min-width: 0;
+}
+
+.menu__desc {
+  color: var(--text-tertiary);
+  font-size: var(--menu-meta-font);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.menu__radio {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  column-gap: var(--space-4);
-  align-content: start;
+  flex-shrink: 0;
+  place-items: center;
+  width: var(--radio-size);
+  height: var(--radio-size);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.menu__setting-row[aria-checked='true'] .menu__radio {
+  border-color: var(--accent);
+}
+
+.menu__setting-row[aria-checked='true'] .menu__radio::after {
+  width: var(--radio-dot);
+  height: var(--radio-dot);
+  border-radius: 50%;
+  background: var(--accent);
+  content: '';
+}
+
+.menu__setting-row[aria-disabled='true'] .menu__radio {
+  opacity: var(--disabled-opacity);
+}
+
+/* A setting's text field has a fixed width before its button. */
+.menu__control .menu__text {
+  flex: none;
+  width: var(--setting-field-width);
+}
+
+/* A setting's lines line up with its text. */
+.menu__setting .menu__line {
+  padding: 0 var(--space-2) var(--space-2);
 }
 
 /* The field's icon lines up with the rows' icons (the list padding + the row padding). */

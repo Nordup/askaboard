@@ -1189,16 +1189,18 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
   /**
    * The host's size in CSS px becomes the viewport (B66). The first real size also fits the
    * board to its content. Only a host with no size gets the 1 px floor, and it does not fit.
+   * With `now` (a host resize), every layer that depends on the size changes before this
+   * frame paints: the content, the ink canvases, the grid and the overlays.
    */
   const syncViewport = useCallback(
-    (width: number, height: number): Point => {
+    (width: number, height: number, now = false): Point => {
       const next: Point = [Math.max(1, width), Math.max(1, height)]
       const [w, h] = viewportRef.current
       const changed = next[0] !== w || next[1] !== h
       if (changed) {
         viewportRef.current = next
         // The state only draws the overlays; a read can come during another component's render (App's state updaters).
-        queueMicrotask(() => setViewport(viewportRef.current))
+        if (!now) queueMicrotask(() => setViewport(viewportRef.current))
         applyContentTransform()
       }
       const fitNow = needsFitRef.current && width >= 2 && height >= 2
@@ -1207,7 +1209,18 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
         measure()
         fit()
       }
-      if (changed || fitNow) requestPaint({ committed: true, active: true })
+      if (!changed && !fitNow) return viewportRef.current
+      if (now) {
+        // A resize observer runs outside any render, so the overlays can commit here, with the camera a fit just set.
+        flushSync(() => {
+          setViewport(viewportRef.current)
+          if (cameraStaleRef.current) {
+            cameraStaleRef.current = false
+            setCamera(cameraRef.current)
+          }
+        })
+      }
+      requestPaint({ committed: true, active: true }, now)
       return viewportRef.current
     },
     [applyContentTransform, fit, measure, requestPaint]
@@ -1232,15 +1245,14 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+    // An observer runs after this frame's animation frames: work left to the next frame shows the old size for one frame.
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
-      if (!rect) return
-      syncViewport(rect.width, rect.height)
-      requestPaint({ committed: true, active: true })
+      if (rect) syncViewport(rect.width, rect.height, true)
     })
     observer.observe(host)
     return () => observer.disconnect()
-  }, [syncViewport, requestPaint])
+  }, [syncViewport])
 
   // ---------- Nodes ----------
 

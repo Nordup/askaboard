@@ -149,33 +149,72 @@ export interface ShellState {
   homeDir: string
 }
 
-export type MenuCommand = 'open-folder' | 'new-board' | 'back' | 'forward' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'show-performance' | 'hide-performance' | 'open-settings'
+export type MenuCommand = 'open-folder' | 'new-board' | 'back' | 'forward' | 'search-boards' | 'setup-folder' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'select-all' | 'open-settings'
 
-// ---------- Settings panel (main/settings.ts) ----------
+// ---------- Settings (main/settings.ts owns every user setting) ----------
 
 /** The local voice on this Mac (main/kokoro.ts LocalVoiceState). */
 export type LocalVoiceStatus = { state: 'absent' } | { state: 'installing'; progress: number } | { state: 'installed' } | { state: 'failed'; error: string }
 
-/** What the Settings panel shows. The Gemini key never comes back: only whether one is saved. */
-export interface SettingsSnapshot {
-  /** View > Read Lines Aloud. */
-  readLines: boolean
-  /** Which voice reads the lines: our cloud voice, or the local one on this Mac. */
-  model: 'cloud' | 'local'
-  /** The voice of the chosen model, and that model's voices. */
-  voice: string
-  voices: string[]
-  /** View > Pace, and its choices. */
-  pace: string
-  paces: { id: string; label: string }[]
-  local: LocalVoiceStatus
-  localDownloadMb: number
-  /** A Gemini key is saved in ~/.learning-space/.env. */
-  keySaved: boolean
+/** Interface Size: 'auto' (the automatic size for the window's display) or a page zoom factor. */
+export type InterfaceSizeSetting = 'auto' | number
+
+/** An Interface Size as View > Interface Size and the Settings dialog name it: "Automatic (120%)", "80%". */
+export function interfaceSizeLabel(size: InterfaceSizeSetting, automaticSize: number): string {
+  const percent = (factor: number): string => `${Math.round(factor * 100)}%`
+  return size === 'auto' ? `Automatic (${percent(automaticSize)})` : percent(size)
 }
 
-/** A change from the Settings panel: the fields it sets. voice is the voice of the chosen model. */
-export type SettingsChange = Partial<Pick<SettingsSnapshot, 'readLines' | 'model' | 'voice' | 'pace'>>
+/**
+ * Every user setting as it stands, from main/settings.ts: the Settings dialog shows it, and the View menu is built from
+ * it. Main sends it again after every change, from any place (the dialog, the menu, the local voice's install). The
+ * Gemini key never comes back: only whether one is saved.
+ */
+export interface SettingsSnapshot {
+  general: {
+    /** View > Interface Size. */
+    interfaceSize: InterfaceSizeSetting
+    /** The sizes it offers (page zoom factors). */
+    interfaceSizes: number[]
+    /** The factor of 'auto' for the main window's display ("Automatic (120%)"). */
+    automaticSize: number
+    /** View > Show performance: the performance item in the top bar. */
+    showPerformance: boolean
+  }
+  voice: {
+    /** View > Read Lines Aloud: with it off, the board plays no voice. */
+    readLines: boolean
+    /** Which voice reads the lines: our cloud voice, or the local one on this Mac. */
+    model: 'cloud' | 'local'
+    /** The voice of the chosen model, and that model's voices. */
+    voice: string
+    voices: string[]
+    /** View > Pace, and its choices. */
+    pace: string
+    paces: { id: string; label: string }[]
+    local: LocalVoiceStatus
+    localDownloadMb: number
+    /** A Gemini key is saved in ~/.learning-space/.env. */
+    keySaved: boolean
+  }
+  about: {
+    /** package.json productName, through Electron's app.name. */
+    name: string
+    version: string
+    /** package.json license, or null when it has none. */
+    license: string | null
+  }
+}
+
+/** A change of settings: the fields it sets. voice is the voice of the chosen model. Main checks every value. */
+export interface SettingsChange {
+  interfaceSize?: InterfaceSizeSetting
+  showPerformance?: boolean
+  readLines?: boolean
+  model?: 'cloud' | 'local'
+  voice?: string
+  pace?: string
+}
 
 /** Call the returned function to stop listening. */
 export type Unsubscribe = () => void
@@ -669,15 +708,10 @@ export interface SpaceApi {
   onFullScreen(listener: (on: boolean) => void): Unsubscribe
   /** macOS: the window buttons moved for a new Interface Size; their right edge in CSS px. */
   onWindowButtons(listener: (end: number | null) => void): Unsubscribe
-  /** View > Show performance, as saved. */
-  getShowPerformance(): Promise<boolean>
-  /** View > Read Lines Aloud as it stands: with it off, the board plays no voice. */
-  getReadLines(): Promise<boolean>
-  onReadLines(listener: (on: boolean) => void): Unsubscribe
   /** The pill's row "Uncapped frame rate": on, as saved, and launched, the state of Chromium's frame limit since this launch. */
   getUncappedFrames(): Promise<{ on: boolean; launched: boolean }>
   setUncappedFrames(on: boolean): Promise<void>
-  /** The Settings panel (main/settings.ts): its state, and every change after it (also from the View menu and the local voice's install). */
+  /** Every user setting (main/settings.ts): the snapshot, every snapshot after a change from any place, and a change. */
   getSettings(): Promise<SettingsSnapshot>
   onSettings(listener: (settings: SettingsSnapshot) => void): Unsubscribe
   setSettings(change: SettingsChange): Promise<void>
@@ -726,6 +760,8 @@ export interface SpaceApi {
   devSidebarMenu(click: boolean): string | null
   /** Dev hook: choose the menu item with this id (for example 'search-boards', File > Search Boards…), as a click or its accelerator does; false when it is missing, hidden or disabled. */
   devClickMenu(id: string): boolean
+  /** Dev hook: the menu item with this id as it shows (label, checked, enabled, visible), or null when it is missing. */
+  devMenuItem(id: string): { label: string; checked: boolean; enabled: boolean; visible: boolean } | null
   flushStarted(): void
   flushDone(failed: FailedSave[]): void
 
@@ -796,9 +832,6 @@ export const IPC = {
   setupPlan: 'space:setup-plan',
   applySetup: 'space:apply-setup',
   setSetupDontAsk: 'space:set-setup-dont-ask',
-  getShowPerformance: 'space:get-show-performance',
-  getReadLines: 'space:get-read-lines',
-  readLines: 'space:read-lines',
   getUncappedFrames: 'space:get-uncapped-frames',
   setUncappedFrames: 'space:set-uncapped-frames',
   boardGuidePath: 'space:board-guide-path',
@@ -818,6 +851,7 @@ export const IPC = {
   devFullScreen: 'space:dev-full-screen',
   devSidebarMenu: 'space:dev-sidebar-menu',
   devClickMenu: 'space:dev-click-menu',
+  devMenuItem: 'space:dev-menu-item',
   getShellState: 'space:get-shell-state',
   setSidebarHidden: 'space:set-sidebar-hidden',
   sidebarHidden: 'space:sidebar-hidden',

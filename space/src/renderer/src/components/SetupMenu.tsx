@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SetupItem, SetupPlan } from '@shared/space-api'
 import { errorMessage } from '../lib/errors'
+import { useDragStripsOff } from '../lib/dismiss'
 import { markFocus, returnFocus } from '../lib/focus'
 
 interface SetupMenuProps {
@@ -55,6 +56,7 @@ export function SetupMenu({ anchor, anchorToggles, version, onSetUp, onClose, on
   const [position, setPosition] = useState({ left: 8, top: 8 })
   /** How the focus was when the flyout opened: it goes back to the anchor ringed only if it was ringed then. */
   const [opener] = useState(markFocus)
+  useDragStripsOff(true)
 
   useEffect(() => {
     let current = true

@@ -1,16 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, Check, ChevronLeft, ExternalLink, Loader2, Plus } from 'lucide-react'
+import { AlertCircle, ChevronLeft, Plus } from 'lucide-react'
 import { useMenuDismiss } from '../lib/dismiss'
-import type {
-  AgentClientAction,
-  AgentClientId,
-  AgentClientStatus,
-  AgentClientsStatus,
-  AgentServerStatus,
-  AgentSessionInfo,
-  ConnectResult,
-  GuideOverrides
-} from '@shared/space-api'
+import type { AgentClientId, AgentClientStatus, AgentServerStatus, AgentSessionInfo, GuideOverrides } from '@shared/space-api'
+import { CLIENT_NAMES, CLIENT_ORDER, ConnectList, isInstalled, shorten, useAgentClients } from './ConnectAgents'
 import { GuideOverrideNote } from './GuideOverrideNote'
 
 interface AgentPillProps {
@@ -29,25 +21,12 @@ interface AgentPillProps {
  */
 const ACTIVE_WINDOW_MS = 90_000
 
-const MANUAL_SETUP_URL = 'https://github.com/Nordup/learning-space-plugins#manual-setup'
-
-/** The agent apps, in popover order. Internal ids stay as connect.ts names them. */
-const CLIENT_NAMES: Record<AgentClientId, string> = {
-  'claude-code': 'Claude Code',
-  'claude-app': 'Claude Desktop',
-  codex: 'ChatGPT and Codex'
-}
-const CLIENT_ORDER: AgentClientId[] = ['claude-code', 'claude-app', 'codex']
-
 /** MCP clientInfo names → the agent app they belong to. */
 const SESSION_CLIENTS: Record<string, AgentClientId> = {
   'claude-code': 'claude-code',
   'claude-ai': 'claude-app',
   'codex-mcp-client': 'codex'
 }
-
-/** "Restart … to finish" after a plugin change. */
-const RESTART_NAMES: Partial<Record<AgentClientId, string>> = { 'claude-code': 'Claude Code', codex: 'ChatGPT' }
 
 /** A readable name for an MCP clientInfo name. */
 export function agentName(clientName: string): string {
@@ -80,10 +59,6 @@ interface AgentLine {
   key: string
   name: string
   lastActiveAt: number | null
-}
-
-function isInstalled(client: AgentClientStatus): boolean {
-  return client.state === 'plugin' || client.state === 'manual' || client.state === 'both' || client.state === 'connected'
 }
 
 /** Installed agents plus every agent a session came from, most recent first. */
@@ -146,82 +121,6 @@ function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; c
 
 // ---------- View 2: Connect an agent ----------
 
-/** A problem line under a row: warning text and one inline text button. */
-function Problem({ text, fix, onFix }: { text: string; fix: string; onFix(): void }) {
-  return (
-    <div className="menu__line menu__line--warn">
-      <span className="menu__line-text">
-        {text}
-      </span>
-      <button className="menu__fix" onClick={onFix}>
-        {fix}
-      </button>
-    </div>
-  )
-}
-
-/** The first line of an error, short enough for one row. */
-function shorten(message: string): string {
-  const line = message.split('\n')[0].trim()
-  return line.length > 72 ? `${line.slice(0, 71)}…` : line
-}
-
-function ConnectRow({ id, client, checking, onChanged }: { id: AgentClientId; client: AgentClientStatus | undefined; checking: boolean; onChanged(): void }) {
-  const [busy, setBusy] = useState(false)
-  const [last, setLast] = useState<{ action: AgentClientAction; result: ConnectResult } | null>(null)
-
-  const run = (action: AgentClientAction): void => {
-    setBusy(true)
-    setLast(null)
-    window.space
-      .connectAgentClient(id, action)
-      .then((result) => setLast({ action, result }))
-      .catch((error: unknown) => setLast({ action, result: { ok: false, message: error instanceof Error ? error.message : String(error) } }))
-      .finally(() => {
-        setBusy(false)
-        // Re-detect after every action, also after a failure (a step can half succeed).
-        onChanged()
-      })
-  }
-
-  const installed = client ? isInstalled(client) : false
-  let control: React.ReactNode
-  if (busy || (checking && !client)) control = <Loader2 className="menu__spinner" size={14} strokeWidth={2} aria-label="Working" />
-  else if (installed)
-    control = (
-      <span className="menu__status">
-        <Check size={13} strokeWidth={2.25} />
-        Installed
-      </span>
-    )
-  else if (client?.state === 'missing') control = <span className="menu__meta">Not found</span>
-  else
-    control = (
-      <button className="btn-sm" data-action={client?.action ?? 'install'} disabled={!client?.action} onClick={() => client?.action && run(client.action)}>
-        Install
-      </button>
-    )
-
-  const failed = last && !last.result.ok ? last : null
-  const restart = RESTART_NAMES[id]
-  const done = last?.result.ok && !busy ? last : null
-
-  return (
-    <div className="agent-connect" data-client={id} data-state={client?.state ?? 'unknown'}>
-      <div className="menu__row">
-        <span className="menu__name">{CLIENT_NAMES[id]}</span>
-        <span className="menu__control">{control}</span>
-      </div>
-      {!busy && failed && <Problem text={shorten(failed.result.message)} fix="Retry" onFix={() => run(failed.action)} />}
-      {!busy && !failed && client?.state === 'both' && <Problem text="Also added by hand, so tools appear twice" fix="Fix" onFix={() => run('remove-manual')} />}
-      {!busy && !failed && client?.state === 'manual' && <Problem text="Added by hand" fix="Fix" onFix={() => run('switch-to-plugin')} />}
-      {!busy && !failed && client?.state === 'unknown' && client.detail && <Problem text={shorten(client.detail)} fix="Retry" onFix={onChanged} />}
-      {done && restart && <div className="menu__line">Restart {restart} to finish</div>}
-      {done && !restart && <div className="menu__line">Confirm the install in Claude Desktop</div>}
-    </div>
-  )
-}
-
 function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentClientStatus[] | null; checking: boolean; onBack(): void; onChanged(): void }) {
   return (
     <>
@@ -232,16 +131,7 @@ function ConnectView({ clients, checking, onBack, onChanged }: { clients: AgentC
         <span className="menu__label">Connect an agent</span>
       </button>
       <div className="menu__separator" />
-      {CLIENT_ORDER.map((id) => (
-        <ConnectRow key={id} id={id} client={clients?.find((entry) => entry.id === id)} checking={checking} onChanged={onChanged} />
-      ))}
-      <div className="menu__separator" />
-      <button className="menu__item menu__item--quiet" onClick={() => window.open(MANUAL_SETUP_URL, '_blank')}>
-        <span className="menu__icon">
-          <ExternalLink size={13} strokeWidth={1.75} />
-        </span>
-        <span className="menu__label">Manual setup and other agents</span>
-      </button>
+      <ConnectList clients={clients} checking={checking} layout="menu" onChanged={onChanged} />
     </>
   )
 }
@@ -254,25 +144,11 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
   const [view, setView] = useState<'agents' | 'connect'>('agents')
   /** The user picked a view this time, so detection must not switch it. */
   const navigated = useRef(false)
-  const [clients, setClients] = useState<AgentClientsStatus | null>(null)
-  const [checking, setChecking] = useState(false)
-  const [checkError, setCheckError] = useState<string | null>(null)
+  const { clients, checking, error: checkError, refresh } = useAgentClients()
   const rootRef = useRef<HTMLDivElement>(null)
 
   const sessions = status?.sessions ?? []
   const now = useNow(open ? 1000 : 5000)
-
-  const refresh = (): void => {
-    setChecking(true)
-    window.space
-      .getAgentClients()
-      .then((value) => {
-        setClients(value)
-        setCheckError(null)
-      })
-      .catch((reason: unknown) => setCheckError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setChecking(false))
-  }
 
   // Detection runs on every open; the last answer stays for the next open.
   useEffect(() => {
@@ -280,7 +156,7 @@ export function AgentPill({ status, activityAt, guideOverrides, onOpenOverride }
     navigated.current = false
     setView('agents')
     refresh()
-  }, [open])
+  }, [open, refresh])
 
   const lines = agentLines(clients?.clients ?? null, sessions)
   // Nothing installed and nothing seen: open straight into View 2.

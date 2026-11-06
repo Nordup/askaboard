@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BookOpen, ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, LayoutDashboard, Pencil, Search, SquarePen, Trash } from 'lucide-react'
+import { BookOpen, ChevronsUpDown, Ellipsis, ExternalLink, Folder, FolderOpen, GraduationCap, Keyboard, LayoutDashboard, Pencil, Search, Settings, SquarePen, Trash } from 'lucide-react'
 import { shortAgo } from '@shared/board-digest'
 import type { BoardListEntry, GuideOverrides, RecentFolder } from '@shared/space-api'
 import { GuideOverrideNote } from './GuideOverrideNote'
@@ -7,7 +7,10 @@ import { Menu, type MenuEntry } from './Menu'
 import { RenameInput } from './RenameInput'
 import { SetupMenu } from './SetupMenu'
 import { TitleLead, type BoardNav } from './TitleLead'
+import type { SettingsSection } from './settings/SettingsDialog'
+import { KEYS_PANEL_KEY } from '../board/commands'
 import { openFolderLabel, revealLabel, shortcut } from '../platform'
+import { homePath, shortPath } from '../lib/paths'
 
 interface SidebarProps {
   /** View > Hide Sidebar: the sidebar stays mounted (its setup flyout can still open) but takes no space. */
@@ -52,33 +55,16 @@ interface SidebarProps {
   guideOverrides: GuideOverrides | null
   /** Open an override file (the same flow as Edit Board Guide…). */
   onOpenOverride(path: string): void
+  /** The folder menu's last items: Settings, and Settings at Keyboard shortcuts. */
+  onOpenSettings(section?: SettingsSection): void
 }
 
 const ICON = { size: 14, strokeWidth: 1.75 }
 /** Up to FULL_LIST_MAX boards the list shows them all. A longer list shows the first COLLAPSED_BOARDS, then "Show N more" (N ≥ 6). */
 const FULL_LIST_MAX = 15
 const COLLAPSED_BOARDS = 10
-/** The folder menu's path line: a longer path drops its middle folders (CSS ends a still longer one with an ellipsis). */
-const PATH_LINE_MAX = 32
 const MINUTE_MS = 60_000
 const ROW_ICON = { size: 16, strokeWidth: 1.75 }
-
-/** The path with `~` for the home folder. */
-function homePath(path: string, home: string): string {
-  if (!home || !path.startsWith(home)) return path
-  const rest = path.slice(home.length)
-  if (rest === '') return '~'
-  return rest.startsWith('/') || rest.startsWith('\\') ? `~${rest}` : path
-}
-
-/** One line for the path: `~/…/<parent>/<folder>` when it is longer than PATH_LINE_MAX. */
-function shortPath(path: string): string {
-  if (path.length <= PATH_LINE_MAX) return path
-  const separator = path.includes('/') ? '/' : '\\'
-  const parts = path.split(separator)
-  if (parts.length <= 4) return path
-  return [parts[0], '…', ...parts.slice(-2)].join(separator)
-}
 
 export function Sidebar(props: SidebarProps) {
   const { hidden, folderName, folderRoot, recent, boards, openBoard, renaming } = props
@@ -130,7 +116,10 @@ export function Sidebar(props: SidebarProps) {
                 onSelect: () => props.onOpenRecent(entry.path)
               }))
             )
-          : [])
+          : []),
+        'separator',
+        { label: 'Settings', icon: <Settings {...ICON} />, hint: shortcut(','), onSelect: () => props.onOpenSettings() },
+        { label: 'Keyboard shortcuts', icon: <Keyboard {...ICON} />, hint: KEYS_PANEL_KEY, onSelect: () => props.onOpenSettings('shortcuts') }
       ]
     })
   }

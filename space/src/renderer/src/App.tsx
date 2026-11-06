@@ -28,11 +28,11 @@ import { strokeShapeBytes } from './board/paint'
 import { CanvasNotice } from './components/CanvasNotice'
 import { PreviewPanel } from './components/PreviewPanel'
 import { SearchPanel } from './components/SearchPanel'
-import { KeysPanel } from './components/KeysPanel'
 import { Sidebar } from './components/Sidebar'
 import { ScriptPanel } from './components/ScriptPanel'
 import { Toast, type ToastAction } from './components/Toast'
-import { SettingsPanel } from './components/SettingsPanel'
+import { SettingsDialog, type SettingsSection } from './components/settings/SettingsDialog'
+import { useSetting } from './lib/settings'
 import { BoardControls } from './components/BoardControls'
 import { BoardMenu, hasBoardMenu } from './components/BoardMenu'
 import { KEYS_PANEL_KEY, type CommandContext } from './board/commands'
@@ -870,11 +870,17 @@ export function App() {
   const searchOpenRef = useRef(false)
   searchOpenRef.current = searchOpen
   const closeSearch = useCallback(() => setSearchOpen(false), [])
-  // The Settings panel (Settings…, ⌘,; the voice notice's action): also without a folder. Opening it or the search panel closes the other.
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  // The Settings dialog (decision U12), also without a folder: open or not, and at which section. Settings… (⌘,), the
+  // folder menu, ? (Keyboard shortcuts) and the voice notice (Voice) open it here. Opening it or the search panel closes the other.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null)
   const settingsOpenRef = useRef(false)
-  settingsOpenRef.current = settingsOpen
-  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  settingsOpenRef.current = settingsSection !== null
+  /** Open Settings at this section; with none, at the section it shows (General when it is closed). */
+  const openSettings = useCallback((section?: SettingsSection) => {
+    flushSync(() => setSearchOpen(false))
+    setSettingsSection((current) => section ?? current ?? 'general')
+  }, [])
+  const closeSettings = useCallback(() => setSettingsSection(null), [])
   useEffect(() => setSearchOpen(false), [folder?.root])
 
   // ⌘B (Ctrl+B): a window key, not a menu accelerator, so ⌘B in a text box stays bold (board/content.tsx).
@@ -890,11 +896,8 @@ export function App() {
     return () => window.removeEventListener('keydown', down)
   }, [toggleSidebar])
 
-  // View > Show performance: main holds the choice; the top bar's pill follows it.
-  const [showPerformance, setShowPerformance] = useState(false)
-  useEffect(() => {
-    void space.getShowPerformance().then(setShowPerformance)
-  }, [])
+  // Settings > General > Show performance (also View > Show performance): main owns it; the top bar's pill follows it.
+  const showPerformance = useSetting((settings) => settings.general.showPerformance, false)
 
   /** The text of each board with unsaved edits, as it is now: the newest version, whatever write failed. */
   const unsavedBoards = (): FailedSave[] => {
@@ -946,10 +949,7 @@ export function App() {
           kind: 'warn',
           action: {
             label: 'Set up local voice',
-            run: () => {
-              setSearchOpen(false)
-              setSettingsOpen(true)
-            }
+            run: () => openSettings('voice')
           }
         })
       ),
@@ -960,11 +960,9 @@ export function App() {
         // ⌘N, ⌘O, ⌘[, ⌘] and the setup item close the search panel first; the zoom keys do not reach the board under it.
         const opensBoard = command === 'new-board' || command === 'back' || command === 'forward'
         if (searchOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder')) flushSync(() => setSearchOpen(false))
-        if (settingsOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsOpen(false))
-        if (command === 'open-settings') {
-          flushSync(() => setSearchOpen(false))
-          setSettingsOpen(true)
-        } else if (settingsOpenRef.current && command.startsWith('zoom-')) return
+        if (settingsOpenRef.current && (command === 'open-folder' || opensBoard || command === 'setup-folder' || command === 'search-boards')) flushSync(() => setSettingsSection(null))
+        if (command === 'open-settings') openSettings()
+        else if (settingsOpenRef.current && command.startsWith('zoom-')) return
         else if (command === 'search-boards') setSearchOpen((open) => !open && folderRef.current !== null)
         else if (command === 'open-folder') void openFolderDialogRef.current()
         else if (command === 'new-board') void createBoardRef.current()
@@ -974,8 +972,6 @@ export function App() {
         else if (command === 'zoom-in') boardRef.current?.zoomStep('in', 'menu')
         else if (command === 'zoom-out') boardRef.current?.zoomStep('out', 'menu')
         else if (command === 'zoom-reset') boardRef.current?.zoomStep('reset', 'menu')
-        else if (command === 'show-performance') setShowPerformance(true)
-        else if (command === 'hide-performance') setShowPerformance(false)
         else if (command === 'select-all') {
           // A focused text field selects its own text; otherwise the board selects all nodes.
           const active = document.activeElement
@@ -996,7 +992,7 @@ export function App() {
       active = false
       offs.forEach((off) => off())
     }
-  }, [applySnapshot])
+  }, [applySnapshot, openSettings])
 
   const createBoardRef = useRef(createBoard)
   createBoardRef.current = createBoard
@@ -1118,6 +1114,10 @@ export function App() {
           /** The focused element: tag, class and its text (checks of the focus return). */
           focus: document.activeElement && document.activeElement !== document.body ? `${document.activeElement.tagName.toLowerCase()}.${document.activeElement.className} ${(document.activeElement.textContent ?? '').trim().slice(0, 40)}`.trim() : null,
           searchOpen: document.querySelector('.search-panel') !== null,
+          /** The page's device pixel ratio: the screen scale times the page zoom (Interface Size). */
+          devicePixelRatio: window.devicePixelRatio,
+          /** The Settings dialog's section, or null when it is closed. */
+          settingsSection: document.querySelector<HTMLElement>('.settings-dialog .menu__pane')?.dataset.section ?? null,
           sidebarHidden: sidebarHiddenRef.current,
           nodes: (live?.nodes ?? []).map((node) => {
             const bounds = live?.bounds(node.id)
@@ -1241,19 +1241,17 @@ export function App() {
     }
   }, [agentContext])
 
-  // ---------- The keys panel (?) ----------
+  // ---------- ? opens Settings > Keyboard shortcuts ----------
 
-  const [keysOpen, setKeysOpen] = useState(false)
-  const closeKeys = useCallback(() => setKeysOpen(false), [])
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
       if (event.key !== KEYS_PANEL_KEY || event.metaKey || event.ctrlKey || event.altKey || event.repeat || isEditableTarget(event.target)) return
       event.preventDefault()
-      setKeysOpen(true)
+      openSettings('shortcuts')
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [])
+  }, [openSettings])
 
   // ---------- Tool keys (tools.ts TOOLS), Q for the lock ----------
 
@@ -1350,6 +1348,7 @@ export function App() {
         onEditGuide={() => void editGuide()}
         guideOverrides={guideOverrides}
         onOpenOverride={(path) => void editGuide(path)}
+        onOpenSettings={openSettings}
       />
       <main className="main">
         <TopBar
@@ -1432,7 +1431,6 @@ export function App() {
           {previewPath && <PreviewPanel path={previewPath} version={previewVersion} onClose={() => setPreviewPath(null)} />}
         </div>
       </main>
-      {keysOpen && <KeysPanel onClose={closeKeys} />}
       {searchOpen && folder && (
         <SearchPanel
           boards={boards}
@@ -1443,7 +1441,27 @@ export function App() {
           onOpenFolder={openFolderFromSearch}
         />
       )}
-      {settingsOpen && <SettingsPanel onClose={closeSettings} />}
+      {settingsSection && (
+        <SettingsDialog
+          section={settingsSection}
+          onSection={setSettingsSection}
+          onClose={closeSettings}
+          folder={folder ? { name: folder.name, root: folder.root, setUp: folder.setUp || hasAgentsFile } : null}
+          homeDir={shellStart.homeDir}
+          folderActions={{
+            onOpenFolder: () => void openFolderDialog(),
+            onReveal: () => reveal('.'),
+            onEditGuide: () => {
+              flushSync(closeSettings)
+              void editGuide()
+            },
+            onSetUp: () => {
+              flushSync(closeSettings)
+              setMenuSetup(true)
+            }
+          }}
+        />
+      )}
       <Tooltips />
     </div>
   )

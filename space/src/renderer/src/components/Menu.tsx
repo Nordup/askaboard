@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useDragStripsOff } from '../lib/dismiss'
 import { markFocus, returnFocus } from '../lib/focus'
 
 export interface MenuItem {
@@ -36,6 +37,7 @@ export function Menu({ x, y, above = false, entries, onClose, minWidth = 180, cl
   // Hidden until it is measured, so a menu that opens upward never shows a frame at the wrong place.
   const [position, setPosition] = useState<{ left: number; top: number; visibility?: 'hidden' }>({ left: x, top: y, visibility: 'hidden' })
   const [opener] = useState(markFocus)
+  useDragStripsOff(true)
 
   // Keep the menu inside the window.
   useLayoutEffect(() => {

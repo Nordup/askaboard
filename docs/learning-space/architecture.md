@@ -22,7 +22,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 - The **main process owns the outside world**: the window, the MCP server,
   disk access through one path guard, the snapshot window, the files in
   `~/.learning-space/`, the voice (`src/main/voice.ts`: our voice server, the
-  learner's key or local Kokoro; T34, T39, T40), the settings (`settings.ts`) and
+  learner's key or local Kokoro; T34, T39, T40), every user setting (`settings.ts`, the one owner and change path, U12) and
   usage data (`analytics.ts`, P24).
 - The **learning folder is the only persistent store** of learning content.
   App preferences (recent folders, cameras) live in Electron's `userData`
@@ -457,8 +457,11 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   `WelcomeCard.tsx`, `CanvasNotice.tsx`, `Toast.tsx`, `Tooltip.tsx`, `PerfPill.tsx`.
 - Scenes: `ScenePill.tsx` (in `TopBar.tsx`; its menu lists the board's scenes) and `ScriptPanel.tsx` (the floating reading panel for one scene).
 - Menus, popovers and panels: `Menu.tsx`, `AgentPill.tsx`, `SetupMenu.tsx`,
-  `GuideOverrideNote.tsx`, `SearchPanel.tsx` (⌘K), `SettingsPanel.tsx` (⌘,) —
-  all built on the shared menu system.
+  `GuideOverrideNote.tsx`, `ModalPanel.tsx` (the one modal panel), `SearchPanel.tsx` (⌘K),
+  `ConnectAgents.tsx` (the agent popover and Settings > Agents), `settings/` (the Settings
+  dialog, ⌘,: `SettingsDialog.tsx`, one file per section, `parts.tsx`; U12) —
+  all built on the shared menu system. `lib/settings.ts` is the renderer's one mirror of
+  main's settings snapshot.
 - Styles: `styles/tokens.css` (all design tokens), `styles/app.css` (all app
   UI, including the menu system), `board/board.css`, `board/content.css`.
 - Rules: [`design-system.md`](design-system.md).

@@ -24,6 +24,8 @@
  *   node scripts/drive.mjs recent <folder>      the sidebar's own recent-folder item
  *   node scripts/drive.mjs close                close the window, as the red button does
  *   node scripts/drive.mjs menu <id>            choose an app menu item by id, as its accelerator does (CDP keys do not reach the menu), e.g. search-boards (⌘K)
+ *   node scripts/drive.mjs menu-state <id>      an app menu item as it shows: label, checked, enabled, visible (JSON)
+ *   node scripts/drive.mjs select <css> [value] a <select>'s value and options; with a value, choose it as the learner does (a change event)
  *   node scripts/drive.mjs close-answer try|close   answer the sheet "Couldn't save your board"
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
@@ -67,7 +69,11 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
   recent <folder>                                the sidebar's recent-folder item (prints the open board)
   close                                          close the window, as the red button does
   menu <id>                                      choose an app menu item by id (search-boards: File > Search Boards…, ⌘K)
-                                                 interface-size-auto, interface-size-<percent> (interface-size-120): View > Interface Size
+                                                 interface-size-auto, interface-size-<percent> (interface-size-120): View > Interface Size;
+                                                 settings (Settings…, ⌘,), show-performance, read-lines, voice:<name>, pace:<id>
+  menu-state <id>                                the menu item as it shows: {label, checked, enabled, visible}, or null
+  select <css selector> [value]                  print the first matching <select>'s {value, options}; with a value, choose
+                                                 it first (React hears a change event, as from the native popup)
   close-answer try|close                         answer the sheet "Couldn't save your board"
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
                                                  current scene at t seconds; let it run on; end every scene
@@ -583,6 +589,22 @@ async function main() {
       if (!ran) throw new Failure(`Menu item "${rest[0]}" is missing, hidden or disabled (or the app runs without SPACE_REMOTE_DEBUG).`)
       await sleep(150)
       console.log(JSON.stringify({ menu: rest[0], ran }))
+    }
+  } else if (command === 'menu-state') {
+    if (!rest[0]) throw new Failure('menu-state needs a menu item id, for example show-performance.')
+    run = async (cdp) => {
+      console.log(JSON.stringify(await evaluate(cdp, `window.space.devMenuItem(${JSON.stringify(rest[0])})`)))
+    }
+  } else if (command === 'select') {
+    if (!rest[0]) throw new Failure('select needs a CSS selector, for example ".settings-dialog select".')
+    run = async (cdp) => {
+      const answer = await evaluate(
+        cdp,
+        `(() => { const el = document.querySelector(${JSON.stringify(rest[0])}); if (!(el instanceof HTMLSelectElement)) return null; const value = ${JSON.stringify(rest[1] ?? null)}; if (value !== null) { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, value); el.dispatchEvent(new Event('change', { bubbles: true })) } return { value: el.value, options: [...el.options].map((option) => ({ value: option.value, label: option.label })) } })()`
+      )
+      if (!answer) throw new Failure(`No <select> matches ${rest[0]}.`)
+      await sleep(150)
+      console.log(JSON.stringify(answer))
     }
   } else if (command === 'close') {
     run = async (cdp) => {

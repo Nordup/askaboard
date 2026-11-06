@@ -1,6 +1,5 @@
 import { app, Menu, type MenuItemConstructorOptions } from 'electron'
-import { PACES, VOICES, type PaceName } from './voice'
-import { INTERFACE_SIZES, percent, type InterfaceSize } from './interface-size'
+import { interfaceSizeLabel, type SettingsChange, type SettingsSnapshot } from '@shared/space-api'
 
 export interface MenuActions {
   openFolder(): void
@@ -18,22 +17,15 @@ export interface MenuActions {
   /** View > Hide Sidebar / Show Sidebar: the state at launch, and the toggle (setSidebarMenu follows it later). */
   sidebarHidden: boolean
   toggleSidebar(): void
-  /** View > Show performance: its state at launch, and the change. */
-  showPerformance: boolean
-  setShowPerformance(on: boolean): void
-  /** View > Read Lines Aloud, Voice and Pace: their state at launch, and the changes. They count for new scenes. setReadLinesChecked sets the first one later. */
-  readLines: boolean
-  setReadLines(on: boolean): void
-  voice: string
-  setVoice(voice: string): void
-  pace: PaceName
-  setPace(pace: PaceName): void
-  /** Settings… (⌘,): the renderer opens the Settings panel. */
+  /** Settings… (⌘,): the renderer opens the Settings dialog. */
   openSettings(): void
-  /** View > Interface Size: the setting, the automatic factor for the window's display, and the changes. The menu is built again after each change. */
-  interfaceSize: InterfaceSize
-  automaticSize: number
-  setInterfaceSize(size: InterfaceSize): void
+  /**
+   * The settings items (View > Interface Size, Show performance, Read Lines Aloud, Voice, Pace) show the snapshot of
+   * main/settings.ts and change through its one path. Every change there builds the menu again, so the items never
+   * keep a state of their own.
+   */
+  settings: SettingsSnapshot
+  changeSettings(change: SettingsChange): void
   stepInterfaceSize(direction: 1 | -1): void
 }
 
@@ -44,7 +36,6 @@ export interface MenuActions {
  */
 const SETUP_ITEM = 'setup-folder'
 const SEARCH_ITEM = 'search-boards'
-const READ_LINES_ITEM = 'read-lines'
 const SETTINGS_ITEM = 'settings'
 const voiceItem = (voice: string): string => `voice:${voice}`
 const paceItem = (pace: string): string => `pace:${pace}`
@@ -75,21 +66,6 @@ export function setFolderOpen(open: boolean): void {
   }
 }
 
-/** View > Read Lines Aloud shows this. */
-export function setReadLinesChecked(on: boolean): void {
-  const item = Menu.getApplicationMenu()?.getMenuItemById(READ_LINES_ITEM)
-  if (item) item.checked = on
-}
-
-/** View > Voice and Pace show these (a change from the Settings panel). */
-export function setVoiceMenu(voice: string, pace: string): void {
-  const menu = Menu.getApplicationMenu()
-  const voiceEntry = menu?.getMenuItemById(voiceItem(voice))
-  const paceEntry = menu?.getMenuItemById(paceItem(pace))
-  if (voiceEntry) voiceEntry.checked = true
-  if (paceEntry) paceEntry.checked = true
-}
-
 /** View > Hide Sidebar or Show Sidebar, whichever fits the sidebar now. */
 export function setSidebarMenu(hidden: boolean): void {
   const menu = Menu.getApplicationMenu()
@@ -116,7 +92,15 @@ export function devClickMenu(id: string): boolean {
   return true
 }
 
+/** Dev hook: the menu item with this id as it shows now (drive.mjs menu-state). */
+export function devMenuItem(id: string): { label: string; checked: boolean; enabled: boolean; visible: boolean } | null {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(id)
+  return item ? { label: item.label, checked: item.checked, enabled: item.enabled, visible: item.visible } : null
+}
+
 export function installMenu(actions: MenuActions): void {
+  const { general, voice } = actions.settings
+  const change = actions.changeSettings
   const isMac = process.platform === 'darwin'
   const sidebarKey: Partial<MenuItemConstructorOptions> = isMac ? {} : { accelerator: 'CmdOrCtrl+B', registerAccelerator: false }
   const settingsItem: MenuItemConstructorOptions = { id: SETTINGS_ITEM, label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => actions.openSettings() }
@@ -185,17 +169,18 @@ export function installMenu(actions: MenuActions): void {
             { label: 'Larger', accelerator: 'CmdOrCtrl+Alt+=', click: () => actions.stepInterfaceSize(1) },
             { label: 'Smaller', accelerator: 'CmdOrCtrl+Alt+-', click: () => actions.stepInterfaceSize(-1) },
             { type: 'separator' },
-            { id: 'interface-size-auto', label: `Automatic (${percent(actions.automaticSize)})`, accelerator: 'CmdOrCtrl+Alt+0', type: 'radio', checked: actions.interfaceSize === 'auto', click: () => actions.setInterfaceSize('auto') },
+            { id: 'interface-size-auto', label: interfaceSizeLabel('auto', general.automaticSize), accelerator: 'CmdOrCtrl+Alt+0', type: 'radio', checked: general.interfaceSize === 'auto', click: () => change({ interfaceSize: 'auto' }) },
             // Ids for the dev hook (drive.mjs menu interface-size-120): the percent.
-            ...INTERFACE_SIZES.map((size) => ({ id: `interface-size-${Math.round(size * 100)}`, label: percent(size), type: 'radio' as const, checked: actions.interfaceSize === size, click: () => actions.setInterfaceSize(size) }))
+            ...general.interfaceSizes.map((size) => ({ id: `interface-size-${Math.round(size * 100)}`, label: interfaceSizeLabel(size, general.automaticSize), type: 'radio' as const, checked: general.interfaceSize === size, click: () => change({ interfaceSize: size }) }))
           ]
         },
         { type: 'separator' },
-        { id: 'show-performance', label: 'Show performance', type: 'checkbox', checked: actions.showPerformance, click: (item) => actions.setShowPerformance(item.checked) },
+        { id: 'show-performance', label: 'Show performance', type: 'checkbox', checked: general.showPerformance, click: (item) => change({ showPerformance: item.checked }) },
         { type: 'separator' },
-        { id: READ_LINES_ITEM, label: 'Read Lines Aloud', type: 'checkbox', checked: actions.readLines, click: (item) => actions.setReadLines(item.checked) },
-        { label: 'Voice', submenu: VOICES.map((voice) => ({ id: voiceItem(voice), label: voice, type: 'radio' as const, checked: voice === actions.voice, click: () => actions.setVoice(voice) })) },
-        { label: 'Pace', submenu: (Object.keys(PACES) as PaceName[]).map((pace) => ({ id: paceItem(pace), label: PACES[pace].label, type: 'radio' as const, checked: pace === actions.pace, click: () => actions.setPace(pace) })) },
+        { id: 'read-lines', label: 'Read Lines Aloud', type: 'checkbox', checked: voice.readLines, click: (item) => change({ readLines: item.checked }) },
+        // The voices of the chosen model (Settings > Voice), as the dialog's select shows them.
+        { label: 'Voice', submenu: voice.voices.map((name) => ({ id: voiceItem(name), label: name, type: 'radio' as const, checked: name === voice.voice, click: () => change({ voice: name }) })) },
+        { label: 'Pace', submenu: voice.paces.map((pace) => ({ id: paceItem(pace.id), label: pace.label, type: 'radio' as const, checked: pace.id === voice.pace, click: () => change({ pace: pace.id }) })) },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
