@@ -36,6 +36,37 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
+/* ---------- Scrollbars (U14) ---------- */
+
+/* One style for every scroll area (the Settings pane, the search list, the sidebar, menus, any overflow): a thin
+   rounded thumb, no track, no arrow buttons. The board canvas does not scroll natively, so it shows none. */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: var(--scrollbar-inset) solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
 .mono {
   font-family: var(--font-mono);
 }
@@ -1326,7 +1357,7 @@ button:focus-visible {
  *   .menu__item--current   the row of what shows now (a selected row: --bg-active, also on hover)
  *   .menu__sub             dim text right after a .menu__label (a board's folder); the .menu__hint goes to the right
  *   .menu__match           the part of a label that matches the typed text (--accent)
- *   .menu--panel           a modal panel over a .backdrop (ModalPanel.tsx: the search panel, the Settings dialog): --bg-glass over a blur (--glass-filter),
+ *   .menu--panel           a modal panel over a .backdrop (ModalPanel.tsx: the search panel, the Settings dialog): opaque --bg-elevated as every menu,
  *                          --radius-xl, --border-strong, --shadow-card, rows of --panel-row-height; the selection is
  *                          the one fill (hover moves it); the instance sets the panel's height
  *   .menu__field/__input   the panel's search field at the top: a 17 px icon, 15 px text, a hairline under it
@@ -1342,7 +1373,10 @@ button:focus-visible {
  *   .menu__scroll          the panel's rows under the field: it fills the panel and scrolls
  *   .menu__row             plain row: .menu__name left, .menu__meta or .menu__control right
  *   .menu__switch          a small on/off toggle in a .menu__control
- *   .menu__select          a small native select in a .menu__control (a voice, a pace)
+ *   .menu__select          the app's own dropdown's trigger (Select.tsx, never a native select) in a .menu__control: a soft
+ *                          --bg-field, the value, a chevron; in a .menu__select-root that also holds its list
+ *   .menu--select          the dropdown's open list: --bg-elevated-2, rows of .menu__option (hover and keys move the one
+ *                          --bg-active fill, data-active; the chosen one has a .menu__option-check at the right)
  *   .menu__text            a small text field in a .menu__row (a key), before its .btn-sm
  *   .menu__progress        a 90 × 4 px accent progress bar (.menu__progress-bar sets its width), a % .menu__meta--mono after it
  *   .menu__meta--mono      a live number in a row: mono, tabular figures, secondary text
@@ -1491,7 +1525,7 @@ button:focus-visible {
   color: var(--accent);
 }
 
-/* A modal panel (ModalPanel.tsx: the search panel, the Settings dialog): over a .backdrop, a little see-through over a blur; the instance sets its position, width and height. */
+/* A modal panel (ModalPanel.tsx: the search panel, the Settings dialog): over a .backdrop, opaque as every menu (U14); the instance sets its position, width and height. */
 .menu--panel {
   --menu-radius: var(--radius-xl);
   --menu-item-radius: var(--radius-md);
@@ -1500,9 +1534,7 @@ button:focus-visible {
   padding: 0;
   overflow: hidden;
   border-color: var(--border-strong);
-  background: var(--bg-glass);
   box-shadow: var(--shadow-card);
-  backdrop-filter: var(--glass-filter);
 }
 
 .menu--panel .menu__scroll {
@@ -1762,15 +1794,83 @@ button:focus-visible {
   min-height: 24px;
 }
 
+/* ---------- The select (U14): the app's own dropdown (Select.tsx) ---------- */
+
+.menu__select-root {
+  display: inline-flex;
+}
+
 .menu__select {
-  height: 24px;
-  padding: 0 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--select-height);
+  padding: var(--select-pad);
+  border-radius: var(--select-radius);
+  background: var(--bg-field);
   color: var(--text-primary);
-  font: inherit;
-  font-size: var(--menu-meta-font);
+  font-size: var(--text-base);
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+
+.menu__select:hover:not(:disabled),
+.menu__select[aria-expanded='true'] {
+  background: var(--bg-field-hover);
+}
+
+.menu__select:disabled {
+  opacity: var(--disabled-opacity);
+}
+
+.menu__select-chevron {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+/* The open list: fixed at the trigger (Select.tsx places it), over the panel it is in. */
+.menu--select {
+  --menu-pad: var(--select-list-pad);
+  --menu-radius: var(--select-list-radius);
+  min-width: var(--select-list-min-width);
+  max-height: var(--select-list-max-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-color: var(--border-strong);
+  background: var(--bg-elevated-2);
+}
+
+/* The list holds the focus for its keys; the --bg-active row shows where they are. */
+.menu--select:focus-visible {
+  outline: none;
+}
+
+.menu__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--select-option-height);
+  padding: var(--select-option-pad);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  white-space: nowrap;
+}
+
+.menu__option[data-active] {
+  background: var(--bg-active);
+}
+
+.menu__option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu__option-check {
+  flex-shrink: 0;
+  color: var(--text-primary);
 }
 
 .menu__text {

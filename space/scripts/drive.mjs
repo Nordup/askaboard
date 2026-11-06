@@ -25,7 +25,7 @@
  *   node scripts/drive.mjs close                close the window, as the red button does
  *   node scripts/drive.mjs menu <id>            choose an app menu item by id, as its accelerator does (CDP keys do not reach the menu), e.g. search-boards (⌘K)
  *   node scripts/drive.mjs menu-state <id>      an app menu item as it shows: label, checked, enabled, visible (JSON)
- *   node scripts/drive.mjs select <css> [value] a <select>'s value and options; with a value, choose it as the learner does (a change event)
+ *   node scripts/drive.mjs select <css> [label] an app dropdown's value and options (Select.tsx); with a label, choose it as the learner does (two clicks)
  *   node scripts/drive.mjs close-answer try|close   answer the sheet "Couldn't save your board"
  *   node scripts/drive.mjs scene [seek <t> | play | finish]   live-scene playback: state, hold at t s, run on, end
  *   node scripts/drive.mjs camera <x> <y>       centre the learner's view on a board point (zoom kept)
@@ -72,7 +72,7 @@ const USAGE = `usage: node scripts/drive.mjs [--port N] <command>
                                                  interface-size-auto, interface-size-<percent> (interface-size-120): View > Interface Size;
                                                  settings (Settings…, ⌘,), show-performance, read-lines, voice:<name>, pace:<id>
   menu-state <id>                                the menu item as it shows: {label, checked, enabled, visible}, or null
-  select <css selector> [value]                  print the first matching <select>'s {value, options}; with a value, choose
+  select <css selector> [label]                  print the first matching dropdown trigger's {value, options}; with a label, choose
                                                  it first (React hears a change event, as from the native popup)
   close-answer try|close                         answer the sheet "Couldn't save your board"
   scene [seek <t> | play | finish]               live-scene playback (play_scene): print its state; hold the
@@ -596,15 +596,27 @@ async function main() {
       console.log(JSON.stringify(await evaluate(cdp, `window.space.devMenuItem(${JSON.stringify(rest[0])})`)))
     }
   } else if (command === 'select') {
-    if (!rest[0]) throw new Failure('select needs a CSS selector, for example ".settings-dialog select".')
+    if (!rest[0]) throw new Failure('select needs the CSS selector of a dropdown trigger, for example \'.menu__select[aria-label="Voice"]\'.')
     run = async (cdp) => {
-      const answer = await evaluate(
-        cdp,
-        `(() => { const el = document.querySelector(${JSON.stringify(rest[0])}); if (!(el instanceof HTMLSelectElement)) return null; const value = ${JSON.stringify(rest[1] ?? null)}; if (value !== null) { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, value); el.dispatchEvent(new Event('change', { bubbles: true })) } return { value: el.value, options: [...el.options].map((option) => ({ value: option.value, label: option.label })) } })()`
-      )
-      if (!answer) throw new Failure(`No <select> matches ${rest[0]}.`)
+      // The app's own dropdown (Select.tsx): the trigger is a .menu__select button; its list opens on a click.
+      const center = (selector) =>
+        evaluate(cdp, `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+      const trigger = await center(rest[0])
+      if (!trigger) throw new Failure(`No dropdown trigger matches ${rest[0]}.`)
+      const listOf = `document.querySelector(${JSON.stringify(rest[0])}).closest('.menu__select-root').querySelector('[role=listbox]')`
+      const isOpen = () => evaluate(cdp, `!!${listOf}`)
+      if (!(await isOpen())) await click(cdp, trigger.x, trigger.y)
       await sleep(150)
-      console.log(JSON.stringify(answer))
+      const options = await evaluate(cdp, `[...(${listOf}?.querySelectorAll('[role=option]') ?? [])].map((el) => ({ label: el.textContent, selected: el.getAttribute('aria-selected') === 'true' }))`)
+      if (rest[1] !== undefined) {
+        const index = options.findIndex((option) => option.label === rest[1])
+        if (index < 0) throw new Failure(`The dropdown has no option "${rest[1]}": ${options.map((option) => option.label).join(', ')}.`)
+        const at = await evaluate(cdp, `(() => { const el = ${listOf}.querySelectorAll('[role=option]')[${index}]; el.scrollIntoView({ block: 'nearest' }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+        await click(cdp, at.x, at.y)
+      } else if (await isOpen()) await click(cdp, trigger.x, trigger.y)
+      await sleep(150)
+      const value = await evaluate(cdp, `document.querySelector(${JSON.stringify(rest[0])}).textContent`)
+      console.log(JSON.stringify({ value, options: options.map((option) => option.label) }))
     }
   } else if (command === 'close') {
     run = async (cdp) => {

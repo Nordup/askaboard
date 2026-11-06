@@ -89,7 +89,7 @@ Electron runs native Wayland. Differences from macOS:
   voice, the pace, the Gemini key and the local voice: Install downloads
   Kokoro (about 370 MB, `~/.learning-space/models/kokoro/`, T40). When the
   voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
-  silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. Clips stay in the folder's `.learning-space/voice/`.
+  silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. The play button's sample of the cloud voice ships with the app (`resources/voice-samples/`), so it plays at once; Kokoro makes its sample on the Mac. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
@@ -247,7 +247,7 @@ to 20 s for that window and its dev hook to load.
 | `eval-state` | Board, zoom, tool, selection and nodes as JSON |
 | `recent <folder>`, `draw … --then-recent <folder>` | The sidebar's recent-folder item; with `draw`, right after the last pen-up |
 | `close`, `close-answer try\|close` | Closes the window, as the red button does; answers the sheet "Couldn't save your board" |
-| `select <css selector> [value]` | Prints a `<select>`'s value and options; with a value, chooses it as the learner does |
+| `select <css selector> [label]` | Prints an app dropdown's value and options (the `.menu__select` trigger, `Select.tsx`); with a label, opens it and clicks that option as the learner does |
 | `menu <id>`, `menu-state <id>` | Chooses an app menu item by id, as its accelerator does (`settings`, `search-boards`, `show-performance`, `interface-size-120`, `pace:<id>`); prints a menu item as it shows (label, checked, enabled, visible) |
 | `frames <ms>` | Counts the window's display frames for that long (run it beside a `drag`): fps and the longest frame. A window in the background may get fewer frames |
 
@@ -255,6 +255,12 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
 
 - `node scripts/boards/make-demo-folder.mjs <folder>` makes a demo learning
   folder with a v2 board (frames, text, math, SVG, an image, ink) and an old v1 board.
+- `node --no-warnings scripts/voice/make-samples.mjs [voice…]` makes the cloud
+  voice's Settings samples that ship with the app (decision U14): one AAC clip
+  of the sample sentence per voice and pace, from our voice server, into
+  `resources/voice-samples/` (about 410 KB for 18 clips; macOS, `afconvert`).
+  It is an asset build tool: run it again when the voices, the paces or the
+  sample text in `src/main/voice-choices.ts` change, and commit the clips.
 - `scripts/strokes/` holds sample handwriting: `two-plus-two.json` and `equals-four.json`.
 - `node scripts/trace-report.mjs <file|dir>` summarises session traces.
 - `node scripts/perf/render.mjs` measures what the worlds and the board cost on

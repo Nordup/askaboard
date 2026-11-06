@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Loader2, Play } from 'lucide-react'
 import type { SettingsSnapshot } from '@shared/space-api'
 import { errorMessage } from '../../lib/errors'
 import { changeSettings } from '../../lib/settings'
+import { Select } from '../Select'
 import { tip } from '../Tooltip'
 import { SettingRow } from './parts'
 
@@ -56,9 +57,9 @@ export function VoiceSection({ voice }: { voice: SettingsSnapshot['voice'] }) {
     setSampleError(null)
     setSampleState('loading')
     try {
-      const bytes = await space.playVoiceSample()
+      const { bytes, type } = await space.playVoiceSample()
       if (!liveRef.current) return
-      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'audio/wav' }))
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type }))
       const audio = new Audio(url)
       if (audioRef.current) URL.revokeObjectURL(audioRef.current.src)
       audioRef.current = audio
@@ -150,25 +151,13 @@ export function VoiceSection({ voice }: { voice: SettingsSnapshot['voice'] }) {
         </SettingRow>
       </div>
       <SettingRow name="Voice" description="The voice that reads the lines" lines={sampleError && <ErrorLine text={sampleError} />}>
-        <select className="menu__select" aria-label="Voice" value={voice.voice} onChange={(event) => changeSettings({ voice: event.target.value })}>
-          {voice.voices.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
+        <Select label="Voice" value={voice.voice} options={voice.voices.map((name) => ({ value: name, label: name }))} onChange={(name) => changeSettings({ voice: name })} />
         <button className="icon-button" {...tip('Play a sample')} aria-label="Play a sample" onClick={() => void playSample()}>
           {sampleState === 'loading' ? <Loader2 className="menu__spinner" size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} />}
         </button>
       </SettingRow>
       <SettingRow name="Pace" description="How fast the lines are read">
-        <select className="menu__select" aria-label="Pace" value={voice.pace} onChange={(event) => changeSettings({ pace: event.target.value })}>
-          {voice.paces.map((pace) => (
-            <option key={pace.id} value={pace.id}>
-              {pace.label}
-            </option>
-          ))}
-        </select>
+        <Select label="Pace" value={voice.pace} options={voice.paces.map((pace) => ({ value: pace.id, label: pace.label }))} onChange={(pace) => changeSettings({ pace })} />
       </SettingRow>
       <SettingRow name="Gemini key" description="Optional: your own key removes the daily limit" lines={keyError && <ErrorLine text={keyError} />}>
         {voice.keySaved ? (

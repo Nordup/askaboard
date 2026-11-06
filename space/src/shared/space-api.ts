@@ -717,8 +717,8 @@ export interface SpaceApi {
   setSettings(change: SettingsChange): Promise<void>
   installLocalVoice(): Promise<void>
   removeLocalVoice(): Promise<void>
-  /** A short WAV in the current model, voice and pace. */
-  playVoiceSample(): Promise<Uint8Array>
+  /** A short sample in the current model, voice and pace: the cloud voice's bundled AAC clip, or a WAV of the local voice. */
+  playVoiceSample(): Promise<{ bytes: Uint8Array; type: string }>
   /** Write GEMINI_API_KEY into ~/.learning-space/.env, or remove it. */
   saveGeminiKey(key: string): Promise<void>
   removeGeminiKey(): Promise<void>

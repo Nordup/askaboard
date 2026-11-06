@@ -5,7 +5,9 @@ import { record } from './analytics'
 import { telemetryIdentity } from './analytics-id'
 import { readVoiceKey } from './voice-key'
 import { LOCAL_MODEL, localVoiceState, speakLocal } from './kokoro'
+import { resourcePath } from './resources'
 import { getLocalVoice, getPace, getVoice, getVoiceModel } from './state'
+import { PACES, SAMPLE_DIR, SAMPLE_TEXT, sampleFile, speechRequest, voiceHost, type PaceName } from './voice-choices'
 
 /**
  * The voice of say() lines (docs/learning-space/voice-lines-plan.md): the only
@@ -27,9 +29,6 @@ import { getLocalVoice, getPace, getVoice, getVoiceModel } from './state'
 
 const MODEL = 'gemini-3.8-flash-lite-tts'
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
-/** Our voice server (decision P25): POST /v1/speech. LEARNING_SPACE_VOICE_HOST changes it. */
-const DEFAULT_VOICE_HOST = 'https://135-181-38-113.sslip.io'
-const voiceHost = (): string => (process.env.LEARNING_SPACE_VOICE_HOST?.trim() || DEFAULT_VOICE_HOST).replace(/\/+$/, '')
 /** Between lines in the joined text: plain prose, so the model pauses as it does between any two sentences. */
 const LINE_JOIN = ' '
 /** Clips, from the learning folder's root. renderer/live/voice.ts plays them, and folder.ts readAsset serves only this folder. */
@@ -39,15 +38,6 @@ const REQUEST_LIMIT_MS = 45_000
 const RETRY_WAIT_MS = 1000
 /** What a retry needs of the limit: a request takes 4 to 8 s, and a wait that leaves less gives no audio after it. */
 const RETRY_ROOM_MS = 10_000
-
-export const VOICES = ['Charon', 'Kore', 'Aoede', 'Leda', 'Puck', 'Orus'] as const
-/** style: the cloud voice's direction; speed: the local voice's speed (Kokoro). */
-export const PACES = {
-  calm: { label: 'Calm', style: 'calm and unhurried teacher', speed: 0.9 },
-  natural: { label: 'Natural', style: 'a natural, friendly teacher at a normal conversational pace', speed: 1 },
-  brisk: { label: 'Brisk', style: 'an energetic teacher, speaking quickly and clearly', speed: 1.1 }
-} as const
-export type PaceName = keyof typeof PACES
 
 /** Where one line is in its clip, in seconds. from: in the silence just before its words; speech_end: where its words end; to: where the next line starts, so to - from holds the pause. */
 interface LinePlace {
@@ -326,26 +316,29 @@ async function localAudio(text: string, voice: string, speed: number, signal: Ab
 /** One request, and one retry after a failure that a retry can help: all of it within REQUEST_LIMIT_MS. signal: the scene was cancelled. */
 async function requestAudio(speaker: Exclude<Speaker, { source: 'local' }>, text: string, voice: string, style: string, signal: AbortSignal): Promise<Buffer> {
   const name = speakerName(speaker)
-  const [url, headers, body] =
+  const [url, init]: [string, RequestInit] =
     speaker.source === 'own_key'
       ? [
           ENDPOINT,
-          { 'content-type': 'application/json', 'x-goog-api-key': speaker.key },
-          JSON.stringify({
-            model: MODEL,
-            input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
-            response_format: { type: 'audio' },
-            generation_config: { speech_config: [{ voice }] }
-          })
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-goog-api-key': speaker.key },
+            body: JSON.stringify({
+              model: MODEL,
+              input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
+              response_format: { type: 'audio' },
+              generation_config: { speech_config: [{ voice }] }
+            })
+          }
         ]
-      : [`${speaker.host}/v1/speech`, { 'content-type': 'application/json', 'x-install-user': speaker.user }, JSON.stringify({ text, voice, style })]
+      : speechRequest(speaker.host, speaker.user, text, voice, style)
   const deadline = Date.now() + REQUEST_LIMIT_MS
   const limited = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_LIMIT_MS)])
   let failed = ''
   for (let attempt = 0; attempt < 2; attempt++) {
     let wait = RETRY_WAIT_MS
     try {
-      const response = await fetch(url, { method: 'POST', headers, body, signal: limited })
+      const response = await fetch(url, { ...init, signal: limited })
       if (response.ok) {
         // The voice server answers the WAV itself; Gemini answers JSON with the audio in base64.
         const audio = speaker.source === 'own_key' ? audioOf(await response.json()) : Buffer.from(await response.arrayBuffer())
@@ -465,19 +458,29 @@ async function speakLinesOnce(root: string, lines: readonly string[], choice: { 
 
 // ---------- The sample ----------
 
-/** The sentence of the Settings sample. */
-const SAMPLE_TEXT = 'This is how the lines of a scene will sound.'
+/** A sample's audio and its media type, for the renderer's Blob. */
+export interface VoiceSample {
+  bytes: Uint8Array
+  type: 'audio/mp4' | 'audio/wav'
+}
 
 /**
- * A short sample in the current model, voice and pace, as a 16-bit WAV (Settings, ▶). One small
- * request for the cloud voice; no cache and no analytics. Throws an Error with one short line.
+ * A short sample in the current model, voice and pace (Settings, ▶). The cloud voice's sample ships with the app
+ * (decision U14: resources/voice-samples/, an AAC clip per voice and pace), so it plays at once and needs no network;
+ * the local voice makes its sample on this Mac (a 16-bit WAV). No cache and no analytics. Throws an Error with one short line.
  */
-export async function voiceSample(signal: AbortSignal): Promise<Buffer> {
+export async function voiceSample(signal: AbortSignal): Promise<VoiceSample> {
+  const pace = getPace()
+  if (getVoiceModel() !== 'local') {
+    const file = resourcePath(SAMPLE_DIR, sampleFile(getVoice(), pace))
+    const bytes = await readFile(file).catch(() => null)
+    if (!bytes) throw new Error(`the voice sample ${file} is missing (scripts/voice/make-samples.mjs makes it)`)
+    return { bytes: new Uint8Array(bytes), type: 'audio/mp4' }
+  }
   const speaker = await currentSpeaker()
   if ('reason' in speaker) throw new Error(speaker.reason)
-  const { style, speed } = PACES[getPace()]
   try {
-    return speaker.source === 'local' ? await localAudio(SAMPLE_TEXT, getLocalVoice(), speed, signal) : await requestAudio(speaker, SAMPLE_TEXT, getVoice(), style, signal)
+    return { bytes: new Uint8Array(await localAudio(SAMPLE_TEXT, getLocalVoice(), PACES[pace].speed, signal)), type: 'audio/wav' }
   } catch (error) {
     if (signal.aborted) throw error
     throw new Error(error instanceof Error ? error.message : String(error))
@@ -487,13 +490,13 @@ export async function voiceSample(signal: AbortSignal): Promise<Buffer> {
 let sample: AbortController | null = null
 
 /** Settings' play button: one sample at a time (a new one stops the last), at most 45 s. */
-export async function playVoiceSample(): Promise<Uint8Array> {
+export async function playVoiceSample(): Promise<VoiceSample> {
   sample?.abort()
   const controller = new AbortController()
   sample = controller
   const timer = setTimeout(() => controller.abort(), 45_000)
   try {
-    return new Uint8Array(await voiceSample(controller.signal))
+    return await voiceSample(controller.signal)
   } finally {
     clearTimeout(timer)
     if (sample === controller) sample = null

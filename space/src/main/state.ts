@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { Camera, RecentFolder } from '@shared/space-api'
 import { LOCAL_VOICES } from './kokoro'
-import { PACES, VOICES, type PaceName } from './voice'
+import { PACES, VOICES, type PaceName } from './voice-choices'
 import { INTERFACE_SIZES, type InterfaceSize } from './interface-size'
 
 /**

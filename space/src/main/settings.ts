@@ -5,7 +5,8 @@ import { IPC, type InterfaceSizeSetting, type SettingsChange, type SettingsSnaps
 import { INTERFACE_SIZES, stepSize } from './interface-size'
 import { LOCAL_VOICES, LOCAL_VOICE_DOWNLOAD_MB, installLocalVoice, localVoiceState, onLocalVoiceState, removeLocalVoice } from './kokoro'
 import * as store from './state'
-import { PACES, VOICES, playVoiceSample, type PaceName } from './voice'
+import { playVoiceSample } from './voice'
+import { PACES, VOICES, type PaceName } from './voice-choices'
 import { removeVoiceKey, saveVoiceKey, voiceKeySaved } from './voice-key'
 
 /**

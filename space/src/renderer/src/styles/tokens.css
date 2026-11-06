@@ -13,9 +13,6 @@
   --bg-elevated-2: #232327;
   --bg-hover: rgba(255, 255, 255, 0.05);
   --bg-active: rgba(255, 255, 255, 0.08);
-  /* A modal panel (the search panel): --bg-elevated a little see-through, over a blur of what lies behind it (the macOS look) */
-  --bg-glass: rgba(28, 28, 31, 0.86);
-  --glass-filter: blur(20px) saturate(140%);
 
   /* Lines */
   --border-subtle: rgba(255, 255, 255, 0.08);
@@ -221,6 +218,25 @@
   --reading-ease: 120ms; /* the reading view's focus and scroll follow their targets with this time constant (exponential) */
   --reading-return: 3000ms; /* while a scene plays, the focus glides back to the reading point this long after the last wheel input */
   --pill-flash: 450ms ease; /* the scene pill lights up once when the panel went into it */
+
+  /* The select (U14): the app's own dropdown (components/Select.tsx, .menu__select and .menu--select in app.css) */
+  --bg-field: rgba(255, 255, 255, 0.06); /* a control's soft fill: the select's trigger */
+  --bg-field-hover: rgba(255, 255, 255, 0.09);
+  --select-height: 30px;
+  --select-pad: 0 10px 0 12px; /* the chevron side is a little tighter */
+  --select-radius: 8px;
+  --select-list-min-width: 200px; /* at least the trigger's width too */
+  --select-list-max-height: 280px; /* a longer list scrolls inside */
+  --select-list-radius: 12px;
+  --select-list-pad: 6px;
+  --select-option-height: 30px;
+  --select-option-pad: 0 10px;
+
+  /* Scrollbars (U14): one style for every scroll area (app.css, "Scrollbars"): a 6 px thumb in a 10 px zone, no track */
+  --scrollbar-size: 10px;
+  --scrollbar-inset: 2px; /* the transparent border around the thumb: 10 − 2 × 2 = 6 px */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 }
 
 /* The hand as a font: scripts/lab/make-hand-webfont.mjs makes both files. main.tsx loads both before the first render. */

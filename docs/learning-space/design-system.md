@@ -42,9 +42,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
 ## Tokens (names, grouped)
 
 - Surfaces: `--bg-app`, `--bg-sidebar`, `--bg-canvas`, `--bg-elevated`,
-  `--bg-elevated-2`, `--bg-hover`, `--bg-active`; `--bg-glass`
-  (`--bg-elevated` at 0.86 alpha) and `--glass-filter` (blur 20 px,
-  saturate 140 %): a modal panel's see-through surface
+  `--bg-elevated-2`, `--bg-hover`, `--bg-active`; `--bg-field` and
+  `--bg-field-hover` (white at 0.06 and 0.09: a control's soft fill, the
+  select's trigger). Every surface is opaque; no glass or blur (U14)
 - Borders and canvas: `--border-subtle`, `--border-strong`, `--canvas-dot`,
   `--canvas-dot-pitch`, `--canvas-dot-solid`, `--preview-checker`
 - Text: `--text-primary`, `--text-secondary`, `--text-tertiary`,
@@ -108,6 +108,12 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--search-panel-width`, `--search-panel-height`; the Settings dialog's
   `--settings-dialog-width`, `--settings-dialog-height`, `--panel-nav-width`,
   `--setting-field-width`, `--radio-size`, `--radio-dot`
+- The select (U14): `--select-height`, `--select-pad`, `--select-radius`,
+  `--select-list-min-width`, `--select-list-max-height`,
+  `--select-list-radius`, `--select-list-pad`, `--select-option-height`,
+  `--select-option-pad`
+- Scrollbars (U14): `--scrollbar-size`, `--scrollbar-inset`,
+  `--scrollbar-thumb`, `--scrollbar-thumb-hover`
 - Motion: `--fade` (the quiet fade in and out), `--into-pill` and
   `--into-pill-scale` (the panel shrinks into the scene pill),
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
@@ -142,9 +148,10 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover). An empty `.menu__icon` keeps a row without an icon in the labels' column |
 | `.menu__sub` | Dim text right after a `.menu__label` (a board's folder); a `.menu__hint` stays at the right |
 | `.menu__match` | The part of a label that matches the typed text, in `--accent` |
-| `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: `--bg-glass` over a blur (`--glass-filter`), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
+| `.menu--panel` with `.menu__field` (`.menu__input`) and `.menu__scroll` | A modal panel over a `.backdrop`: opaque `--bg-elevated` as every menu (U14), `--radius-xl`, `--border-strong`, `--shadow-card`; a search field at the top (17 px icon, 15 px text, hairline under it); rows of `--panel-row-height` in a list that fills the panel and scrolls. The instance sets the panel's height. The selected row (`--current`) is the one fill: the pointer moves the selection, so hover paints nothing |
 | `.menu__list`, `.menu__row` with `.menu__name` (`--mono`) and `.menu__meta` (`--accent`, or `--mono` for a live number) or `.menu__control` | A plain row: name left, meta or one control right |
-| `.menu__switch`, `.menu__select`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small native select, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
+| `.menu__select` (in a `.menu__select-root`) and its list `.menu--select` with `.menu__option` (`.menu__option-label`, `.menu__option-check`) | The app's own dropdown (`Select.tsx`, U14); see "Select" below. Never a native `<select>` |
+| `.menu__switch`, `.menu__text`, `.menu__progress` (`.menu__progress-bar`) | Controls in a row: an on/off toggle, a small text field before its `.btn-sm`, a 90 × 4 px accent progress bar with a `%` `.menu__meta--mono` after it |
 | `.menu--split` with `.menu__nav` (`.menu__nav-end`) and `.menu__pane` (`.menu__header`) | A modal panel in two parts: a section list (`--panel-nav-width`, a hairline at its right; `.menu__item` rows, the current one `--current`, a hover fill; `.menu__nav-end` pins rows at the bottom) and a pane: a header (`--panel-field-height`, the title at `--text-lg`, a close `.icon-button`, a hairline under it) over a `.menu__scroll` |
 | `.menu__setting` with `.menu__setting-row`, `.menu__setting-text` (`.menu__name`, `.menu__desc`), `.menu__radio`; `.menu__settings`; `.menu__group` | A setting: the name, a muted description under it (`--text-tertiary`, meta size, wraps), one `.menu__control` at the right, lines under it; a hairline between settings. A row with `role="radio"` is one choice (a 14 px `.menu__radio`, an accent dot when chosen); `.menu__settings` wraps such a group. `.menu__group` is a heading and its rows |
 | `.menu__line` (`--warn`, `--error`) with `.menu__fix` | One short line under a row, with an inline text action |
@@ -172,7 +179,53 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
   element showed it at open time (the keyboard reached it). A menu or
   panel that the pointer opened leaves no ring, also after keys in it.
   Every menu, panel and flyout uses these two functions.
-- Focus styles use `:focus-visible`, never `:focus`.
+- Focus styles use `:focus-visible`, never `:focus`. Every `button` gets
+  the one ring (`app.css`, `button:focus-visible`: 2 px `--accent-ring`,
+  1 px offset): it shows for keyboard focus only, never after a mouse
+  click. A control that holds the focus for its keys and shows its place
+  with a fill (a modal panel, the select's list) shows no ring.
+
+### Select
+
+The app's own dropdown (decision U14, approved mockup, 2026-11-06):
+`components/Select.tsx` with `value`, `options` (`{ value, label }`),
+`onChange`, `label`. It replaces every native `<select>`.
+
+- Trigger `.menu__select`: `--select-height` (30 px), `--select-pad`
+  (0 10 px 0 12 px), `--select-radius` (8 px), `--bg-field` (hover and
+  open: `--bg-field-hover`), the value in `--text-primary` at 13 px, a
+  14 px `ChevronDown` in `--text-secondary`, 8 px gap. Disabled:
+  `--disabled-opacity`.
+- List `.menu.menu--select`: fixed under the trigger, right-aligned to it,
+  4 px gap; above it when there is less room below; at least
+  `--select-list-min-width` (200 px) and the trigger's width;
+  `--bg-elevated-2`, 1 px `--border-strong`, `--select-list-radius`
+  (12 px), `--select-list-pad` (6 px); rows `.menu__option`
+  `--select-option-height` (30 px), `--radius-md`, `--select-option-pad`.
+  The pointer and the keys move the one `--bg-active` fill
+  (`data-active`); the chosen row has a 14 px `Check` at the right. A
+  long list scrolls inside (`--select-list-max-height`), with the chosen
+  row in view at open.
+- Keys: Enter, Space, ↓ or ↑ open; ↑ / ↓ move; Home / End; letters find
+  a row by its first letters; Enter or Space chooses; Escape closes the
+  list only (in a modal panel the panel stays open); Tab closes. ARIA: the
+  trigger is a button with `aria-haspopup="listbox"` and `aria-expanded`;
+  the list is a `listbox` with `option` rows and `aria-selected`.
+- The list is rendered inside the trigger's root (no portal), so it stays
+  inside a modal panel and its keys reach it first. Escape and a press
+  outside close it through `useMenuDismiss` (`lib/dismiss.ts`), which
+  also turns the drag strips off; a choice closes it with the hook's
+  `dismiss`, and the focus goes back to the trigger as it was. A scroll
+  outside the list, a resize or a window blur closes it.
+
+### Scrollbars
+
+One style for every scroll area (decision U14; `app.css`, "Scrollbars"):
+global `::-webkit-scrollbar` rules. The zone is `--scrollbar-size` (10 px);
+the thumb has a transparent `--scrollbar-inset` (2 px) border, so it shows
+6 px wide, `--radius-pill`, `--scrollbar-thumb` (white at 0.18),
+`--scrollbar-thumb-hover` (white at 0.3) on hover. No track, no arrow
+buttons, a transparent corner. Never style a scrollbar in one component.
 
 ## Pills
 
@@ -519,8 +572,8 @@ internal data (a path, an id). One shared tooltip instead
     it is no drag region, and the native window buttons stay above it. The
     panel `.menu.menu--panel.search-panel`: centred in the window both
     ways, 520 px wide (at most the window width − 32 px), a fixed height of
-    min(460 px, window height − 64 px), `--bg-glass` over
-    `--glass-filter`, 1 px `--border-strong`, `--radius-xl`,
+    min(460 px, window height − 64 px), opaque `--bg-elevated` (U14),
+    1 px `--border-strong`, `--radius-xl`,
     `--shadow-card`.
   - Field: 46 px, lucide `Search` 17 px `--text-tertiary`, 15 px text,
     placeholder "Search boards", a hairline under it. It has the focus while
@@ -567,14 +620,16 @@ internal data (a path, an id). One shared tooltip instead
     (`Folder`), Keyboard shortcuts (`Keyboard`); About (`Info`) at the
     bottom (`.menu__nav-end`). The pane: the section title in the header,
     then `.menu__setting` rows.
-  - General: Interface size (a `.menu__select`, "Automatic (N%)" and 80 %
+  - General: Interface size (a `Select`, "Automatic (N%)" and 80 %
     to 200 %, the labels of View > Interface Size), Show performance (a
     `.menu__switch`).
   - Voice: Read lines aloud (switch); Cloud voice and On this Mac · Kokoro
     as two `role="radio"` settings in a `.menu__settings` group (Kokoro:
     Install · N MB, the progress bar and percent, Installed and Remove, or
     an error line with Retry; it is chosen only when installed); Voice (a
-    select and the play icon button); Pace (a select); Gemini key ("Optional:
+    `Select` and the play icon button: the cloud voice's sample ships with
+    the app and plays at once, U14; Kokoro makes its sample on the Mac);
+    Pace (a `Select`); Gemini key ("Optional:
     your own key removes the daily limit": a password `.menu__text` and Save,
     or "Key saved" and Remove).
   - Agents: the agent popover's Connect rows (`ConnectAgents.tsx`, one
