@@ -20,6 +20,28 @@ export function clampZoom(value: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number.isFinite(value) ? value : 1))
 }
 
+/** What a scene's camera move asks for (SceneCameraAction): a centre, and a fit region, the zoom at its start or a fixed zoom. */
+export interface CameraAim {
+  center: readonly [number, number]
+  zoom: number
+  fit?: readonly [number, number, number, number]
+  keepZoom?: boolean
+}
+
+/**
+ * The camera that a scene's camera move goes to, for a viewport in CSS px and the camera
+ * when the move starts (B67). The player and preview_scene both use it, so the frames show
+ * what the learner sees in a window of that size. A fit fills the viewport on one axis.
+ */
+export function aimCamera(move: CameraAim, viewport: Point, from: Camera): Camera {
+  const zoom = move.fit
+    ? clampZoom(Math.min(viewport[0] / Math.max(1, move.fit[2]), viewport[1] / Math.max(1, move.fit[3])))
+    : move.keepZoom
+      ? from.zoom
+      : clampZoom(move.zoom)
+  return { center: [move.center[0], move.center[1]], zoom }
+}
+
 /**
  * The camera a glide shows at share 0..1 of its time (Board.animateTo, and preview_scene's frames
  * for a scene's camera moves): an even in-out ease; zoom moves in log space, so it feels even at every scale.

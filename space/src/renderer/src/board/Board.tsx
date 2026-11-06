@@ -212,6 +212,30 @@ const PICK_HOLD_MS = 30
 const PICK_MARK_MS = 300
 /** A wheel event this soon after the last one belongs to the same gesture. */
 const WHEEL_GAP_MS = 200
+/** One mouse-wheel notch with ⌘ or Ctrl zooms by this factor (tldraw and ruimte use about 1.1; the founder found that a little slow). */
+const NOTCH_ZOOM = 1.15
+/**
+ * A notch glides to its zoom with this time constant: it settles in about 3.5 of them (about 280 ms). It is longer
+ * than the gap between the notches of a spin, so their glides join into one motion instead of a stop at each notch.
+ */
+const NOTCH_GLIDE_MS = 80
+/**
+ * A camera glide (animateTo) also steps on a timer at most this far apart (B68), as player.ts WAKE_MS does for scene
+ * events (B62): a window with no display frames (hidden, or covered on GNOME Wayland) still reaches the target on time.
+ */
+const GLIDE_WAKE_MS = 250
+
+/**
+ * The notches in a ⌘ / Ctrl wheel event, signed (+ zooms in), or 0 for a continuous event.
+ * A mouse wheel sends whole notches: line or page deltas, or one large pixel delta on one axis.
+ * A trackpad pinch (and ⌘ + trackpad scroll) sends small pixel deltas. `dy` is in CSS px; 25,
+ * not 40, because Interface Size 200% halves the CSS delta of a 100 px notch.
+ */
+function wheelNotches(event: WheelEvent, dy: number): number {
+  if (dy === 0) return 0
+  if (event.deltaMode === 0 && (Math.abs(dy) < 25 || event.deltaX !== 0)) return 0
+  return -Math.sign(dy) * Math.max(1, Math.round(Math.abs(dy) / 120))
+}
 /** A linked item fades out over this long when its point is hidden. */
 const LINK_FADE_MS = 200
 /** How long the "an agent looked here" outline shows. */
@@ -997,26 +1021,61 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
     [applyCamera]
   )
 
+  /**
+   * The host's size in CSS px becomes the viewport (B66). The first real size also fits the
+   * board to its content. Only a host with no size gets the 1 px floor, and it does not fit.
+   */
+  const syncViewport = useCallback(
+    (width: number, height: number): Point => {
+      const next: Point = [Math.max(1, width), Math.max(1, height)]
+      const [w, h] = viewportRef.current
+      const changed = next[0] !== w || next[1] !== h
+      if (changed) {
+        viewportRef.current = next
+        // The state only draws the overlays; a read can come during another component's render (App's state updaters).
+        queueMicrotask(() => setViewport(viewportRef.current))
+        applyContentTransform()
+      }
+      const fitNow = needsFitRef.current && width >= 2 && height >= 2
+      if (fitNow) {
+        needsFitRef.current = false
+        measure()
+        fit()
+      }
+      if (changed || fitNow) requestPaint({ committed: true, active: true })
+      return viewportRef.current
+    },
+    [applyContentTransform, fit, measure, requestPaint]
+  )
+
+  /**
+   * The viewport measured now from layout. Layout runs without frames, so this is right also
+   * when a covered window gets no frames and the ResizeObserver does not run (D6, B62).
+   */
+  const viewportNow = useCallback((): Point => {
+    const host = hostRef.current
+    if (!host) return viewportRef.current
+    const rect = host.getBoundingClientRect()
+    return syncViewport(rect.width, rect.height)
+  }, [syncViewport])
+
+  // The size at mount, before an agent can read the board: never the placeholder.
+  useLayoutEffect(() => {
+    viewportNow()
+  }, [viewportNow])
+
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect
       if (!rect) return
-      const next: Point = [Math.max(1, rect.width), Math.max(1, rect.height)]
-      viewportRef.current = next
-      setViewport(next)
-      applyContentTransform()
-      if (needsFitRef.current) {
-        needsFitRef.current = false
-        measure()
-        fit()
-      }
+      syncViewport(rect.width, rect.height)
       requestPaint({ committed: true, active: true })
     })
     observer.observe(host)
     return () => observer.disconnect()
-  }, [applyContentTransform, fit, measure, requestPaint])
+  }, [syncViewport, requestPaint])
 
   // ---------- Nodes ----------
 
@@ -1909,17 +1968,45 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
       const [x, y] = screenToBoard([event.clientX - rect.left, event.clientY - rect.top], viewportRef.current, cameraRef.current)
       return { kind: 'wheel', x, y, buttons: event.buttons, pressure: 0, pointerType: 'mouse', deltaX: event.deltaX, deltaY: event.deltaY, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, metaKey: event.metaKey }
     }
+    /** The zoom that mouse-wheel notches glide to, while their glide runs (its glideRef token). */
+    let notch: { token: number; zoom: number; point: Point } | null = null
+    const glideNotch = (token: number): void => {
+      let last = performance.now()
+      const step = (): void => {
+        if (glideRef.current !== token || !notch) return
+        const now = performance.now()
+        const share = 1 - Math.exp(-(now - last) / NOTCH_GLIDE_MS)
+        last = now
+        const current = cameraRef.current
+        const gap = Math.log(notch.zoom / current.zoom)
+        const done = Math.abs(gap * (1 - share)) < 0.003
+        applyCamera(zoomAt(current, notch.point, viewportRef.current, done ? notch.zoom : current.zoom * Math.exp(gap * share)))
+        if (done) notch = null
+        else requestAnimationFrame(step)
+      }
+      requestAnimationFrame(step)
+    }
     const boardWheel = (event: WheelEvent): void => {
-      glideRef.current++
+      const prior = glideRef.current
+      const token = ++glideRef.current
       learnerViewAtRef.current = Date.now()
       const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportRef.current[1] : 1
       let dx = event.deltaX * scale
       let dy = event.deltaY * scale
       const current = cameraRef.current
       if (event.ctrlKey || event.metaKey) {
-        // A trackpad pinch arrives as ctrl + wheel with small deltas.
-        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
         const point = cssPoint(event, host.getBoundingClientRect())
+        // A mouse-wheel notch adds a fixed step to the zoom a short glide goes to; a fast spin adds up.
+        const notches = wheelNotches(event, dy)
+        if (notches) {
+          const from = notch && notch.token === prior ? notch.zoom : current.zoom
+          notch = { token, zoom: clampZoom(from * Math.pow(NOTCH_ZOOM, notches)), point }
+          glideNotch(token)
+          return
+        }
+        notch = null
+        // A trackpad pinch arrives as ctrl + wheel with small deltas: it zooms at once.
+        const speed = event.ctrlKey && !event.metaKey ? 0.01 : 0.002
         applyCamera(zoomAt(current, point, viewportRef.current, current.zoom * Math.exp(-dy * speed)))
         return
       }
@@ -2028,21 +2115,27 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
   useImperativeHandle(
     ref,
     () => ({
-      zoomStep,
+      zoomStep: (step, source) => {
+        viewportNow()
+        zoomStep(step, source)
+      },
       zoomTo: (zoom) => {
-        const [vw, vh] = viewportRef.current
-        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], viewportRef.current, zoom))
+        const [vw, vh] = viewportNow()
+        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], [vw, vh], zoom))
       },
       zoomBy: (factor) => {
-        const [vw, vh] = viewportRef.current
-        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], viewportRef.current, cameraRef.current.zoom * factor))
+        const [vw, vh] = viewportNow()
+        applyCamera(zoomAt(cameraRef.current, [vw / 2, vh / 2], [vw, vh], cameraRef.current.zoom * factor))
       },
-      fit,
+      fit: () => {
+        viewportNow()
+        fit()
+      },
       liveState: () => ({
         nodes: nodesRef.current,
         nextSeq: nextSeqRef.current,
         camera: cameraRef.current,
-        viewport: viewportRef.current,
+        viewport: viewportNow(),
         selectedIds: selectedIdsRef.current,
         bounds: (id) => {
           const box = placedOf(id)
@@ -2068,23 +2161,47 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         const from = cameraRef.current
         let last = performance.now()
         let elapsed = 0
-        const step = (): void => {
-          if (glideRef.current !== token) return
+        let done = false
+        let timer: ReturnType<typeof setTimeout> | null = null
+        // One step for the display frame and the timer (B68): the camera is a function of the time, so each tick is idempotent.
+        const step = (): boolean => {
+          if (done || glideRef.current !== token) {
+            done = true
+            if (timer !== null) clearTimeout(timer)
+            timer = null
+            return false
+          }
           const now = performance.now()
           if (!held?.()) elapsed += now - last
           last = now
           const t = Math.min(1, elapsed / Math.max(1, ms))
           const aim = follow?.() ?? null
           applyCamera(glideCamera(from, aim ? { ...target, center: aim } : target, t))
-          if (t < 1 || aim) requestAnimationFrame(step)
+          done = t >= 1 && !aim
+          if (done && timer !== null) {
+            clearTimeout(timer)
+            timer = null
+          }
+          return !done
         }
-        requestAnimationFrame(step)
+        const frame = (): void => {
+          if (step()) requestAnimationFrame(frame)
+        }
+        const wake = (): void => {
+          timer = null
+          if (!step()) return
+          // A follow after the glide's end, or a held glide, wakes only at the wake period.
+          const left = held?.() || elapsed >= ms ? GLIDE_WAKE_MS : Math.max(1, ms - elapsed)
+          timer = setTimeout(wake, Math.min(left, GLIDE_WAKE_MS))
+        }
+        requestAnimationFrame(frame)
+        timer = setTimeout(wake, Math.min(Math.max(1, ms), GLIDE_WAKE_MS))
       },
       boardToClient: (point) => {
         const host = hostRef.current
         if (!host) return null
         const rect = host.getBoundingClientRect()
-        const screen = boardToScreen(point, viewportRef.current, cameraRef.current)
+        const screen = boardToScreen(point, syncViewport(rect.width, rect.height), cameraRef.current)
         return [rect.left + screen[0], rect.top + screen[1]]
       },
       clientRect: () => {
@@ -2092,7 +2209,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
       },
       reveal: (rect) => {
-        const [vw, vh] = viewportRef.current
+        const [vw, vh] = viewportNow()
         const current = cameraRef.current
         const margin = 80 / current.zoom
         const halfW = vw / 2 / current.zoom
@@ -2185,7 +2302,7 @@ export function Board({ doc, history, initialCamera, tool, color, width, onDocCh
         if (!frame) requestMeasure()
       }
     }),
-    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, zoomStep]
+    [applyCamera, applyColor, applyPlaybackToDom, applyWidth, commitEditing, commitOver, documentNodes, emit, fit, homeless, measure, paintInks, placedMap, placedOf, requestMeasure, requestPaint, setSelectedIds, syncViewport, viewportNow, zoomStep]
   )
   useEffect(
     () => () => {

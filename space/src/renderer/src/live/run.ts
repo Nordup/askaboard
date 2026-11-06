@@ -17,7 +17,7 @@ import { connectFrames, cutJob, objectOf, onFramesGrowth, takeFrames, type RunFr
 import { inkIndexOf, liveSamples, nodeSig, scenePlayer, sceneFrame, type SceneFrame, type SceneMemory } from './player'
 import { apply, multiply, scaleOf } from './timeline'
 import type { Camera, Point } from '../board/types'
-import { clampZoom, glideCamera, inkBounds } from '../board/geometry'
+import { aimCamera, glideCamera, inkBounds, type CameraAim } from '../board/geometry'
 import { tickOf, timeOfTick, type LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
 import { nodeSig as contentSig, stepAt, stepLines, type SceneSettle, type SceneStory, type StoryItem, type StoryRevert } from '@shared/scene-story'
@@ -1025,14 +1025,15 @@ export interface PreviewFrame {
  * The camera at time t of a scene that starts from `start`, as the player moves it (player.ts):
  * each camera move glides from where the view is when it starts (also in the middle of an
  * earlier glide) to its target over its length, with Board.animateTo's ease (glideCamera).
+ * The target is the move resolved for the viewport (aimCamera, B67), as the player resolves it.
  */
-function cameraAt(start: Camera, moves: ReadonlyArray<{ start: number; dur: number; center: [number, number]; zoom: number }>, t: number): Camera {
+function cameraAt(start: Camera, moves: ReadonlyArray<CameraAim & { start: number; dur: number }>, viewport: [number, number], t: number): Camera {
   let glide: { from: Camera; to: Camera; start: number; dur: number } | null = null
   const at = (time: number): Camera => (glide ? glideCamera(glide.from, glide.to, (time - glide.start) / glide.dur) : start)
   for (const move of [...moves].sort((a, b) => a.start - b.start)) {
     // The player starts a move on the first frame after its start.
     if (move.start >= t) break
-    glide = { from: at(move.start), to: { center: move.center, zoom: clampZoom(move.zoom) }, start: move.start, dur: Math.max(0.001, move.dur) }
+    glide = { from: at(move.start), to: aimCamera(move, viewport, at(move.start)), start: move.start, dur: Math.max(0.001, move.dur) }
   }
   return at(t)
 }
@@ -1319,7 +1320,7 @@ export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unk
   const view = rect(viewOf(ctx.board))
   // Each frame marks the learner's view and its covered parts for the camera at its moment.
   const marks = evaluated.map(({ moment }) => {
-    const camera = cameraAt(state.camera, play.camera, moment.t)
+    const camera = cameraAt(state.camera, play.camera, state.viewport, moment.t)
     return { view: rect(viewOf(ctx.board, camera)), covered: coveredOf(ctx.board, camera) }
   })
   const part = (args.part as FramePart | undefined) ?? { kind: 'scene' }
@@ -1365,9 +1366,9 @@ export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unk
     const union = new BoxUnion()
     for (const { boxes } of evaluated) for (const box of boxes.values()) union.add(box)
     for (const move of play.camera) {
-      const w = state.viewport[0] / move.zoom
-      const h = state.viewport[1] / move.zoom
-      union.add({ x: move.center[0] - w / 2, y: move.center[1] - h / 2, width: w, height: h })
+      // Where the move goes, as cameraAt resolves it: from the camera at its start.
+      const aim = aimCamera(move, state.viewport, cameraAt(state.camera, play.camera, state.viewport, move.start))
+      union.add(viewOf(ctx.board, aim))
     }
     if (union.empty) union.add(view)
     region = union.padded((size) => Math.max(24, 0.05 * size))

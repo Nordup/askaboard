@@ -60,7 +60,9 @@ component or in a new CSS rule. Use a token. If no token fits, add one to
   `--handle-rotate-reach`, `--handle-rotate-stem`,
   `--handle-rotate-stem-width`
 - The hand on the board: `--ls-hand` in `board/content.css`, the font
-  'Learning Hand' with the UI font as its fallback
+  'Learning Hand' with the UI font as its fallback; below 1.5 dppx,
+  'Learning Hand Heavy' (same metrics, wider line, B64; the ratio
+  includes Interface Size, B63)
 - Snapshot (the image agents see): `--snapshot-grid`, `--snapshot-axis`,
   `--snapshot-label`, `--snapshot-label-outline`, `--snapshot-tag-outline`;
   preview_scene marks: `--snapshot-view` (the learner's view, 2 px
@@ -125,7 +127,7 @@ the founder approved (6 px panel padding, rows about 22 px, 13 px text,
 | --- | --- |
 | `.menu__heading` | Small uppercase section label |
 | `.menu__title` + `.menu__lede` | A title and one muted line, or two (a second `.menu__lede` follows closely); long words wrap |
-| `.menu__path` | A quiet one-line path at the top of a menu (`--text-tertiary`, meta size, ellipsis); `Menu.tsx` entry `{ path, full }`, the full path as its title |
+| `.menu__path` | A quiet one-line path at the top of a menu (`--text-tertiary`, meta size, ellipsis); `Menu.tsx` entry `{ path }` |
 | `.menu__item` (`--danger`, `--quiet`, `--current`) with `.menu__icon`, `.menu__label`, `.menu__hint` | A clickable row; the label is one line and ends with an ellipsis; `--current` is the row of what shows now (`--bg-active`, also on hover). An empty `.menu__icon` keeps a row without an icon in the labels' column |
 | `.menu__sub` | Dim text right after a `.menu__label` (a board's folder); a `.menu__hint` stays at the right |
 | `.menu__match` | The part of a label that matches the typed text, in `--accent` |
@@ -187,10 +189,21 @@ item pill).
 The 44 px row across the top of the window: the sidebar strip and the top
 bar. Everything in it shares one centre line at 22 px.
 
-- The macOS window buttons: `trafficLightPosition { x: 16, y: 15 }`
-  (`main/index.ts`), three 14 px circles at a 23 px pitch, x 16 to 76
-  (`--window-buttons-end`), centre 22 px. Measured in a window capture on
-  2026-11-06; measure again when macOS changes them.
+- The macOS window buttons: three 14 px circles at a 23 px pitch, x 16 to
+  76 window px (`--window-buttons-end`), centre 22 px at 100 %. Measured
+  in a window capture on 2026-11-06; measure again when macOS changes
+  them.
+- **At any Interface Size** (page zoom factor f): the native buttons do
+  not zoom with the page, so main places them (`main/interface-size.ts`,
+  `windowButtonPosition`, applied with `setWindowButtonPosition` at
+  window creation and at each factor change). Their centre line is the
+  row's centre, 22·f window px (y rounded to a whole px, so within
+  0.5 px). x stays 16 window px at every factor, as macOS apps keep it.
+  Main sends their right edge in CSS px (76 / f) with the shell state and
+  the `windowButtons` event; the renderer sets `--window-buttons-end` on
+  `.shell` from it. The 16 px gap is CSS, so it is 16·f window px.
+  Measured at f = 1, 1.2 and 1.5 (2026-11-06): centre 22 / 26 / 33, gap
+  16 / 19.2 / 24.05.
 - The top bar draws its bottom line as an inset shadow, not a border, so
   its content box is 44 px high.
 - Icon buttons in the row are `.icon-button--title`: a 28 px hit area
@@ -205,6 +218,36 @@ bar. Everything in it shares one centre line at 22 px.
 - Sidebar open: the sidebar button sits at the right end of the strip,
   its icon's right edge in the column of the rows' hints and times.
 - The pills on the right keep their own spacing (`.topbar__right`).
+
+## Tooltips
+
+No native `title` in app UI: it shows late, unstyled, and often shows
+internal data (a path, an id). One shared tooltip instead
+(`components/Tooltip.tsx`, the `.tooltip` comment block in `app.css`).
+
+- A control asks for it with `{...tip(label, key)}`: two data attributes.
+  `<Tooltips />`, mounted once in `App.tsx`, owns every listener, so a
+  control adds none.
+- Use it only to name an icon-only control or to give a shortcut: the
+  title-row buttons, the zoom percent, the tool palette, the pill and
+  panel icon buttons, a step-bar segment's step name. Never for a path,
+  an id, a raw value, or the visible label again. A truncated name (a
+  sidebar board, a scene name) gets no tooltip.
+- Icon-only buttons keep their `aria-label`; the tooltip is linked with
+  `aria-describedby` while it shows (`role="tooltip"`).
+- Shows after 500 ms of hover, at once when the pointer moves from one
+  tooltip control to the next within 300 ms (as macOS), and on
+  `:focus-visible`. Never on a press: a pressed control shows none until
+  the pointer leaves it. Hides on leave, any key, a click, a scroll or
+  wheel, and window blur.
+- Look: `--bg-elevated-2`, 1 px `--border-strong`, `--radius-sm`,
+  padding 4 px 8 px, `--text-xs` `--text-primary`; the shortcut after
+  the label in `--text-tertiary` (`.tooltip__key`, 8 px before it);
+  `--shadow-float`. Below the control with a 6 px gap
+  (`--tooltip-gap`), above it when there is no room, 8 px inside the
+  window (`--tooltip-margin`). `pointer-events: none`, in a portal.
+- Words: sentence case; shortcuts from `platform.ts` `shortcut()`
+  ("Hide sidebar ⌘B", "New board ⌘N", "Reset zoom to 100% ⌘0").
 
 ## Approved screens (reference)
 

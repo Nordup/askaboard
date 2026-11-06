@@ -12,8 +12,8 @@ export interface MenuItem {
   onSelect(): void
 }
 
-/** A row, a hairline, a small heading, or a quiet path line at the top (.menu__path: `path` shows, `full` is its tooltip). */
-export type MenuEntry = MenuItem | 'separator' | { heading: string } | { path: string; full: string }
+/** A row, a hairline, a small heading, or a quiet path line at the top (.menu__path: a short path). */
+export type MenuEntry = MenuItem | 'separator' | { heading: string } | { path: string }
 
 interface MenuProps {
   /** Viewport position of the menu's top-left corner; with `above`, of its bottom-left corner. */
@@ -78,7 +78,7 @@ export function Menu({ x, y, above = false, entries, onClose, minWidth = 180, cl
         if (entry === 'separator') return <div key={index} className="menu__separator" />
         if ('path' in entry)
           return (
-            <div key={index} className="menu__path" title={entry.full}>
+            <div key={index} className="menu__path">
               {entry.path}
             </div>
           )

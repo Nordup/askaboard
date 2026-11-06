@@ -81,12 +81,16 @@ limits scripts, images and media.
   its geometry in `board/rotation.ts`), `svg` (sanitized markup), `image`
   (a file in the folder, usually `assets/`).
 - **Fonts and sizes:** all board words use the hand webfont `--ls-hand`
-  (`styles/hand.woff2`, made by `scripts/lab/make-hand-webfont.mjs` from
+  (`styles/hand.woff2` and its heavy cut, both made by `scripts/lab/make-hand-webfont.mjs` from
   `src/shared/hand-font.ts`); KaTeX keeps its fonts. `BOARD_LAYOUT` in
   `board-format.ts` is the layout version: raise it when a board font or its
   metrics change, so recorded text measures are measured again. Camera zoom
-  is screen points per board point; 100% is `HOME_ZOOM` (0.85, in
-  `board/geometry.ts`).
+  is CSS pixels per board point; 100% is `HOME_ZOOM` (0.85, in
+  `board/geometry.ts`). View > Interface Size is the main window's page zoom
+  (`main/interface-size.ts`, B63); it changes the size of a CSS pixel, not
+  camera zoom. `styles/hand-heavy.woff2` is the same hand with a wider line
+  and the same metrics, for pages below 1.5 dppx; the ratio includes Interface
+  Size (B64).
 - **Common fields:** `id`, `name`, `parent`, `x`, `y` (relative to the parent),
   `z`, `author` (`learner` or `agent`), `seq`, `locked`.
 - **Style:** a whitelisted CSS object (`STYLE_KEYS`): the browser lays out
@@ -184,7 +188,8 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
   agent app (client label as in `clientLabel()`), folder and board, the app
   keeps the board seq up to which the learner's changes were delivered and
   the seq of the app's last look, in memory and `userData/state.json`
-  (`agentLooks`). The renderer's `learnerNews` request lists the learner's
+  (`agentLooks`; the same file holds the per-machine cameras and
+  `interfaceSize`). The renderer's `learnerNews` request lists the learner's
   ink strokes added or erased after the delivered seq (agent edits left
   out; erasures are known for the current app run only), with their ink
   groups and the nearest material. The news is delivered when it is sent:

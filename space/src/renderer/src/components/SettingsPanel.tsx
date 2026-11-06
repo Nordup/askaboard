@@ -4,6 +4,7 @@ import { AlertCircle, Check, CheckCircle2, Loader2, Play } from 'lucide-react'
 import type { SettingsChange, SettingsSnapshot } from '@shared/space-api'
 import { markFocus, returnFocus } from '../lib/focus'
 import { errorMessage } from '../lib/errors'
+import { tip } from './Tooltip'
 
 const space = window.space
 
@@ -229,7 +230,7 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
           {local.state === 'failed' && (
             <div className="menu__line menu__line--error">
               <AlertCircle size={12} strokeWidth={2} />
-              <span className="menu__line-text" title={local.error}>
+              <span className="menu__line-text">
                 {local.error}
               </span>
               <button className="menu__fix" onClick={install}>
@@ -248,7 +249,7 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
                   </option>
                 ))}
               </select>
-              <button className="icon-button" aria-label="Play a sample" title="Play a sample" disabled={!settings} onClick={() => void playSample()}>
+              <button className="icon-button" {...tip('Play a sample')} aria-label="Play a sample" disabled={!settings} onClick={() => void playSample()}>
                 {sampleState === 'loading' ? <Loader2 className="menu__spinner" size={14} strokeWidth={2} /> : <Play size={14} strokeWidth={2} />}
               </button>
             </span>
@@ -256,7 +257,7 @@ export function SettingsPanel({ onClose }: { onClose(): void }) {
           {sampleError && (
             <div className="menu__line menu__line--error">
               <AlertCircle size={12} strokeWidth={2} />
-              <span className="menu__line-text" title={sampleError}>
+              <span className="menu__line-text">
                 {sampleError}
               </span>
             </div>

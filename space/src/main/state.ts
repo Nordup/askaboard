@@ -4,6 +4,7 @@ import { app } from 'electron'
 import type { Camera, RecentFolder } from '@shared/space-api'
 import { LOCAL_VOICES } from './kokoro'
 import { PACES, VOICES, type PaceName } from './voice'
+import { INTERFACE_SIZES, type InterfaceSize } from './interface-size'
 
 /**
  * App state in `userData/state.json`: the last folder, the recent list, the
@@ -37,6 +38,8 @@ interface PersistedState {
   voiceModel: 'cloud' | 'local'
   /** The Kokoro voice of the local model. */
   localVoice: string
+  /** View > Interface Size: 'auto' or one of INTERFACE_SIZES. Per machine, as this file is. */
+  interfaceSize: InterfaceSize
 }
 
 /**
@@ -57,7 +60,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '' }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '', interfaceSize: 'auto' }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -77,7 +80,8 @@ export function loadState(): void {
       voice: (VOICES as readonly string[]).includes(raw.voice as string) ? (raw.voice as string) : VOICES[0],
       pace: raw.pace !== undefined && Object.hasOwn(PACES, raw.pace) ? raw.pace : 'natural',
       voiceModel: raw.voiceModel === 'local' ? 'local' : 'cloud',
-      localVoice: LOCAL_VOICES.includes(raw.localVoice as string) ? (raw.localVoice as string) : LOCAL_VOICES[0]
+      localVoice: LOCAL_VOICES.includes(raw.localVoice as string) ? (raw.localVoice as string) : LOCAL_VOICES[0],
+      interfaceSize: (INTERFACE_SIZES as readonly unknown[]).includes(raw.interfaceSize) ? (raw.interfaceSize as number) : 'auto'
     }
   } catch {
     // A missing or broken state file means a fresh start.
@@ -254,6 +258,15 @@ export function getLocalVoice(): string {
 
 export function setLocalVoice(value: string): void {
   state.localVoice = LOCAL_VOICES.includes(value) ? value : LOCAL_VOICES[0]
+  saveStateNow()
+}
+
+export function getInterfaceSize(): InterfaceSize {
+  return state.interfaceSize
+}
+
+export function setInterfaceSize(value: InterfaceSize): void {
+  state.interfaceSize = value
   saveStateNow()
 }
 

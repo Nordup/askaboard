@@ -1,3 +1,4 @@
+import { tip } from './Tooltip'
 import { AlertCircle, Check, SquarePen } from 'lucide-react'
 import type { AgentServerStatus, GuideOverrides } from '@shared/space-api'
 import { AgentPill } from './AgentPill'
@@ -50,7 +51,7 @@ export function TopBar(props: TopBarProps) {
           <span className="topbar__lead">
             <SidebarToggle hidden onToggle={props.onToggleSidebar} />
             {props.onCreateBoard && (
-              <button className="icon-button icon-button--strong icon-button--title" title={`New board (${shortcut('N')})`} aria-label="New board" onClick={props.onCreateBoard}>
+              <button className="icon-button icon-button--strong icon-button--title" {...tip('New board', shortcut('N'))} aria-label="New board" onClick={props.onCreateBoard}>
                 <SquarePen size={16} strokeWidth={1.75} />
               </button>
             )}
@@ -77,7 +78,7 @@ export function TopBar(props: TopBarProps) {
         <ScenePill />
         <AgentPill status={agentStatus} activityAt={agentActivityAt} guideOverrides={guideOverrides} onOpenOverride={onOpenOverride} />
         {zoom !== null && (
-          <button className="zoom" title={`Reset zoom to 100% (${shortcut('0')})`} onClick={onResetZoom}>
+          <button className="zoom" {...tip('Reset zoom to 100%', shortcut('0'))} onClick={onResetZoom}>
             {Math.round(zoom * 100)}%
           </button>
         )}

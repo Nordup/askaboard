@@ -18,6 +18,14 @@
   --ls-hand: 'Learning Hand', var(--font-ui);
 }
 
+/* Below 1.5 device pixels per CSS pixel the regular line is about 1 pixel wide: thin, grey and jagged. The heavy cut has the same metrics, so text keeps its size and layout when a window moves between screens. */
+@media (resolution < 1.5dppx) {
+  .board__content,
+  .snapshot__content {
+    --ls-hand: 'Learning Hand Heavy', var(--font-ui);
+  }
+}
+
 .board__content {
   position: absolute;
   left: 0;

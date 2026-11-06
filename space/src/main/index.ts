@@ -12,6 +12,7 @@ import { LIVE_SCHEME_PRIVILEGES, grantWorldFiles, registerLiveItemProtocol, revo
 import { STAGE_SCHEME_PRIVILEGES } from './stage-process'
 import { devClickMenu, devSidebarMenu, installMenu, setFolderOpen, setReadLinesChecked, setSidebarMenu, setVoiceMenu } from './menu'
 import { registerSettings, settingsChanged } from './settings'
+import { automaticSize, interfaceFactor, stepSize, windowButtonPosition, windowButtonsEnd, type InterfaceSize } from './interface-size'
 import { FOLDER_SETTINGS_DIR, folderOverrides, onOverridesRead } from './guide'
 import { SETUP_MARKER, applySetup, isSetUp, setupPlan } from './setup'
 import { refreshBriefBlock } from './brief-block'
@@ -357,7 +358,8 @@ function registerIpc(): void {
   })
   ipcMain.on(IPC.getShellState, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, homeDir: homedir() }
+    const buttonsEnd = win && win === liveMainWindow() ? windowButtonsEnd(interfaceFactor(store.getInterfaceSize(), win)) : null
+    event.returnValue = { sidebarHidden: store.getSidebarHidden(), fullScreen: win?.isFullScreen() ?? false, windowButtonsEnd: buttonsEnd, homeDir: homedir() }
   })
   ipcMain.on(IPC.setSidebarHidden, (event, hidden: unknown) => {
     if (event.sender === mainWindow?.webContents && typeof hidden === 'boolean') setSidebarHidden(hidden)
@@ -582,17 +584,21 @@ async function saveAndClose(win: BrowserWindow): Promise<void> {
 const SNAPSHOT_WARM_MS = 2000
 const STAGE_WARM_MS = 3000
 
+/** The smallest page the layout is made for, in CSS pixels; the window's minimum grows with Interface Size (within the screen). */
+const MIN_PAGE = [960, 600] as const
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 960,
-    minHeight: 600,
+    minWidth: MIN_PAGE[0],
+    minHeight: MIN_PAGE[1],
     show: false,
     title: 'Learning Space',
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 16, y: 15 }, // 14 px buttons centred on the 44 px title row (tokens.css --window-buttons-end)
+    // Centred on the 44 CSS px title row at the window's Interface Size (applyInterfaceSize moves them when it changes).
+    trafficLightPosition: windowButtonPosition(interfaceFactor(store.getInterfaceSize(), null)),
     // Linux and Windows draw the application menu as a bar inside the window, above the app's own top bar.
     // Hidden, it shows on Alt, and its accelerators keep working.
     autoHideMenuBar: process.platform !== 'darwin',
@@ -616,6 +622,12 @@ function createWindow(): BrowserWindow {
   }
   win.on('enter-full-screen', () => sendFullScreen(true))
   win.on('leave-full-screen', () => sendFullScreen(false))
+
+  // View > Interface Size: this window's own page zoom, not the origin's (the snapshot window shares the origin).
+  win.webContents.setZoomMode('isolated')
+  win.webContents.on('did-navigate', () => applyInterfaceSize(win))
+  win.on('move', () => applyInterfaceSize(win)) // 'moved' fires on macOS and Windows only
+  applyInterfaceSize(win)
 
   // Links that open a new window go to the system browser, never to a new app window.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -691,7 +703,11 @@ registerSettings({
   menuChanged: () => setVoiceMenu(store.getVoice(), store.getPace())
 })
 
-void app.whenReady().then(async () => {
+/** The automatic interface size that the menu shows (the screen module works only once the app is ready). */
+let menuAutomaticSize = 1
+
+/** The app menu with the settings as they stand. It is built again when Interface Size changes, so its radio items and the automatic percent stay true. */
+function buildMenu(): void {
   installMenu({
     openFolder: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -730,8 +746,59 @@ void app.whenReady().then(async () => {
       store.setPace(pace)
       settingsChanged()
     },
-    openSettings: () => sendMenuCommand('open-settings')
+    openSettings: () => sendMenuCommand('open-settings'),
+    interfaceSize: store.getInterfaceSize(),
+    automaticSize: menuAutomaticSize,
+    setInterfaceSize,
+    stepInterfaceSize: (direction) => setInterfaceSize(stepSize(interfaceFactor(store.getInterfaceSize(), liveMainWindow()), direction))
   })
+  setFolderOpen(session !== null)
+}
+
+const liveMainWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+
+function setInterfaceSize(size: InterfaceSize): void {
+  store.setInterfaceSize(size)
+  buildMenu()
+  applyInterfaceSize(liveMainWindow())
+}
+
+/**
+ * View > Interface Size on the main window: the page zoom from the setting, and the menu's automatic percent. The window
+ * is zoom-isolated (createWindow), so the snapshot window on the same origin stays at 100% and agent screenshots do not change.
+ */
+function applyInterfaceSize(win: BrowserWindow | null): void {
+  const automatic = automaticSize(win)
+  if (automatic !== menuAutomaticSize) {
+    menuAutomaticSize = automatic
+    buildMenu()
+  }
+  if (!win || win.isDestroyed()) return
+  const factor = interfaceFactor(store.getInterfaceSize(), win)
+  placeWindowButtons(win, factor)
+  if (Math.abs(win.webContents.getZoomFactor() - factor) < 1e-6) return
+  win.webContents.setZoomFactor(factor)
+  const { width, height } = screen.getDisplayMatching(win.getBounds()).workAreaSize
+  win.setMinimumSize(Math.min(Math.round(MIN_PAGE[0] * factor), width), Math.min(Math.round(MIN_PAGE[1] * factor), height))
+}
+
+/** The factor each window's buttons were last placed for: 'move' fires often, the renderer hears only a change. */
+const placedButtons = new WeakMap<BrowserWindow, number>()
+
+/** macOS: the window buttons on the title row's centre line at this factor, and their right edge to the renderer. */
+function placeWindowButtons(win: BrowserWindow, factor: number): void {
+  if (process.platform !== 'darwin' || placedButtons.get(win) === factor) return
+  placedButtons.set(win, factor)
+  win.setWindowButtonPosition(windowButtonPosition(factor))
+  win.webContents.send(IPC.windowButtons, windowButtonsEnd(factor))
+}
+
+void app.whenReady().then(async () => {
+  buildMenu()
+  const displaysChanged = (): void => applyInterfaceSize(liveMainWindow())
+  screen.on('display-metrics-changed', displaysChanged)
+  screen.on('display-added', displaysChanged)
+  screen.on('display-removed', displaysChanged)
   registerAssetProtocol()
   registerLiveItemProtocol(() => session)
   // Disk work runs beside the first paint, not before it.

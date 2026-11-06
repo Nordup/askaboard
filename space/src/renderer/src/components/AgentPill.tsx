@@ -150,7 +150,7 @@ function AgentsView({ lines, checking, now, onConnect }: { lines: AgentLine[]; c
 function Problem({ text, fix, onFix }: { text: string; fix: string; onFix(): void }) {
   return (
     <div className="menu__line menu__line--warn">
-      <span className="menu__line-text" title={text}>
+      <span className="menu__line-text">
         {text}
       </span>
       <button className="menu__fix" onClick={onFix}>
