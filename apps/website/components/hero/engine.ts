@@ -280,6 +280,8 @@ export function mountBoard(o: {
       const at: Place = { ...place, x: (x - origin[0]) / u + place.x, y: (y - origin[1]) / u + place.y }
       item.place = at
       item.el.style.display = ''
+      // Placed: it may show now (Board.module.css .sprite[data-pending]).
+      item.el.removeAttribute('data-pending')
       for (const [name, value] of Object.entries({ dx: at.x, dy: at.y, px: at.x, py: at.y })) item.el.style.setProperty(`--${name}`, String(value))
     }
     for (const item of items) {

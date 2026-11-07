@@ -179,8 +179,9 @@
     line-height: calc(20 * var(--u));
   }
 
+  /* Under the closing line's two lines (layout.ts dl-line-phone); DownloadSection.tsx declares this block for the spacing rule. */
   .cta {
-    top: calc(110 * var(--u));
+    top: calc(160 * var(--u));
   }
 
   .cta .quiet {

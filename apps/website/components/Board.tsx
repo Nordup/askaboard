@@ -58,7 +58,7 @@ export function Board() {
       {/* The use cases' steps: behind the app shell's window, which scrolls them past (steps.ts). */}
       <div className={`${styles.layer} ${styles.back}`} ref={backRef} aria-hidden="true">
         {SPRITES.filter((def) => def.step).map((def) => (
-          <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
+          <div key={def.id} className={styles.sprite} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
             <canvas className={styles.body} />
           </div>
         ))}
@@ -66,7 +66,7 @@ export function Board() {
       <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite} aria-hidden="true">
         {SPRITES.filter((def) => !def.step).map((def) =>
           def.window ? (
-            <div key={def.id} className={`${styles.sprite} ${styles.window} ${styles.quiet}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
+            <div key={def.id} className={`${styles.sprite} ${styles.window} ${styles.quiet}`} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
               <div className={styles.titlebar}>
                 <i />
                 <i />
@@ -75,7 +75,7 @@ export function Board() {
               <canvas className={styles.body} />
             </div>
           ) : (
-            <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
+            <div key={def.id} className={styles.sprite} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
               <canvas className={styles.body} />
             </div>
           )

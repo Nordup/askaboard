@@ -144,17 +144,19 @@ export const SPRITES: SpriteDef[] = [
     })
   ),
   // The download section (anchor `download`, DownloadSection.tsx): one big hand line over the button, a few quiet drawings round it.
-  { id: 'dl-line', window: false, w: 760, h: 120, desk: { x: 0, y: 110, r: -1, s: 1 }, phone: { x: 0, y: 50, r: -1, s: 0.48 }, start: 0, anchor: 'download', make: () => handHeading([['open a board, ask anything', 'text']], 66) },
-  { id: 'dl-bulb', window: false, w: 110, h: 130, desk: { x: -500, y: 170, r: -9, s: 1 }, phone: { x: -150, y: 250, r: -9, s: 0.55 }, start: 0.9, anchor: 'download', make: bulbInk },
+  { id: 'dl-line', window: false, w: 820, h: 120, desk: { x: 0, y: 110, r: -1, s: 1 }, start: 0, anchor: 'download', make: () => handHeading([['open a board, start learning', 'text']], 66) },
+  // On a phone the line breaks in two, at a size that reads like the hero's headline there.
+  { id: 'dl-line-phone', window: false, w: 360, h: 130, desk: { x: 0, y: 0, r: 0, s: 1 }, phone: { x: 0, y: 66, r: -1, s: 1 }, deskOff: true, start: 0, anchor: 'download', make: () => handHeading([['open a board,', 'text'], ['start learning', 'text']], 44) },
+  { id: 'dl-bulb', window: false, w: 110, h: 130, desk: { x: -500, y: 170, r: -9, s: 1 }, phone: { x: -150, y: 300, r: -9, s: 0.55 }, start: 0.9, anchor: 'download', make: bulbInk },
   { id: 'dl-arrow', window: false, w: 190, h: 120, desk: { x: -266, y: 196, r: 0, s: 1 }, start: 1.6, anchor: 'download', make: loopArrowInk },
-  { id: 'dl-stars', window: false, w: 150, h: 100, desk: { x: 470, y: 250, r: 6, s: 1 }, phone: { x: 148, y: 250, r: 6, s: 0.6 }, start: 1.2, anchor: 'download', make: starsInk },
+  { id: 'dl-stars', window: false, w: 150, h: 100, desk: { x: 470, y: 250, r: 6, s: 1 }, phone: { x: 148, y: 300, r: 6, s: 0.6 }, start: 1.2, anchor: 'download', make: starsInk },
   // The use cases' step marks behind the app shell's window (steps.ts, after the founder's sketch): the
   // question down one margin, a hand-drawn line over the step's area down the other; the sides change each step.
   ...(
     [
       ['sky', 'blue', 'left', [['why', 40, -6, -3], ['is the', 26, 3, 3], ['sky', 42, -3, 0], ['blue?', 30, 4, 2]], ['why is the', 'sky blue?']],
       ['neuron', 'green', 'right', [['how', 34, 5, 0], ['does a', 22, -3, -2], ['neuron', 22, 2, -2], ['fire?', 30, -5, 0]], ['how does a', 'neuron fire?']],
-      ['waves', 'purple', 'left', [['what', 31, -5, -2], ['happens', 19, 2, 0], ['when two', 19, -2, 0], ['waves', 29, 3, -1], ['meet?', 30, -4, 2]], ['what happens when', 'two waves meet?']]
+      ['waves', 'yellow', 'left', [['what', 31, -5, -2], ['happens', 19, 2, 0], ['when two', 19, -2, 0], ['waves', 29, 3, -1], ['meet?', 30, -4, 2]], ['what happens when', 'two waves meet?']]
     ] as const
   ).flatMap(([id, color, side, words, lines], index): SpriteDef[] => {
     const other = side === 'left' ? 'right' : 'left'

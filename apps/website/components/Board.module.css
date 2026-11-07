@@ -17,6 +17,15 @@
   z-index: 1;
 }
 
+/*
+ * An item placed from a page element (layout.ts `anchor`, `step`): its CSS place is only an offset
+ * from that element, so it stays unseen until the engine has placed it (engine.ts placeFrom removes
+ * data-pending). It keeps its box, so nothing moves when it shows.
+ */
+.sprite[data-pending] {
+  visibility: hidden;
+}
+
 /* A phone-only item (a step's one-line question, layout.ts `deskOff`). */
 .sprite[data-desk='off'] {
   display: none;

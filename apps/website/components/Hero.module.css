@@ -111,6 +111,31 @@
   color: var(--muted);
 }
 
+/* The open-source link under the button, as on t3.codes: the GitHub mark, the words, an outward arrow. */
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  pointer-events: auto;
+  text-decoration: none;
+  transition: color 120ms ease;
+}
+
+.source:hover {
+  color: var(--text);
+}
+
+.github {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+.out {
+  width: 0.8em;
+  height: 0.8em;
+  opacity: 0.7;
+}
+
 /* ---------- Phones and narrow windows: the 390-wide frame, from the top ---------- */
 @media (max-width: 719px) {
   .hero {
