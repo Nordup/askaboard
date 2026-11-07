@@ -75,6 +75,25 @@
   color: var(--muted);
 }
 
+/* The voice's button (a voiced scene): it takes the pointer, which the board's material does not. */
+.sound {
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.sound:hover {
+  color: var(--text);
+}
+
+.soundOn {
+  color: var(--accent);
+}
+
 .bar {
   display: flex;
   gap: var(--step-bar-gap);

@@ -12,7 +12,7 @@ import styles from './AppShell.module.css'
 /** The other boards in the sidebar, after the use cases' boards (newest edit on top). */
 const OTHER_BOARDS: [string, string][] = [
   ['Attention', '1h'],
-  ['Blue sky', '4d'],
+  ['GPS', '4d'],
   ['How hearing works', '4d'],
   ['Earth', '1w'],
   ['Exploration', '1w']

@@ -71,7 +71,7 @@ export interface UseCase {
 }
 
 export const USE_CASES: readonly UseCase[] = [
-  { id: 'gps', board: 'GPS', request: 'How does my phone know where I am?', app: 'Claude', logo: 'claude', load: () => import('./gps') },
+  { id: 'sky', board: 'Blue sky', request: 'Why is the sky blue?', app: 'Claude', logo: 'claude', load: () => import('./blue-sky') },
   { id: 'check', board: 'Algebra', request: 'Can you check my work?', app: 'ChatGPT', logo: 'openai', load: () => import('./waves') },
   { id: 'sheet', board: 'Q3 sales', request: 'Help me understand Q3-sales.xlsx', app: 'Claude', logo: 'claude', load: () => import('./sky') }
 ]
