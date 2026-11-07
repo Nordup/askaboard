@@ -19,6 +19,8 @@ in [`../../space/`](../../space/); work happens on `main`.
 an open-source macOS app for people who already pay for an agent app,
 with a voice server, analytics and a new website (P23, D7).
 Where another doc disagrees, the launch plan wins.
+For the build, signing, GitHub release and website download steps, see
+[`release-guide.md`](release-guide.md).
 The launch name and approved icon are in the [Askaboard brand kit](../../assets/askaboard/README.md) (D18).
 
 ## Status (2026-11-07)
@@ -66,13 +68,13 @@ The launch name and approved icon are in the [Askaboard brand kit](../../assets/
 | Voice for everyone (T39), a local Kokoro voice (T40), a Settings dialog (U8, U12), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. Settings was redesigned 2026-11-06/07 (row below) |
 | Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
 | App chrome and Settings (2026-11-06/07): a quiet title row (U9), board history Back/Forward ⌘[ ⌘] (U11), one Settings dialog with one settings owner in main (U12), the app's own dropdown, opaque panels, overlay scrollbars and bundled voice samples (U14), Settings spacing rules, one small control, the key sheet (U15), soft shadows, see-through popups, a rounder radius scale by element size, bigger key caps and switch (U16, U17) | Done and pushed (`1de0461`). Checked in dev mode with `drive.mjs` and one outside review of U12. Not checked: the built `.dmg` with the bundled voice samples, the sound of the samples, Linux. |
-| App packaging and signing (macOS, D7, D10) | Built 2026-11-06: `cd space && npm run dist:mac` makes arm64 and x64 `.dmg` files (about 133 and 140 MB) with telemetry channel `stable`. The arm64 app ran from the `.dmg` in a check: welcome card, a scene on the board, the relay answers. Signed ad-hoc for now: this Mac has no "Developer ID Application" certificate (team CDA73N3FRP). The notarytool profile `learning-space-notary` is not stored yet. Not checked: the x64 app, a real Developer ID signature, notarization, a clean Mac. The Askaboard packaging icon is ready. The app identity and branded build remain open. |
+| App packaging and signing (macOS, D7, D14) | `cd space && npm run dist:mac` built and checked a 226 MiB universal Developer ID signed, notarized DMG on 2026-11-07; it requires the signing identity and `learning-space-notary` Keychain profile. The separate arm64 DMG was installed and opened on this Mac without a security bypass. The Askaboard packaging icon is ready. App identity, the branded build and a fresh-Mac install remain open. |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Board controls for a mouse and a trackpad (2026-11-06/07, B69–B71, U10, U13, U18): a tool pill with keys as in Excalidraw, a style pill per tool or selection, shapes drawn in the agents' pen ink, rectangle and lasso selection, a right-click menu, paste from other apps, undo and zoom as bare buttons at the bottom right | Done on `main`: [`board-controls-plan.md`](board-controls-plan.md), values in [`design-system.md`](design-system.md) "Board controls", the ink recipe in [`agent-ink.md`](agent-ink.md). Checked on the M1 Air, built and dev; ChatGPT review fixed |
+| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Built locally, not deployed (the deployment rule in `AGENTS.md`). The page is one board: the hero, the app shell with the use cases, Connect your agent, download, footer. Use cases: GPS done, made by hand in the app's look; "check my work" and "Q3 sales" still show placeholder drawings |
 | Deeper editing (shapes inside SVG, a full style inspector) | Much later |
 
 The web client (`web/`), the tutor backend (`server/`) and the iPad client
-| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Built locally, not deployed (the deployment rule in `AGENTS.md`). The page is one board: the hero, the app shell with the use cases, Connect your agent, download, footer. Use cases: GPS done, made by hand in the app's look; "check my work" and "Q3 sales" still show placeholder drawings |
 (`MathTutor/`) are paused, not deleted.
 
 Numbered work: "fix 1/2", "improvement 1–4" and plan "item" numbers name

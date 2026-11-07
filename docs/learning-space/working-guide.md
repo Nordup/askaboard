@@ -317,3 +317,22 @@ combine; `meta.json` records `no_html` and `brief`.
   learning folder (`~/Projects/learning/learning-space`).
 - The plugin repo is a sibling checkout: `../learning-space-plugins`.
   `space/scripts/build-mcpb.mjs` copies its `.mcpb` when it is present.
+
+## Package a macOS release
+
+The full build and publishing checklist is in [`release-guide.md`](release-guide.md).
+
+On a Mac with the Developer ID Application identity and the
+`learning-space-notary` keychain profile, run `cd space && npm run dist:mac`.
+It builds a universal Apple Silicon and Intel DMG in `space/release/` with
+stable analytics, signs and notarizes the app and the DMG, staples the DMG,
+and checks Gatekeeper. It stops when credentials or a check fail. To build
+one architecture instead, pass `-- --arm64` or `-- --x64`. Set
+`APPLE_KEYCHAIN_PROFILE` only to use a different notarytool profile.
+
+This creates local artifacts only: it does not publish a release or configure
+updates. Check the new name, bundle ID and icon before the first public build,
+then install the DMG and plugin on a clean Mac. Back up the Developer ID
+identity as an encrypted `.p12`; keep its password separate. To restore it on
+another Mac, import it into Keychain Access and create a notarytool profile.
+The certificate expires on 2027-12-07.

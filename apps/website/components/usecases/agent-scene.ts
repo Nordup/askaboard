@@ -178,6 +178,37 @@ const SVG = 'http://www.w3.org/2000/svg'
 const VOLUME =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>'
 
+/** One scene's part in the page's voice: its invite, its audio. */
+interface VoiceMember {
+  refresh: () => void
+  stop: () => void
+  unlock: () => void
+}
+// The voice is one choice for the page (founder, 2026-11-07): turned on in one scene, it is on in every scene until
+// the page reloads or the visitor turns it off with the one small button fixed at the page's bottom right.
+const voice = { on: false, dismissed: false, members: new Set<VoiceMember>() }
+let voiceOff: HTMLButtonElement | null = null
+const refreshVoice = (): void => {
+  if (!voiceOff) {
+    // On the page itself (fixed to the viewport), not in a shell: the shell's window is scaled and moves.
+    voiceOff = document.createElement('button')
+    voiceOff.type = 'button'
+    voiceOff.className = styles.off
+    voiceOff.setAttribute('aria-label', 'Turn the voice off')
+    voiceOff.innerHTML = VOLUME
+    voiceOff.addEventListener('click', () => setVoice(false))
+    document.body.appendChild(voiceOff)
+  }
+  voiceOff.classList.toggle(styles.gone, !voice.on)
+  for (const m of voice.members) m.refresh()
+}
+const setVoice = (on: boolean): void => {
+  voice.on = on
+  // Inside the click, every scene's audio gets the browser's leave to play; the next frame of each sets its time.
+  for (const m of voice.members) on ? m.unlock() : m.stop()
+  refreshVoice()
+}
+
 export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   const tl = timeline(scene)
   const shapes = scene.objects.filter((o) => o.kind === 'shape' && o.d && o.style)
@@ -211,29 +242,35 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   })
 
   // The voice: off until the visitor turns it on (a browser plays sound only after a click). The big button over the
-  // shell invites them until they press it or hide it. While the voice is on, a small button fixed at the page's
-  // bottom right turns it off; then that button goes and the big one comes back (founder, 2026-11-07).
-  let soundOn = false
-  let dismissed = false
+  // shell invites them until they press it or hide it. The choice is the page's (`voice` below): on in one scene, on
+  // in all of them until the page reloads or the small button at the page's bottom right turns it off.
   let audio: HTMLAudioElement | null = null
   let lastT = -1
   let quiet: ReturnType<typeof setTimeout> | null = null
+  let priming = false
   const stop = (): void => {
     audio?.pause()
   }
   let invite: HTMLElement | null = null
-  let off: HTMLButtonElement | null = null
-  const refresh = (): void => {
-    invite?.classList.toggle(styles.gone, soundOn || dismissed)
-    off?.classList.toggle(styles.gone, !soundOn)
-  }
-  const setSound = (on: boolean): void => {
-    soundOn = on
-    if (on && audio) {
-      // Started inside the click, so the browser allows it; the next frame sets its time or pauses it.
-      void audio.play().catch(() => undefined)
-    } else stop()
-    refresh()
+  const member: VoiceMember = {
+    refresh: () => invite?.classList.toggle(styles.gone, voice.on || voice.dismissed),
+    stop,
+    unlock: () => {
+      // Inside the click, so the browser lets this scene's audio play later too; muted, so the visitor hears nothing.
+      // A line that starts meanwhile (follow) takes the audio over: it unmutes it and keeps it playing.
+      if (!audio || !audio.paused) return
+      const a = audio
+      priming = true
+      a.muted = true
+      void a
+        .play()
+        .then(() => priming && a.pause())
+        .catch(() => undefined)
+        .finally(() => {
+          if (priming) a.muted = false
+          priming = false
+        })
+    },
   }
   /** live/voice.ts followVoice: the line at t plays from its place in the clip; between lines, quiet. */
   const follow = (t: number): void => {
@@ -241,11 +278,13 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     const advancing = t > lastT && t < scene.duration
     lastT = t
     const line = scene.cues.find((c) => c.voice && t >= c.at && t < c.at + c.dur)
-    if (!soundOn || !advancing || !line?.voice) {
+    if (!voice.on || !advancing || !line?.voice) {
       if (!audio.paused) audio.pause()
       return
     }
     const target = line.voice.from + (t - line.at)
+    priming = false
+    audio.muted = false
     if (audio.paused) {
       audio.currentTime = target
       void audio.play().catch(() => undefined)
@@ -320,20 +359,13 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     invite.innerHTML =
       `<button type="button" class="${styles.speaker}" aria-label="Turn on the voice"><span class="${styles.ring}"></span><span class="${styles.ring}"></span>${VOLUME}</button>` +
       `<span class="${styles.label}">Press to hear Claude explain it</span><button type="button" class="${styles.hide}">Hide</button>`
-    invite.querySelector(`.${styles.speaker}`)!.addEventListener('click', () => setSound(true))
+    invite.querySelector(`.${styles.speaker}`)!.addEventListener('click', () => setVoice(true))
     invite.querySelector(`.${styles.hide}`)!.addEventListener('click', () => {
-      dismissed = true
-      refresh()
+      voice.dismissed = true
+      refreshVoice()
     })
-    // On the page itself (fixed to the viewport), not in the shell: the shell's window is scaled and moves.
-    off = document.createElement('button')
-    off.type = 'button'
-    off.className = `${styles.off} ${styles.gone}`
-    off.setAttribute('aria-label', 'Turn the voice off')
-    off.innerHTML = VOLUME
-    off.addEventListener('click', () => setSound(false))
-    document.body.appendChild(off)
-    refresh()
+    voice.members.add(member)
+    refreshVoice()
     document.addEventListener('visibilitychange', () => document.hidden && stop())
   }
 
@@ -453,15 +485,16 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       if (canvas) el.appendChild(canvas)
       if (panel) el.appendChild(panel.el)
       el.append(invite!)
+      member.refresh()
       lastT = -1
     },
     unmount() {
+      // Only this scene's audio stops: the visitor's voice choice stays for the next scene.
       stop()
       svg?.remove()
       canvas?.remove()
       panel?.el.remove()
       invite?.remove()
-      setSound(false)
       host = null
     }
   }

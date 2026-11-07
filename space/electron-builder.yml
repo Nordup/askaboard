@@ -1,5 +1,5 @@
 # macOS packaging (decision D7): `npm run dist:mac` (scripts/dist-mac.mjs)
-# builds one signed .dmg per architecture into release/.
+# builds a signed, notarized universal .dmg into release/.
 # The name comes from package.json "productName"; the icon is resources/icon.png.
 
 # Keep the existing bundle ID until the desktop identity and migration are settled.
@@ -52,15 +52,12 @@ mac:
   category: public.app-category.education
   target:
     - target: dmg
-      arch: [arm64, x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # No `identity` here: electron-builder finds a "Developer ID Application"
-  # identity in the keychain by itself. scripts/dist-mac.mjs signs ad-hoc ("-")
-  # when there is none. Notarization runs when APPLE_KEYCHAIN_PROFILE is set
-  # (scripts/dist-mac.mjs sets it when the learning-space-notary profile works).
+  # electron-builder finds the Developer ID identity and notarizes the app.
+  # dist-mac.mjs requires the identity and a working notarytool profile.
 
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
