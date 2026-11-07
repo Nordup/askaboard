@@ -14,6 +14,7 @@
 import { hex } from '@/lib/board/colors'
 import { PILL_ROOM } from './placeholder'
 import { scriptPanel } from './script-panel'
+import styles from './agent-scene.module.css'
 import type { Animation } from './index'
 
 type Prop = 'draw' | 'fill' | 'opacity' | 'scale' | 'x' | 'y' | 'rotate'
@@ -103,31 +104,45 @@ function timeline(scene: AgentScene) {
 }
 
 const SVG = 'http://www.w3.org/2000/svg'
+// lucide Volume2.
+const VOLUME =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>'
 
 export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   const tl = timeline(scene)
   const shapes = scene.objects.filter((o) => o.kind === 'shape' && o.d && o.style)
-  const lines = scene.cues.map((c) => ({ start: c.at, end: c.at + c.dur, text: c.text }))
-  // The app's step count: a first step before the first named one, then one per step().
-  const lead = scene.steps.length && scene.steps[0].at > 0 ? 1 : 0
-  const stepCount = scene.steps.length + lead
-  const status = (t: number): string => `Step ${Math.max(1, scene.steps.filter((s) => s.at <= t).length + lead)} of ${stepCount}`
+  // The panel's steps as the app's (ScriptPanel.tsx panelSteps): a first step before the first named one, then one
+  // per step(), each to the next one's start (the last to the end), with the lines said in it.
+  const starts = [...(scene.steps[0]?.at > 0 || !scene.steps.length ? [0] : []), ...scene.steps.map((s) => s.at)]
+  const steps = starts.map((start, i) => {
+    const end = starts[i + 1] ?? scene.duration
+    return { start, end, lines: scene.cues.filter((c) => c.at >= start && (c.at < end || i === starts.length - 1)).map((c) => c.text) }
+  })
 
-  // The voice: off until the visitor turns it on (a browser plays sound only after a click).
+  // The voice: off until the visitor turns it on (a browser plays sound only after a click). The big button over the
+  // shell invites them until they press it or hide it. While the voice is on, a small button fixed at the page's
+  // bottom right turns it off; then that button goes and the big one comes back (founder, 2026-11-07).
   let soundOn = false
+  let dismissed = false
   let audio: HTMLAudioElement | null = null
   let lastT = -1
   let quiet: ReturnType<typeof setTimeout> | null = null
   const stop = (): void => {
     audio?.pause()
   }
-  const toggle = (): void => {
-    soundOn = !soundOn
-    if (!audio) return
-    if (soundOn) {
+  let invite: HTMLElement | null = null
+  let off: HTMLButtonElement | null = null
+  const refresh = (): void => {
+    invite?.classList.toggle(styles.gone, soundOn || dismissed)
+    off?.classList.toggle(styles.gone, !soundOn)
+  }
+  const setSound = (on: boolean): void => {
+    soundOn = on
+    if (on && audio) {
       // Started inside the click, so the browser allows it; the next frame sets its time or pauses it.
       void audio.play().catch(() => undefined)
     } else stop()
+    refresh()
   }
   /** live/voice.ts followVoice: the line at t plays from its place in the clip; between lines, quiet. */
   const follow = (t: number): void => {
@@ -152,7 +167,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   const panel =
     typeof document === 'undefined'
       ? null
-      : scriptPanel(scene.name.charAt(0).toUpperCase() + scene.name.slice(1), lines, { status, on: () => soundOn, toggle })
+      : scriptPanel(scene.name.charAt(0).toUpperCase() + scene.name.slice(1), steps)
   let host: HTMLElement | null = null
   let svg: SVGSVGElement | null = null
   let root: SVGGElement | null = null
@@ -177,6 +192,25 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     }
     audio = new Audio(voiceUrl)
     audio.preload = 'auto'
+    invite = document.createElement('div')
+    invite.className = styles.invite
+    invite.innerHTML =
+      `<button type="button" class="${styles.speaker}" aria-label="Turn on the voice"><span class="${styles.ring}"></span><span class="${styles.ring}"></span>${VOLUME}</button>` +
+      `<span class="${styles.label}">Press to hear Claude explain it</span><button type="button" class="${styles.hide}">Hide</button>`
+    invite.querySelector(`.${styles.speaker}`)!.addEventListener('click', () => setSound(true))
+    invite.querySelector(`.${styles.hide}`)!.addEventListener('click', () => {
+      dismissed = true
+      refresh()
+    })
+    // On the page itself (fixed to the viewport), not in the shell: the shell's window is scaled and moves.
+    off = document.createElement('button')
+    off.type = 'button'
+    off.className = `${styles.off} ${styles.gone}`
+    off.setAttribute('aria-label', 'Turn the voice off')
+    off.innerHTML = VOLUME
+    off.addEventListener('click', () => setSound(false))
+    document.body.appendChild(off)
+    refresh()
     document.addEventListener('visibilitychange', () => document.hidden && stop())
   }
 
@@ -197,6 +231,16 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     const ox = (lw - v.width * k) / 2 - v.x * k
     const oy = (rh - v.height * k) / 2 - v.y * k
     root.setAttribute('transform', `matrix(${k} 0 0 ${k} ${ox} ${oy})`)
+    // The invite in the middle of the whole app window (founder: the shell's centre, not the board's), in the host's
+    // own px.
+    const shell = host.closest('[data-shell-frame]')?.firstElementChild
+    if (shell) {
+      const hr = host.getBoundingClientRect()
+      const wr = shell.getBoundingClientRect()
+      const zoom = hr.width / lw || 1
+      invite!.style.left = `${(wr.left + wr.width / 2 - hr.left) / zoom}px`
+      invite!.style.top = `${(wr.top + wr.height / 2 - hr.top) / zoom}px`
+    }
 
     for (const o of shapes) {
       const p = paths.get(o.id)!
@@ -236,12 +280,15 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       if (!svg) build()
       el.appendChild(svg!)
       if (panel) el.appendChild(panel.el)
+      el.append(invite!)
       lastT = -1
     },
     unmount() {
       stop()
       svg?.remove()
       panel?.el.remove()
+      invite?.remove()
+      setSound(false)
       host = null
     }
   }

@@ -1,0 +1,152 @@
+/*
+ * An agent's voiced scene (agent-scene.ts): the big voice button over the board's middle until the visitor presses it or
+ * hides it (founder, 2026-11-07: "screaming, press me"; design B), and the turn-off control at the board's bottom right
+ * while the voice is on. Sizes are the window's own CSS px. The board's material takes no pointer: these take it.
+ */
+
+.invite {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.25s ease;
+}
+
+.speaker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 7px var(--accent-soft), var(--shadow-float);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.speaker:hover {
+  background: var(--accent-hover);
+}
+
+.speaker svg {
+  width: 36px;
+  height: 36px;
+}
+
+/* Two rings that leave the button one after the other. */
+.ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+/* On a dark pill: it sits over the drawing. */
+.label {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bg-glass);
+  font-family: var(--font-ui);
+  font-size: 18px;
+  color: var(--text);
+}
+
+.hide {
+  margin-top: -4px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  color: var(--muted);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.hide:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* The voice is on: a small round button fixed at the page's bottom right turns it off (the big button's blue, quiet). */
+.off {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  transition: opacity 0.25s ease;
+}
+
+.off:hover {
+  background: var(--accent-hover);
+}
+
+.off svg {
+  width: 20px;
+  height: 20px;
+}
+
+.gone {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gone * {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ring {
+    animation: ring 1.8s ease-out infinite;
+  }
+
+  .ring + .ring {
+    animation-delay: 0.9s;
+  }
+
+  .speaker {
+    animation: breathe 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes ring {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.05);
+  }
+}

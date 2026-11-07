@@ -26,6 +26,8 @@ const CHAT_START = 10
 const CHAT_KNEE = 180
 /** A switch is one crossfade (ms): the old scene fades out while the new one fades in from its start. */
 const CROSSFADE = 320
+/** A finished scene holds its last frame this long (s), then plays again (founder, 2026-11-07). */
+const REPLAY_GAP = 3
 
 /**
  * Development only: `?scene=<use case id>&t=<seconds>` holds the shell on that use case at that
@@ -138,8 +140,9 @@ export function AppShell() {
       // A scene that shows on both layers (the step left and come back to) plays on the front one only.
       if (!anim || !w || !h || layer.opacity <= 0 || (layer === back && back.index === front.index)) return
       c.setTransform(scale, 0, 0, scale, 0, 0)
-      // The scene plays once and holds its last frame.
-      const t = hold ? hold.t : still ? anim.duration : Math.min(anim.duration, (now - layer.startAt) / 1000)
+      // The scene plays, holds its last frame for REPLAY_GAP, and plays again from the start (the request is not typed again).
+      const played = (now - layer.startAt) / 1000
+      const t = hold ? hold.t : still ? anim.duration : Math.min(anim.duration, played % (anim.duration + REPLAY_GAP))
       anim.draw(c, w, h, t)
     }
 
