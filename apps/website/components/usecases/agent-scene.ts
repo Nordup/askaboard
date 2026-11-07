@@ -5,13 +5,21 @@
  * writes the scene description: each object (an SVG path with its style), its timeline (draw, fill, opacity, scale
  * tracks), the voiced lines and the steps. This file plays the description:
  * - the timeline's values as space/src/renderer/src/live/timeline.ts gives them (base, value, matrix);
- * - each shape as the app's SVG node (live/compile.ts): stroke in its colour, round caps and joins, its fill;
+ * - each shape as the app's SVG node (live/compile.ts): stroke in its colour, round caps and joins, its fill, its dash
+ *   pattern and hatching;
  * - a stroke drawn on by its dash (board/playback.ts revealDash), the fill at its share, the opacity;
+ * - a changing shape (a recipe, as a bar that grows) by the sweep's samples, blended as live/player.ts does, until its
+ *   last change;
+ * - ink (write, label, around) as the app's ink canvas above the shapes: the strokes the export made with the app's
+ *   hand (board/hand.ts humanize), drawn with the site's copy of board/paint.ts, stroke by stroke as the app reveals them;
+ * - an object that shows when it is made (no draw action) from its time of making on;
  * - the agent's view (the board area it drew for) fitted to the shell's board;
  * - the voice as live/voice.ts follows it: one audio element set from the scene time, line by line.
- * Only what the shapes and tracks need is here: a scene with ink, text, HTML or worlds needs more of the app.
+ * Only what shapes, ink and tracks need is here: a scene with text, HTML or worlds needs more of the app.
  */
 import { hex } from '@/lib/board/colors'
+import { drawStroke, ranges, revealPoints } from '@/lib/board/paint'
+import type { InkPoint } from '@/lib/board/hand'
 import { PILL_ROOM } from './placeholder'
 import { scriptPanel } from './script-panel'
 import styles from './agent-scene.module.css'
@@ -38,8 +46,14 @@ interface SceneObject {
   vis: 'hidden' | 'shown'
   pivot: [number, number]
   parent?: number
+  created: number
   d?: string
-  style?: { color: string; width: number; opacity: number; fill?: string; fillOpacity?: number }
+  style?: { color: string; width: number; opacity: number; fill?: string; fillOpacity?: number; dash?: number[]; hatch?: string }
+  /** A changing shape: the sweep's samples, shown until lastChange (then d). */
+  samples?: { t: number; d: string; width?: number }[]
+  lastChange?: number
+  /** Ink: its strokes in its own points, as the app draws them. */
+  ink?: { width: number; tool: 'pen' | 'highlighter'; strokes: InkPoint[][] }
 }
 
 export interface AgentScene {
@@ -50,6 +64,10 @@ export interface AgentScene {
   actions: Track[]
   steps: { name: string; at: number }[]
   cues: { text: string; at: number; dur: number; voice?: { clip: string; from: number } }[]
+  /** The scene's camera moves (camera()): each glides the view to its fit, a board rect [x, y, w, h] with its pad. */
+  camera?: { start: number; dur: number; fit?: [number, number, number, number]; center?: [number, number]; ease: Ease }[]
+  /** The learner's own ink on the board before the scene (a lab run's --learner-board), in board points. */
+  learner?: { color: string; width: number; tool: 'pen' | 'highlighter'; points: InkPoint[] }[]
 }
 
 // shared/live-scene.ts SCENE_EASES and trackNumber.
@@ -73,6 +91,58 @@ const multiply = (p: Matrix, q: Matrix): Matrix => [
   p[0] * q[4] + p[2] * q[5] + p[4],
   p[1] * q[4] + p[3] * q[5] + p[5]
 ]
+
+/** live/player.ts BLEND_GAP: samples further apart than this are not blended. */
+const BLEND_GAP = 0.05
+const r2 = (v: number): number => Math.round(v * 100) / 100
+const NUMBER = /-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi
+/** A changing shape's d at t (live/player.ts locate and blendD): the sample at t, blended with the next one. */
+function sampleD(samples: NonNullable<SceneObject['samples']>, t: number): string {
+  if (t <= samples[0].t) return samples[0].d
+  let lo = 0
+  let hi = samples.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (samples[mid].t <= t) lo = mid
+    else hi = mid - 1
+  }
+  const a = samples[lo]
+  const b = samples[Math.min(lo + 1, samples.length - 1)]
+  if (b === a || b.t - a.t > BLEND_GAP) return a.d
+  const k = (t - a.t) / (b.t - a.t)
+  const an = a.d.match(NUMBER) ?? []
+  const bn = b.d.match(NUMBER) ?? []
+  const parts = a.d.split(NUMBER)
+  if (an.length !== bn.length || b.d.split(NUMBER).join('#') !== parts.join('#')) return a.d
+  let out = parts[0]
+  for (let i = 0; i < an.length; i++) out += String(r2(Number(an[i]) + (Number(bn[i]) - Number(an[i])) * k)) + parts[i + 1]
+  return out
+}
+
+/** board/playback.ts revealDash: a dash list that shows the first `shown` length of a path drawn with `pattern` (or solid). */
+function revealDash(length: number, shown: number, pattern: number[] | null): { dash: string; offset: string } {
+  if (!pattern) return { dash: `${length} ${length}`, offset: `${length - shown}` }
+  const out: number[] = []
+  let at = 0
+  let k = 0
+  while (at < shown && out.length < 2000) {
+    const piece = pattern[k % pattern.length]
+    const on = k % 2 === 0
+    const use = Math.min(piece, shown - at)
+    out.push(on ? use : piece)
+    at += on ? use : piece
+    k++
+  }
+  if (out.length % 2 === 1) out.push(length + 1)
+  else out[out.length - 1] += length + 1
+  return { dash: out.map((v) => Math.round(v * 100) / 100).join(' '), offset: '0' }
+}
+
+const lineLength = (line: readonly InkPoint[]): number => {
+  let length = 0
+  for (let i = 1; i < line.length; i++) length += Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1])
+  return length
+}
 
 /** The timeline's values (live/timeline.ts): each action starts from the value of the ones before it. */
 function timeline(scene: AgentScene) {
@@ -111,6 +181,27 @@ const VOLUME =
 export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   const tl = timeline(scene)
   const shapes = scene.objects.filter((o) => o.kind === 'shape' && o.d && o.style)
+  // Ink, with each stroke's share of the object's drawing (live/compile.ts ranges).
+  const inks = scene.objects
+    .filter((o) => o.kind === 'ink' && o.ink && o.style)
+    .map((o) => ({ o, ink: o.ink!, ranges: ranges(o.ink!.strokes.map(lineLength)), color: hex(o.style!.color) }))
+  /** The board rect in view at t: the agent's view, then each camera move's fit, glided over the move. */
+  const viewAt = (t: number): { x: number; y: number; width: number; height: number } => {
+    let v = scene.view
+    for (const c of scene.camera ?? []) {
+      if (t <= c.start) break
+      const to = c.fit
+        ? { x: c.fit[0], y: c.fit[1], width: c.fit[2], height: c.fit[3] }
+        : c.center
+          ? { ...v, x: c.center[0] - v.width / 2, y: c.center[1] - v.height / 2 }
+          : v
+      const k = c.dur > 0 ? EASES[c.ease](Math.min(1, (t - c.start) / c.dur)) : 1
+      v = { x: v.x + (to.x - v.x) * k, y: v.y + (to.y - v.y) * k, width: v.width + (to.width - v.width) * k, height: v.height + (to.height - v.height) * k }
+    }
+    return v
+  }
+  /** An object that shows when it is made is not there before (live/player.ts objectLook `before`). */
+  const before = (o: SceneObject, t: number): boolean => o.vis === 'shown' && t < o.created
   // The panel's steps as the app's (ScriptPanel.tsx panelSteps): a first step before the first named one, then one
   // per step(), each to the next one's start (the last to the end), with the lines said in it.
   const starts = [...(scene.steps[0]?.at > 0 || !scene.steps.length ? [0] : []), ...scene.steps.map((s) => s.at)]
@@ -171,24 +262,56 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   let host: HTMLElement | null = null
   let svg: SVGSVGElement | null = null
   let root: SVGGElement | null = null
-  const paths = new Map<number, { el: SVGPathElement; length: number | null }>()
+  const paths = new Map<number, { el: SVGPathElement; length: number | null; d: string; pattern: number[] | null }>()
+  let canvas: HTMLCanvasElement | null = null
 
   const build = (): void => {
     svg = document.createElementNS(SVG, 'svg')
     svg.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none')
     root = document.createElementNS(SVG, 'g')
     svg.appendChild(root)
+    const defs = document.createElementNS(SVG, 'defs')
     for (const o of shapes) {
       const style = o.style!
       const el = document.createElementNS(SVG, 'path')
       el.setAttribute('d', o.d!)
-      el.setAttribute('fill', style.fill ? hex(style.fill) : 'none')
+      let fill = style.fill ? hex(style.fill) : 'none'
+      if (style.hatch) {
+        // live/compile.ts: diagonal lines in the hatch colour, in the shape's own points.
+        const gap = Math.max(4, style.width * 2.4)
+        const id = `agent-hatch-${scene.name.replace(/\W+/g, '-')}-${o.id}`
+        const pattern = document.createElementNS(SVG, 'pattern')
+        pattern.setAttribute('id', id)
+        pattern.setAttribute('patternUnits', 'userSpaceOnUse')
+        pattern.setAttribute('width', String(gap))
+        pattern.setAttribute('height', String(gap))
+        pattern.setAttribute('patternTransform', 'rotate(45)')
+        const line = document.createElementNS(SVG, 'line')
+        line.setAttribute('x1', '0')
+        line.setAttribute('y1', '0')
+        line.setAttribute('x2', '0')
+        line.setAttribute('y2', String(gap))
+        line.setAttribute('stroke', hex(style.hatch))
+        line.setAttribute('stroke-width', String(r2(Math.max(1, style.width * 0.5))))
+        pattern.appendChild(line)
+        defs.appendChild(pattern)
+        fill = `url(#${id})`
+      }
+      el.setAttribute('fill', fill)
+      const dash = style.dash?.length && style.dash.some((v) => v > 0) ? style.dash.map(r2) : null
+      if (dash) el.setAttribute('stroke-dasharray', dash.join(' '))
       el.setAttribute('stroke', hex(style.color))
       el.setAttribute('stroke-width', String(style.width))
       el.setAttribute('stroke-linecap', 'round')
       el.setAttribute('stroke-linejoin', 'round')
       root.appendChild(el)
-      paths.set(o.id, { el, length: null })
+      paths.set(o.id, { el, length: null, d: o.d!, pattern: dash })
+    }
+    if (defs.childNodes.length) svg.insertBefore(defs, root)
+    // The ink canvas above the shapes, as the app's board (Board.tsx: ink is on the canvas over the content layer).
+    if (inks.length || scene.learner?.length) {
+      canvas = document.createElement('canvas')
+      canvas.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none')
     }
     audio = new Audio(voiceUrl)
     audio.preload = 'auto'
@@ -214,6 +337,44 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     document.addEventListener('visibilitychange', () => document.hidden && stop())
   }
 
+  /** The ink at t, as live/player.ts objectLook shows it: each stroke revealed by its range of the draw value, under the object's matrix. */
+  const drawInk = (el: HTMLCanvasElement, lw: number, lh: number, zoom: number, view: Matrix, t: number): void => {
+    const px = zoom * (window.devicePixelRatio || 1)
+    const width = Math.max(1, Math.round(lw * px))
+    const height = Math.max(1, Math.round(lh * px))
+    if (el.width !== width || el.height !== height) {
+      el.width = width
+      el.height = height
+    }
+    const c = el.getContext('2d')
+    if (!c) return
+    c.setTransform(1, 0, 0, 1, 0, 0)
+    c.clearRect(0, 0, width, height)
+    c.lineCap = 'round'
+    c.lineJoin = 'round'
+    const sx = width / lw
+    const sy = height / lh
+    // The learner's own ink first: it was on the board before the scene.
+    c.setTransform(sx * view[0], 0, 0, sy * view[3], sx * view[4], sy * view[5])
+    for (const stroke of scene.learner ?? []) drawStroke(c, { points: stroke.points, color: stroke.color, width: stroke.width, tool: stroke.tool }, 0, 1)
+    for (const { o, ink, ranges: shares, color } of inks) {
+      if (before(o, t)) continue
+      const drawn = Math.max(0, Math.min(1, tl.value(o.id, 'draw', t)))
+      const fill = tl.value(o.id, 'fill', t)
+      const alpha = Math.max(0, Math.min(1, tl.value(o.id, 'opacity', t))) * o.style!.opacity
+      if ((drawn <= 0 && fill <= 0) || alpha <= 0.001) continue
+      const m = multiply(view, tl.matrix(o.id, t))
+      c.setTransform(sx * m[0], sy * m[1], sx * m[2], sy * m[3], sx * m[4], sy * m[5])
+      ink.strokes.forEach((points, i) => {
+        const [a, b] = shares[i]
+        const share = b > a ? Math.max(0, Math.min(1, (drawn - a) / (b - a))) : drawn >= b ? 1 : 0
+        if (share <= 0) return
+        const shown = share < 1 ? revealPoints(points, share) : points
+        if (shown.length) drawStroke(c, { points: shown, color, width: ink.width, tool: ink.tool }, 0, alpha, points)
+      })
+    }
+  }
+
   const draw = (_c: CanvasRenderingContext2D, w: number, h: number, t: number): void => {
     if (!host || !root) return
     // The window's scale and the room the panel leaves, as the other use cases (gps.ts).
@@ -224,20 +385,21 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     const below = PILL_ROOM / s + 14
     panel?.update(t, phone, below)
     const panelH = panel?.el.offsetHeight ?? 0
-    // The agent's view is the board it drew for: on a phone, the board above the panel.
+    // The agent's view is the board it drew for, as its camera moves it: on a phone, the board above the panel.
     const rh = phone ? lh - (panelH + below + 12) : lh
-    const v = scene.view
+    const v = viewAt(t)
     const k = Math.min(lw / v.width, rh / v.height)
     const ox = (lw - v.width * k) / 2 - v.x * k
     const oy = (rh - v.height * k) / 2 - v.y * k
     root.setAttribute('transform', `matrix(${k} 0 0 ${k} ${ox} ${oy})`)
+    // The window's own zoom on the page (the shell scales it), so the ink canvas has a pixel per device pixel.
+    const zoom = host.getBoundingClientRect().width / lw || 1
     // The invite in the middle of the whole app window (founder: the shell's centre, not the board's), in the host's
     // own px.
     const shell = host.closest('[data-shell-frame]')?.firstElementChild
     if (shell) {
       const hr = host.getBoundingClientRect()
       const wr = shell.getBoundingClientRect()
-      const zoom = hr.width / lw || 1
       invite!.style.left = `${(wr.left + wr.width / 2 - hr.left) / zoom}px`
       invite!.style.top = `${(wr.top + wr.height / 2 - hr.top) / zoom}px`
     }
@@ -248,7 +410,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       const drawn = tl.value(o.id, 'draw', t)
       const fill = tl.value(o.id, 'fill', t)
       const opacity = Math.max(0, Math.min(1, tl.value(o.id, 'opacity', t))) * style.opacity
-      if ((drawn <= 0 && fill <= 0) || opacity <= 0.001) {
+      if (before(o, t) || (drawn <= 0 && fill <= 0) || opacity <= 0.001) {
         p.el.style.display = 'none'
         continue
       }
@@ -258,10 +420,18 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       const identity = m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0
       if (identity) p.el.removeAttribute('transform')
       else p.el.setAttribute('transform', `matrix(${m.join(' ')})`)
+      // A changing shape: its sample of now until its last change, then its end d.
+      const d = o.samples?.length && t < (o.lastChange ?? scene.duration) ? sampleD(o.samples, t) : o.d!
+      if (d !== p.d) {
+        p.el.setAttribute('d', d)
+        p.d = d
+        p.length = null
+      }
       if (drawn < 1) {
         p.length ??= p.el.getTotalLength()
-        p.el.style.strokeDasharray = `${p.length} ${p.length}`
-        p.el.style.strokeDashoffset = String(p.length * (1 - Math.max(0, drawn)))
+        const { dash, offset } = revealDash(p.length, p.length * Math.max(0, drawn), p.pattern)
+        p.el.style.strokeDasharray = dash
+        p.el.style.strokeDashoffset = offset
       } else {
         p.el.style.strokeDasharray = ''
         p.el.style.strokeDashoffset = ''
@@ -269,6 +439,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       const baseFill = style.fillOpacity ?? 1
       p.el.style.fillOpacity = String(fill >= 1 ? baseFill : baseFill * Math.max(0, fill))
     }
+    if (canvas) drawInk(canvas, lw, lh, zoom, [k, 0, 0, k, ox, oy], t)
     follow(t)
   }
 
@@ -279,6 +450,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       host = el
       if (!svg) build()
       el.appendChild(svg!)
+      if (canvas) el.appendChild(canvas)
       if (panel) el.appendChild(panel.el)
       el.append(invite!)
       lastT = -1
@@ -286,6 +458,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     unmount() {
       stop()
       svg?.remove()
+      canvas?.remove()
       panel?.el.remove()
       invite?.remove()
       setSound(false)

@@ -154,8 +154,8 @@ export const SPRITES: SpriteDef[] = [
   // question down one margin, a hand-drawn line over the step's area down the other; the sides change each step.
   ...(
     [
-      ['gps', 'blue', 'left', [['how does my', 16, -4, -2], ['phone know', 18, 3, 2], ['where I am?', 17, -3, 0]], ['how does my phone', 'know where I am?']],
-      ['check', 'green', 'right', [['can you', 26, 5, 0], ['check', 34, -3, -2], ['my work?', 22, 2, 0]], ['can you check', 'my work?']],
+      ['sky', 'blue', 'left', [['why is', 26, -4, -2], ['the sky', 28, 3, 2], ['blue?', 34, -3, 0]], ['why is the sky', 'blue?']],
+      ['check', 'green', 'right', [['I cannot', 24, 5, 0], ['solve it,', 26, -3, -2], ['help me?', 26, 2, 0]], ['I cannot solve it,', 'help me?']],
       ['sheet', 'yellow', 'left', [['help me', 26, -5, -2], ['understand', 19, 2, 0], ['Q3-sales.xlsx', 16, -3, 2]], ['help me understand', 'Q3-sales.xlsx']]
     ] as const
   ).flatMap(([id, color, side, words, lines], index): SpriteDef[] => {

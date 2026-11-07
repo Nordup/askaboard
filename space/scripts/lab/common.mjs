@@ -161,10 +161,10 @@ function setupFolder(folder) {
 /**
  * Start a lab app: scratch HOME, user-data-dir, learning folder and traces under
  * SCRATCH/<name>/. Detached, so it outlives the script; the state file holds the
- * exact PIDs to stop. fresh: start from an empty folder and board. spawnOnly: return
+ * exact PIDs to stop. fresh: start from an empty folder and board; board: the board file to open with. spawnOnly: return
  * right after the spawn, with the clock of the spawn in `spawnedAt`: the caller times the start.
  */
-export async function startInstance({ name, mcpPort, debugPort, built = false, fresh = false, spawnOnly = false }) {
+export async function startInstance({ name, mcpPort, debugPort, built = false, fresh = false, spawnOnly = false, board = null }) {
   if (mcpPort === FOUNDER_PORT) throw new Error(`Port ${FOUNDER_PORT} is the founder's app. Pick another.`)
   const inst = instance(name)
   const running = readState(name)
@@ -181,6 +181,8 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   if (fresh && existsSync(inst.dir)) rmSync(inst.dir, { recursive: true, force: true })
   for (const path of [inst.home, inst.userData, inst.traces]) mkdirSync(path, { recursive: true })
   if (!existsSync(join(inst.folder, 'AGENTS.md'))) setupFolder(inst.folder)
+  // board: the board file's content to open with (a learner's work that is already there).
+  if (board) writeFileSync(join(inst.folder, 'boards/Board.board.json'), board)
 
   const env = { ...process.env, HOME: inst.home, SPACE_FOLDER: inst.folder, SPACE_MCP_PORT: String(mcpPort), SPACE_REMOTE_DEBUG: String(debugPort), SPACE_TRACE_DIR: inst.traces, SPACE_NO_FOCUS: '1' }
   delete env.ELECTRON_RUN_AS_NODE

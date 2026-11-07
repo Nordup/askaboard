@@ -1,7 +1,7 @@
 /**
- * The use cases that play in the app shell under the hero (decision D12, website-plan.md,
- * "Use cases: an app shell that plays drawings"): hand-made scenes, drawn in code as the agent
- * draws them on the app's board.
+ * The use cases that play in the app shell under the hero (decisions D12, D16, D17; website-plan.md,
+ * "The use cases are scenes in the app's look"): each is a lab agent's own scene, played in the
+ * browser by agent-scene.ts from what space/scripts/lab/export-scene.mjs makes of it.
  *
  * THE ANIMATION INTERFACE
  *
@@ -72,6 +72,6 @@ export interface UseCase {
 
 export const USE_CASES: readonly UseCase[] = [
   { id: 'sky', board: 'Blue sky', request: 'Why is the sky blue?', app: 'Claude', logo: 'claude', load: () => import('./blue-sky') },
-  { id: 'check', board: 'Algebra', request: 'Can you check my work?', app: 'ChatGPT', logo: 'openai', load: () => import('./waves') },
-  { id: 'sheet', board: 'Q3 sales', request: 'Help me understand Q3-sales.xlsx', app: 'Claude', logo: 'claude', load: () => import('./sky') }
+  { id: 'check', board: 'Ladder', request: 'I cannot solve it. Can you help me? Explain everything.', app: 'Claude', logo: 'claude', load: () => import('./ladder') },
+  { id: 'sheet', board: 'Q3 sales', request: 'Help me understand Q3-sales.xlsx', app: 'Claude', logo: 'claude', load: () => import('./q3-sales') }
 ]

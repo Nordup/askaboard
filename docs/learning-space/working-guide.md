@@ -107,7 +107,7 @@ and what went wrong before.
 ## Choosing lab tests (live drawing)
 
 **The only way to see real agent behaviour or to make an example** (founder,
-2026-11-07; the website's use cases are the one exception, `AGENTS.md`): a council run with `--brief-only` and the user's exact sentence
+2026-11-07; the website's use cases too, D16): a council run with `--brief-only` and the user's exact sentence
 as the task, for example
 `node scripts/lab/council.mjs --client claude --model opus --effort medium --brief-only --task "How does my phone know where I am?"`.
 The agent then gets what it gets in the app: the brief, the guide and the
@@ -119,6 +119,29 @@ MCP tools, and nothing from us. The founder:
 
 The founder's own setting is Opus at medium effort; pass `--effort medium`
 (without it, `claude -p` uses its default effort).
+
+**The learner's work before the agent** (D17). When the request needs the
+learner's own work on the board (an exercise they tried, a drawing), write it
+as a scene program in `space/scripts/lab/council/learners/` with `write()` and
+`stroke()` and pass `--learner-board <program.js>`. `learner-board.mjs` runs it
+through the app's own scene library and hand and writes the strokes into the
+board file as the learner's ink, so the app opens with it. Do not draw your own
+strokes or send pen input. Give the pen colours as CSS values (`#5fd38d`
+green, `#6e8bff` blue; `space/src/renderer/src/tools.ts` `INK_COLORS`): what
+someone gave the learner (the exercise) in one colour, the learner's own work
+in another. Place it in the learner's view (about -607..607 × -427..427 board
+points in the lab window) so the agent's work can balance it, and leave room
+between lines. A learner's file (a spreadsheet) goes in with `--file <path>`
+(`council/files/`). Check the board once before the run:
+`node scripts/lab/learner-board.mjs <program.js> <out.json>` writes the board file.
+
+**Website use cases** (D16, D17). The site plays the agent's own scene in the
+browser with JavaScript; no video is recorded. After the run, export the scene
+with `node scripts/lab/export-scene.mjs <record.jsonl> <scene.js> <out.json>`
+(the record is `<lab folder>/.learning-space/scenes/<board>.jsonl`, the program
+is the agent's file in `boards/scenes/`, unchanged), convert the voice clip
+(`.learning-space/voice/<hash>.wav`) to `.m4a` with ffmpeg, and add a module in
+`apps/website/components/usecases/` that calls `agentScene()`.
 
 Lab and perf runs give agents what the real apps give them (decision W10):
 Claude with every tool and `--permission-mode bypassPermissions`, Codex with

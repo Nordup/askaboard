@@ -11,7 +11,7 @@
   "fusion": {
     "title": "The learner's fusion drawing",
     "text": "I drew something on the board. Is this how fusion works?",
-    "learner": "S3",
+    "learner": "fusion.js",
     "covers": [
       "reading the learner's drawing",
       "correcting a misconception",

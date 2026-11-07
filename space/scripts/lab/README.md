@@ -47,12 +47,14 @@ Flags: `--brief-only` (the task alone, as in a real session), `--no-code` and
 `--no-html` (hide worlds or HTML from the agent), `--brief <file>` (serve
 a draft brief), `--no-web`, `--interview`. See the script header.
 
-`--learner-text "3 ÷ 1/2 = 1.5"` writes that text on the board as the
-learner's own ink before the agent starts (lines split by `\n`, `1/2` as a
-stacked fraction, `--learner-at x,y` for the top-left; `learner-text.mjs`).
+`--learner-board council/learners/ladder.js` opens the board with the
+learner's own work: a scene program (`write()`, `stroke()`) that
+`learner-board.mjs` turns into the learner's ink with the app's own scene
+library and hand (D17). A task in `tasks.json` can name one as `"learner"`.
+`--file <path>` puts a learner's file (a spreadsheet) in the learning folder.
 
-It starts a fresh app (`--name council`, MCP 47891, debug 9491), draws the
-learner's strokes when the task has them, runs the agent headless with
+It starts a fresh app (`--name council`, MCP 47891, debug 9491) with the
+learner's work when the run has it, runs the agent headless with
 `council/purpose.md` + the task (only the task with `--brief-only`), and
 records the board. Tasks are in `council/tasks.json`.
 
@@ -89,7 +91,9 @@ npm run build
 node scripts/lab/record.mjs job.json [--copies 12] [--frames 0-299] [--keep-frames] [--no-audio]
 ```
 
-For website videos of an existing scene: frame k shows scene time t0 + k/fps
+Not for the website: its use cases play the scene in the browser with
+JavaScript (`export-scene.mjs`, D16, D17). For a video file of an existing
+scene (a launch video): frame k shows scene time t0 + k/fps
 exactly, however long a frame takes. The job file names the scene, its
 sources, the camera, fps and size (see the script header). The script starts
 `--copies` built lab apps (on Linux with no display, each in its own headless
