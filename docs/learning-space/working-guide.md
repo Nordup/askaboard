@@ -107,7 +107,7 @@ and what went wrong before.
 ## Choosing lab tests (live drawing)
 
 **The only way to see real agent behaviour or to make an example** (founder,
-2026-11-07): a council run with `--brief-only` and the user's exact sentence
+2026-11-07; the website's use cases are the one exception, `AGENTS.md`): a council run with `--brief-only` and the user's exact sentence
 as the task, for example
 `node scripts/lab/council.mjs --client claude --model opus --effort medium --brief-only --task "How does my phone know where I am?"`.
 The agent then gets what it gets in the app: the brief, the guide and the

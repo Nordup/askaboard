@@ -71,6 +71,7 @@ Where another doc disagrees, the launch plan wins.
 | Deeper editing (shapes inside SVG, a full style inspector) | Much later |
 
 The web client (`web/`), the tutor backend (`server/`) and the iPad client
+| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Built locally, not deployed (the deployment rule in `AGENTS.md`). The page is one board: the hero, the app shell with the use cases, Connect your agent, download, footer. Use cases: GPS done, made by hand in the app's look; "check my work" and "Q3 sales" still show placeholder drawings |
 (`MathTutor/`) are paused, not deleted.
 
 Numbered work: "fix 1/2", "improvement 1–4" and plan "item" numbers name

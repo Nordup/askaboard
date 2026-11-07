@@ -28,7 +28,8 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
 | `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved |
 | `design/`, `docs/design-system/` | Exports/transcriptions of the Paper design file (paused clients) | Generated — never the first thing you edit |
-| `landing-page/`, `landing/` | Marketing page of the paused tutor; the launch rebuilds it for Learning Space (`launch-plan.md`) | Local-only (see Deployment policy) |
+| `apps/website/` | The Learning Space website (Next.js; D8, [`website-plan.md`](docs/learning-space/website-plan.md)) | Active, local-only (see Deployment policy) |
+| `landing-page/`, `landing/` | Marketing page of the paused tutor | Paused, local-only (see Deployment policy) |
 | `docs/` | Vision, TODO, research; `docs/learning-space/` for the active app; older specs under `docs/superpowers/` | |
 
 ## Run it
