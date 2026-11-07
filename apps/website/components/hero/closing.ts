@@ -5,9 +5,9 @@
  * is finished, and the engine stops painting it. Same ink as the hero (scene.ts, lib/board).
  */
 import type { Point } from '@/lib/board/hand'
-import { arc, Ink, pen, share, star, write } from '@/lib/board/kit'
+import { arc, Ink, oval, pen, share, star, write } from '@/lib/board/kit'
 import { spline } from '@/lib/board/spline'
-import { arrowLines, type Draw } from './scene'
+import { arrowLines, label, type Draw } from './scene'
 
 /** Drawing on goes this many times faster than the board's natural pace (as scene.ts). */
 const PACE = 1.7
@@ -71,28 +71,131 @@ export function handHeading(lines: readonly HandLine[], size: number, underline?
   }
 }
 
-/** "open source, MIT" with an arrow up and to the left, at the GitHub link. Box 300 × 110. */
-export function openSourceNote(): Draw {
+/** An arrow as pen ink along a smooth curve through `points`, with the board's head at the end. */
+function curvedArrow(points: Point[], color: string, key: string): Ink {
+  const curve = spline(points)
+  const end = curve[curve.length - 1]
+  const before = curve[Math.max(0, curve.length - 7)]
+  return pen([curve, arrowLines(before[0], before[1], end[0], end[1], 9)[1]], color, 2.4, 0.2, key)
+}
+
+/**
+ * A note of the agent section's diagram (the hero's hint style: hand text with a short arrow to the
+ * part of the window it names). `lines` are centred on `at`, one under the other; `arrow` runs
+ * through its points to the head (none: a caption without an arrow). Box coordinates of the note's sprite.
+ */
+export function diagramNote(lines: readonly string[], at: Point, arrow: Point[] | null, color = 'text', arrowColor = 'yellow'): Draw {
   let inks: [Ink, number][] | null = null
   return (g, t, still) => {
     if (t < 0) return
     if (!inks) {
-      const curve = spline([
-        [92, 82],
-        [64, 77],
-        [42, 62],
-        [29, 40],
-        [24, 12]
-      ])
-      const end = curve[curve.length - 1]
-      const before = curve[curve.length - 6]
-      const head = arrowLines(before[0], before[1], end[0], end[1], 9)[1]
-      inks = [
-        [write('open source, MIT', 15, 192, 84, 'green', { center: true }), 0],
-        [pen([curve, head], 'green', 2.4, 0.2, 'mit-arrow'), 1.1]
-      ]
+      inks = []
+      let start = 0
+      lines.forEach((line, i) => {
+        const ink = label(line, 22, at[0], at[1] + i * 28, color, { center: true })
+        inks!.push([ink, start])
+        start += ink.duration / PACE + 0.05
+      })
+      if (arrow) inks.push([curvedArrow(arrow, arrowColor, `note-${lines[0]}`), start + 0.1])
     }
     return drawOnce(g, t, still, inks)
+  }
+}
+
+/**
+ * The agent section's windows, one case each; each draws on once when it comes into view, then
+ * rests. Body coordinates (the window less its 28-unit title strip).
+ */
+
+/** Sees: the learner's "x² = 9" in white, and the agent's blue ring round it. Body 300 × 162. */
+export function seesScene(): Draw {
+  let inks: [Ink, number][] | null = null
+  return (g, t, still) => {
+    if (t < 0) return
+    inks ??= [
+      [write('x² = 9', 36, 150, 84, 'text', { center: true }), 0.2],
+      [pen([oval(150, 82, 96, 46, -0.05)], 'blue', 2.6, 0.2, 'sees-ring'), 1.4]
+    ]
+    return drawOnce(g, t, still, inks)
+  }
+}
+
+/** Checks: "x = 3" in white, the agent's blue "and −3?" with an arrow, then "x = ±3" and a green tick. Body 380 × 202. */
+export function checksScene(): Draw {
+  let inks: [Ink, number][] | null = null
+  return (g, t, still) => {
+    if (t < 0) return
+    inks ??= [
+      [write('x = 3', 30, 92, 64, 'text', { center: true }), 0.2],
+      [write('and −3?', 22, 300, 44, 'blue', { center: true }), 1.2],
+      [
+        curvedArrow(
+          [
+            [252, 58],
+            [206, 72],
+            [158, 74]
+          ],
+          'blue',
+          'checks-ask'
+        ),
+        1.9
+      ],
+      [write('x = ±3', 30, 110, 146, 'text', { center: true }), 2.6],
+      [
+        pen(
+          [
+            [
+              [184, 144],
+              [196, 158],
+              [222, 126]
+            ]
+          ],
+          'green',
+          3,
+          0.2,
+          'checks-tick'
+        ),
+        3.5
+      ]
+    ]
+    return drawOnce(g, t, still, inks)
+  }
+}
+
+/** Builds: a blue wireframe cube that turns once into place, then rests. Body 260 × 182. */
+export function buildsScene(): Draw {
+  const corners: number[][] = []
+  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) corners.push([x, y, z])
+  const edges: [number, number][] = []
+  for (let i = 0; i < 8; i++) for (let j = i + 1; j < 8; j++) if (corners[i].filter((v, k) => v !== corners[j][k]).length === 1) edges.push([i, j])
+  const TURN = 2.8
+  return (g, t, still) => {
+    if (t < 0) return
+    const k = still ? 1 : Math.min(1, t / TURN)
+    // One slow turn into place, easing out: the yaw goes from about one turn back to its rest.
+    const eased = 1 - (1 - k) ** 3
+    const yaw = 0.6 - (1 - eased) * Math.PI * 1.5
+    const tilt = -0.45
+    const half = 42
+    const p = corners.map(([x, y, z]) => {
+      const x1 = x * Math.cos(yaw) + z * Math.sin(yaw)
+      const z1 = -x * Math.sin(yaw) + z * Math.cos(yaw)
+      const y2 = y * Math.cos(tilt) - z1 * Math.sin(tilt)
+      const z2 = y * Math.sin(tilt) + z1 * Math.cos(tilt)
+      return [130 + x1 * half, 92 + y2 * half, z2]
+    })
+    let far = 0
+    for (let i = 1; i < 8; i++) if (p[i][2] > p[far][2]) far = i
+    const c = g.ctx
+    g.fade(Math.min(1, still ? 1 : t / 0.4), () => {
+      for (const [i, j] of edges) {
+        const back = i === far || j === far
+        c.setLineDash(back ? [4, 5] : [])
+        g.seg(p[i][0], p[i][1], p[j][0], p[j][1], 'blue', back ? 1.6 : 2.4)
+      }
+      c.setLineDash([])
+    })
+    return k >= 1
   }
 }
 

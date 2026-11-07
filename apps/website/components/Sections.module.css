@@ -1,7 +1,7 @@
 /*
- * The page's last sections (BringYourAI.tsx, DownloadSection.tsx): parts of the same board. Their
- * ink and windows are board items placed from the section's top centre in design units (layout.ts
- * `anchor`), so every place here is in design units too (--u).
+ * The page's last sections (AgentSection.tsx, DownloadSection.tsx): parts of the same board as the
+ * hero. Their ink and windows are board items placed from the section's top centre in design units
+ * (layout.ts `anchor`), so every place here is in design units too (--u).
  */
 .section {
   position: relative;
@@ -9,8 +9,8 @@
 
 /* Room between the sections (the founder: "they need more space to breathe"); the places inside a section stay. */
 .agents {
-  height: calc(700 * var(--u));
-  margin-top: calc(150 * var(--u));
+  height: calc(600 * var(--u));
+  margin-top: calc(170 * var(--u));
 }
 
 /* Its height also holds the room before the footer. */
@@ -19,7 +19,65 @@
   margin-top: calc(50 * var(--u));
 }
 
-/* The heading is hand ink on the board; this one is for screen readers. */
+/* ---------- The agent section: a heading and one line as on the hero; the rest is board items ---------- */
+
+.agentWords {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px;
+  text-align: center;
+}
+
+/* The hero headline's font (Hero.module.css .title), smaller. */
+.agentTitle {
+  margin: 0;
+  font-size: calc(58 * var(--u));
+  line-height: calc(62 * var(--u));
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  color: var(--text-strong);
+}
+
+.agentLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6 * var(--u)) calc(14 * var(--u));
+  margin: calc(16 * var(--u)) 0 0;
+  font-size: calc(19 * var(--u));
+  line-height: calc(26 * var(--u));
+  color: var(--muted);
+}
+
+/* The agent apps' marks, small and quiet after the line. */
+.logos {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(10 * var(--u));
+}
+
+.logos svg {
+  width: calc(18 * var(--u));
+  height: calc(18 * var(--u));
+  opacity: 0.85;
+}
+
+.claude {
+  fill: var(--logo-claude);
+}
+
+.openai,
+.cursor {
+  fill: var(--text);
+}
+
+/* Words only for screen readers. */
 .hiddenTitle {
   position: absolute;
   width: 1px;
@@ -29,43 +87,11 @@
   white-space: nowrap;
 }
 
-.words {
-  position: absolute;
-  left: 50%;
-  top: calc(282 * var(--u));
-  translate: -50% 0;
-  width: calc(600 * var(--u));
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.lead {
-  margin: 0;
-  font-size: calc(22 * var(--u));
-  line-height: calc(30 * var(--u));
-  color: var(--text);
-}
-
 .quiet {
   margin: calc(8 * var(--u)) 0 0;
   font-size: calc(18 * var(--u));
   line-height: calc(25 * var(--u));
   color: var(--muted);
-}
-
-.source {
-  margin-top: calc(22 * var(--u));
-  font-size: calc(17 * var(--u));
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--border-strong);
-  text-underline-offset: 0.25em;
-}
-
-.source:hover {
-  text-decoration-color: var(--text);
 }
 
 .cta {
@@ -114,8 +140,24 @@
 /* ---------- Phones: the 390-wide frame ---------- */
 @media (max-width: 719px) {
   .agents {
-    height: calc(1220 * var(--u));
-    margin-top: calc(90 * var(--u));
+    height: calc(880 * var(--u));
+    margin-top: calc(100 * var(--u));
+  }
+
+  .agentTitle {
+    font-size: calc(32 * var(--u));
+    line-height: calc(36 * var(--u));
+  }
+
+  .agentLine {
+    margin-top: calc(12 * var(--u));
+    font-size: calc(15 * var(--u));
+    line-height: calc(21 * var(--u));
+  }
+
+  .logos svg {
+    width: calc(16 * var(--u));
+    height: calc(16 * var(--u));
   }
 
   .download {
@@ -123,24 +165,9 @@
     margin-top: calc(90 * var(--u));
   }
 
-  .words {
-    top: calc(140 * var(--u));
-    width: calc(340 * var(--u));
-  }
-
-  .lead {
-    font-size: calc(17 * var(--u));
-    line-height: calc(24 * var(--u));
-  }
-
   .quiet {
     font-size: calc(14 * var(--u));
     line-height: calc(20 * var(--u));
-  }
-
-  .source {
-    margin-top: calc(16 * var(--u));
-    font-size: calc(15 * var(--u));
   }
 
   .cta {

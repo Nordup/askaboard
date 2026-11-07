@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { AgentTerminal, AgentTitle } from './AgentWindow'
 import { mountBoard, type Engine, type HeroState } from './hero/engine'
 import { SPRITES } from './hero/layout'
 import { ToolPill } from './ToolPill'
@@ -67,14 +66,13 @@ export function Board() {
       <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite} aria-hidden="true">
         {SPRITES.filter((def) => !def.step).map((def) =>
           def.window ? (
-            <div key={def.id} className={`${styles.sprite} ${styles.window} ${def.agent ? '' : styles.quiet}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
+            <div key={def.id} className={`${styles.sprite} ${styles.window} ${styles.quiet}`} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
               <div className={styles.titlebar}>
                 <i />
                 <i />
                 <i />
-                {def.agent && <AgentTitle agent={def.agent} />}
               </div>
-              {def.agent ? <AgentTerminal agent={def.agent} /> : <canvas className={styles.body} />}
+              <canvas className={styles.body} />
             </div>
           ) : (
             <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>

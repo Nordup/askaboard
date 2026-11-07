@@ -44,7 +44,7 @@ type Mark =
 /** A board item: a window, a loose drawing or a mark. */
 interface Item {
   el: HTMLElement
-  /** None for an agent's terminal window: its body is HTML (layout.ts `agent`). */
+  /** None for an item without a canvas. */
   canvas: HTMLCanvasElement | null
   g: Pen | null
   /** Animated items (windows, loose ink) have a drawing and a start; a mark has its geometry. */

@@ -1,6 +1,6 @@
 import { AppShell } from '@/components/AppShell'
 import { Board } from '@/components/Board'
-import { BringYourAI } from '@/components/BringYourAI'
+import { AgentSection } from '@/components/AgentSection'
 import { DownloadSection } from '@/components/DownloadSection'
 import { Hero } from '@/components/Hero'
 import sections from '@/components/Sections.module.css'
@@ -12,7 +12,7 @@ export default function Home() {
     <main className={styles.page} data-board="">
       <Hero />
       <AppShell />
-      <BringYourAI />
+      <AgentSection />
       <DownloadSection />
       <footer className={sections.footer}>
         <a href="/" className={sections.wordmark}>

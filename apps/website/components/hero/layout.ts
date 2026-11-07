@@ -5,8 +5,7 @@
  * CSS px) and the engine both place things from these numbers.
  */
 import { lineQuestion, LINE_W, PHONE_QUESTION_BOX, QUESTION_BOX, stackedQuestion, stepLine } from './steps'
-import { AGENTS, type Agent } from '@/lib/agents'
-import { bulbInk, handHeading, loopArrowInk, openSourceNote, starsInk } from './closing'
+import { buildsScene, bulbInk, checksScene, diagramNote, handHeading, loopArrowInk, seesScene, starsInk } from './closing'
 import { cubeWindow, earthWindow, MOVE_SCALE, moveInk, neuronWindow, pillHint, planetInk, squiggleInk, sunInk, wavesWindow, type Draw } from './scene'
 
 /** A place: the centre, a turn in degrees and a size factor. */
@@ -48,8 +47,6 @@ export interface SpriteDef {
    * screen, `start` seconds later.
    */
   anchor?: string
-  /** An agent app's terminal window (lib/agents.ts): HTML in the window's body, no canvas. */
-  agent?: Agent
   make?(): Draw
 }
 
@@ -58,9 +55,6 @@ export const BAR = 28
 
 /** The hero's windows a little smaller than the reference image, round their centres, so they clutter less (the founder, 2026-11-07). */
 const QUIET = 0.92
-
-/** An agent's terminal window at size 1, in design units (with its title strip). */
-export const TERMINAL = { w: 360, h: 172 }
 
 /** The desktop frame (design units) and the phone frame's width. */
 export const DESK = { w: 1586, h: 848 }
@@ -78,26 +72,75 @@ export const SPRITES: SpriteDef[] = [
   { id: 'neuron', window: true, w: 270, h: 505, desk: { x: -612, y: 176, r: -6.8, s: QUIET }, start: 1.6, make: neuronWindow },
   { id: 'cube', window: true, w: 286, h: 170, desk: { x: 505, y: -224, r: 5, s: QUIET }, phone: { x: 112, y: 222, r: 5, s: 0.6 }, start: 1.1, make: cubeWindow },
   { id: 'earth', window: true, w: 450, h: 330, desk: { x: 574, y: 185, r: 4.2, s: QUIET }, phone: { x: 8, y: 840, r: 3, s: 0.74 }, start: 2.6, make: earthWindow },
-  // Bring your own AI (anchor `agents`, BringYourAI.tsx): a hand-written heading in the middle, one
-  // terminal window per agent app round it, and a note at the GitHub link. On a phone the windows stack.
-  { id: 'byo-heading', window: false, w: 640, h: 190, desk: { x: 0, y: 150, r: -1.5, s: 1 }, phone: { x: 0, y: 64, r: -1.5, s: 0.52 }, start: 0, anchor: 'agents', make: () => handHeading([['bring the AI', 'text'], ['you already pay for', 'text']], 58, 'yellow') },
-  { id: 'byo-mit', window: false, w: 300, h: 110, desk: { x: 140, y: 455, r: -3, s: 1 }, phone: { x: 70, y: 354, r: -3, s: 0.75 }, start: 0.6, anchor: 'agents', make: openSourceNote },
-  ...AGENTS.map(
-    (agent, i): SpriteDef => ({
-      id: `agent-${agent.id}`,
-      window: true,
-      w: TERMINAL.w,
-      h: TERMINAL.h,
-      desk: [
-        { x: -548, y: 150, r: -3.5, s: 1.12 },
-        { x: 556, y: 176, r: 3, s: 1.12 },
-        { x: -520, y: 488, r: 2.5, s: 1.12 },
-        { x: 540, y: 512, r: -2, s: 1.12 }
-      ][i],
-      phone: { x: 0, y: 490 + i * 200, r: i % 2 ? 1.2 : -1.2, s: 0.95 },
-      start: 0,
+  // The agent section (anchor `agents`, AgentSection.tsx): three quiet windows, one case each, in a
+  // loose group under the heading, each with a hand-ink caption and a short arrow, like the hero's
+  // hints. On a phone the windows stack, each with a caption above it and no arrow (deskOff captions).
+  { id: 'agent-sees', window: true, w: 300, h: 190, desk: { x: -420, y: 310, r: -4, s: 1 }, phone: { x: 0, y: 292, r: -2, s: 0.9 }, start: 0.2, anchor: 'agents', make: seesScene },
+  { id: 'agent-checks', window: true, w: 380, h: 230, desk: { x: 0, y: 345, r: 2.5, s: 1 }, phone: { x: 0, y: 532, r: 2, s: 0.9 }, start: 0.5, anchor: 'agents', make: checksScene },
+  { id: 'agent-builds', window: true, w: 260, h: 210, desk: { x: 420, y: 296, r: 4.5, s: 1 }, phone: { x: 0, y: 782, r: -2, s: 0.9 }, start: 0.8, anchor: 'agents', make: buildsScene },
+  {
+    id: 'agent-sees-note',
+    window: false,
+    w: 320,
+    h: 110,
+    desk: { x: -500, y: 158, r: -3, s: 1 },
+    start: 1.2,
+    anchor: 'agents',
+    make: () =>
+      diagramNote(['your agent sees', 'what you write'], [120, 34], [
+        [222, 52],
+        [262, 66],
+        [290, 100]
+      ])
+  },
+  {
+    id: 'agent-checks-note',
+    window: false,
+    w: 320,
+    h: 100,
+    desk: { x: 30, y: 528, r: 2, s: 1 },
+    start: 1.6,
+    anchor: 'agents',
+    make: () =>
+      diagramNote(['it checks your work'], [190, 62], [
+        [70, 52],
+        [52, 30],
+        [50, 4]
+      ])
+  },
+  {
+    id: 'agent-builds-note',
+    window: false,
+    w: 320,
+    h: 110,
+    desk: { x: 505, y: 478, r: -2, s: 1 },
+    start: 2.0,
+    anchor: 'agents',
+    make: () =>
+      diagramNote(['it builds 3D', 'you can turn'], [200, 56], [
+        [118, 50],
+        [74, 36],
+        [52, 4]
+      ])
+  },
+  ...(
+    [
+      ['sees', 'your agent sees what you write', 190],
+      ['checks', 'it checks your work', 412],
+      ['builds', 'it builds 3D you can turn', 668]
+    ] as const
+  ).map(
+    ([id, text, y]): SpriteDef => ({
+      id: `agent-${id}-caption`,
+      window: false,
+      w: 360,
+      h: 44,
+      desk: { x: 0, y: 0, r: 0, s: 1 },
+      phone: { x: 0, y, r: -1.5, s: 0.85 },
+      deskOff: true,
+      start: 0.4,
       anchor: 'agents',
-      agent
+      make: () => diagramNote([text], [180, 22], null)
     })
   ),
   // The download section (anchor `download`, DownloadSection.tsx): one big hand line over the button, a few quiet drawings round it.
