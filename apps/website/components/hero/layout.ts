@@ -75,15 +75,15 @@ export const SPRITES: SpriteDef[] = [
   // The agent section (anchor `agents`, AgentSection.tsx): three quiet windows, one case each, in a
   // loose group under the heading, each with a hand-ink caption and a short arrow, like the hero's
   // hints. On a phone the windows stack, each with a caption above it and no arrow (deskOff captions).
-  { id: 'agent-sees', window: true, w: 300, h: 190, desk: { x: -420, y: 310, r: -4, s: 1 }, phone: { x: 0, y: 292, r: -2, s: 0.9 }, start: 0.2, anchor: 'agents', make: seesScene },
-  { id: 'agent-checks', window: true, w: 380, h: 230, desk: { x: 0, y: 345, r: 2.5, s: 1 }, phone: { x: 0, y: 532, r: 2, s: 0.9 }, start: 0.5, anchor: 'agents', make: checksScene },
-  { id: 'agent-builds', window: true, w: 260, h: 210, desk: { x: 420, y: 296, r: 4.5, s: 1 }, phone: { x: 0, y: 782, r: -2, s: 0.9 }, start: 0.8, anchor: 'agents', make: buildsScene },
+  { id: 'agent-sees', window: true, w: 300, h: 190, desk: { x: -420, y: 346, r: -4, s: 1 }, phone: { x: 0, y: 292, r: -2, s: 0.9 }, start: 0.2, anchor: 'agents', make: seesScene },
+  { id: 'agent-checks', window: true, w: 380, h: 230, desk: { x: 0, y: 381, r: 2.5, s: 1 }, phone: { x: 0, y: 532, r: 2, s: 0.9 }, start: 0.5, anchor: 'agents', make: checksScene },
+  { id: 'agent-builds', window: true, w: 260, h: 210, desk: { x: 420, y: 332, r: 4.5, s: 1 }, phone: { x: 0, y: 782, r: -2, s: 0.9 }, start: 0.8, anchor: 'agents', make: buildsScene },
   {
     id: 'agent-sees-note',
     window: false,
     w: 320,
     h: 110,
-    desk: { x: -500, y: 158, r: -3, s: 1 },
+    desk: { x: -500, y: 194, r: -3, s: 1 },
     start: 1.2,
     anchor: 'agents',
     make: () =>
@@ -98,7 +98,7 @@ export const SPRITES: SpriteDef[] = [
     window: false,
     w: 320,
     h: 100,
-    desk: { x: 30, y: 528, r: 2, s: 1 },
+    desk: { x: 30, y: 564, r: 2, s: 1 },
     start: 1.6,
     anchor: 'agents',
     make: () =>
@@ -113,7 +113,7 @@ export const SPRITES: SpriteDef[] = [
     window: false,
     w: 320,
     h: 110,
-    desk: { x: 505, y: 478, r: -2, s: 1 },
+    desk: { x: 505, y: 514, r: -2, s: 1 },
     start: 2.0,
     anchor: 'agents',
     make: () =>
@@ -154,9 +154,9 @@ export const SPRITES: SpriteDef[] = [
   // question down one margin, a hand-drawn line over the step's area down the other; the sides change each step.
   ...(
     [
-      ['sky', 'blue', 'left', [['why', 40, -6, -3], ['is the', 26, 3, 3], ['sky', 42, -3, 0], ['blue?', 30, 4, 2]], ['why is the', 'sky blue?']],
-      ['neuron', 'green', 'right', [['how', 34, 5, 0], ['does a', 22, -3, -2], ['neuron', 22, 2, -2], ['fire?', 30, -5, 0]], ['how does a', 'neuron fire?']],
-      ['waves', 'yellow', 'left', [['what', 31, -5, -2], ['happens', 19, 2, 0], ['when two', 19, -2, 0], ['waves', 29, 3, -1], ['meet?', 30, -4, 2]], ['what happens when', 'two waves meet?']]
+      ['gps', 'blue', 'left', [['how does my', 16, -4, -2], ['phone know', 18, 3, 2], ['where I am?', 17, -3, 0]], ['how does my phone', 'know where I am?']],
+      ['check', 'green', 'right', [['can you', 26, 5, 0], ['check', 34, -3, -2], ['my work?', 22, 2, 0]], ['can you check', 'my work?']],
+      ['sheet', 'yellow', 'left', [['help me', 26, -5, -2], ['understand', 19, 2, 0], ['Q3-sales.xlsx', 16, -3, 2]], ['help me understand', 'Q3-sales.xlsx']]
     ] as const
   ).flatMap(([id, color, side, words, lines], index): SpriteDef[] => {
     const other = side === 'left' ? 'right' : 'left'

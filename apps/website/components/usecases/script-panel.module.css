@@ -1,0 +1,173 @@
+/*
+ * The app's reading panel over the board (space/src/renderer/src/styles/app.css, "Script panel";
+ * its values from styles/tokens.css): a copy for the use cases, which play a scene as the app
+ * does. script-panel.ts sets the step bar's fills, the reading view's offset and the status.
+ * Sizes are the window's own CSS px.
+ */
+
+.panel {
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --header: 34px;
+  --icon-button: 24px;
+  --step-bar-height: 3px;
+  --step-bar-gap: 3px;
+  --view-height: 176px;
+  --reading-at: 50%;
+  --reading-said: 0.22;
+  --reading-next: 0.5;
+  --reading-light: 14px;
+  --reading-light-ramp: 60px;
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  width: min(296px, calc(100% - 2 * var(--space-3)));
+  overflow: hidden;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-ui);
+  opacity: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--header);
+  padding: 0 calc((var(--header) - var(--icon-button)) / 2) 0 var(--space-3);
+}
+
+/* The status dot, small, playing (the app's .status-dot--small.status-dot--play). */
+.dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: var(--icon-button);
+  height: var(--icon-button);
+  color: var(--text-tertiary);
+}
+
+.strong {
+  color: var(--muted);
+}
+
+.bar {
+  display: flex;
+  gap: var(--step-bar-gap);
+  padding: 0 var(--space-3);
+}
+
+.track {
+  position: relative;
+  flex: 1 1 0;
+  height: var(--step-bar-height);
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-subtle);
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+}
+
+.view {
+  position: relative;
+  height: var(--view-height);
+  margin-top: var(--space-2);
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to bottom,
+    rgb(0 0 0 / var(--reading-said)) calc(var(--reading-at) - var(--reading-light-ramp)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) - var(--reading-light)),
+    rgb(0 0 0 / 1) calc(var(--reading-at) + var(--reading-light)),
+    rgb(0 0 0 / var(--reading-next)) calc(var(--reading-at) + var(--reading-light-ramp))
+  );
+}
+
+.text {
+  position: relative;
+  padding: 0 var(--space-4);
+}
+
+.para {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  padding: 4px 5px 6px 11px;
+}
+
+.status {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: var(--icon-button);
+  color: var(--text-tertiary);
+}
+
+/* Phones: the panel goes under the picture, across the board, with a shorter view and larger type. */
+.phone {
+  --view-height: 150px;
+  --header: 46px;
+  --icon-button: 34px;
+  --step-bar-height: 4px;
+  top: auto;
+  right: 20px;
+  bottom: var(--below);
+  left: 20px;
+  width: auto;
+  border-radius: 20px;
+}
+
+.phone .dot {
+  width: 9px;
+  height: 9px;
+}
+
+.phone .title {
+  font-size: 18px;
+}
+
+.phone .para {
+  font-size: 22px;
+}
+
+.phone .status {
+  font-size: 16px;
+}
+
+.phone .button svg {
+  width: 20px;
+  height: 20px;
+}

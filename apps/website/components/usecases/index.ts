@@ -1,6 +1,7 @@
 /**
  * The use cases that play in the app shell under the hero (decision D12, website-plan.md,
- * "Use cases: an app shell that plays drawings").
+ * "Use cases: an app shell that plays drawings"): hand-made scenes, drawn in code as the agent
+ * draws them on the app's board.
  *
  * THE ANIMATION INTERFACE
  *
@@ -21,9 +22,8 @@
  *   unit is one CSS pixel on screen: draw in the box 0..w × 0..h. The board's dot grid is behind
  *   the canvas (CSS); do not paint a background. The shell's chrome shows at 0.8 of the app's size
  *   (a screenshot of a bigger window); the tool pill covers about the bottom 52 px.
- * - `t` is the seconds since the use case started. It goes on past `duration`: from `duration`
- *   on, show the finished drawing (a small idle motion, such as a signal that runs again, is
- *   fine). The progress bar is full at `duration`.
+ * - `t` is the seconds since the chat window finished typing the request (AgentPrompt.tsx). The
+ *   scene plays once: from `duration` on, it shows its last frame.
  * - With reduced motion, the shell draws one frame at t = duration and no more frames.
  * - Draw in board ink with the site's copy of the app's code: lib/board/kit.ts (Pen, write(),
  *   pen(), Ink: text in the stroke font and hand-drawn lines that draw on), lib/board/hand.ts
@@ -32,16 +32,27 @@
  *   and text (white). components/hero/scene.ts shows the patterns.
  * - w and h change with the window (a phone shows a smaller board). Scale the drawing to fit:
  *   placeholder.ts has fit().
+ * - Material besides the ink (the app's UI over the board, as its reading panel, script-panel.ts):
+ *   mount(host) gets an empty element over the ink canvas, the size of the board in the window's
+ *   own CSS px (the window is scaled: w / host.clientWidth is that scale). The shell mounts the
+ *   scene when it becomes current and fades the host with the ink; unmount() takes it out again
+ *   (the scene shows on another layer, or the page goes). draw() updates the material for t as
+ *   well, and may run before mount() (the offscreen draw).
  *
  * Add a use case: write the module, then add an entry to USE_CASES below. The page loads the
  * modules with import() only when the section comes near the viewport.
  */
+
+import type { Logo } from '@/lib/agents'
 
 export interface Animation {
   /** Seconds until the drawing is finished. */
   duration: number
   /** One frame; see the comment above. */
   draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number): void
+  /** Put the scene's other board material into `host`; see the comment above. */
+  mount?(host: HTMLElement): void
+  unmount?(): void
 }
 
 export type CreateAnimation = () => Animation
@@ -50,14 +61,17 @@ export interface UseCase {
   id: string
   /** The board's name: the sidebar row and the top bar title. */
   board: string
-  /** The learner's request, the line over the window. Placeholder copy. */
+  /** The learner's request, typed into the agent app's window before the board plays (AgentPrompt.tsx). */
   request: string
+  /** The chat app the request is typed into: one per use case, so any agent works. Its name and its mark (lib/logos.ts) show in the window's title bar. */
+  app: string
+  logo: Logo
   /** The module. */
   load(): Promise<{ default: CreateAnimation }>
 }
 
 export const USE_CASES: readonly UseCase[] = [
-  { id: 'sky', board: 'Blue sky', request: 'Why is the sky blue?', load: () => import('./sky') },
-  { id: 'neuron', board: 'Neuron', request: 'How does a neuron send a signal?', load: () => import('./neuron') },
-  { id: 'waves', board: 'Two waves', request: 'What happens when two waves meet?', load: () => import('./waves') }
+  { id: 'gps', board: 'GPS', request: 'How does my phone know where I am?', app: 'Claude', logo: 'claude', load: () => import('./gps') },
+  { id: 'check', board: 'Algebra', request: 'Can you check my work?', app: 'ChatGPT', logo: 'openai', load: () => import('./waves') },
+  { id: 'sheet', board: 'Q3 sales', request: 'Help me understand Q3-sales.xlsx', app: 'Claude', logo: 'claude', load: () => import('./sky') }
 ]

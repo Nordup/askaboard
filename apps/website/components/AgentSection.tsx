@@ -12,6 +12,7 @@ const COPY = {
   logos: [
     ['claude', 'Claude'],
     ['openai', 'ChatGPT and Codex'],
+    ['googlegemini', 'Gemini'],
     ['cursor', 'Cursor']
   ] as [Logo, string][]
 }

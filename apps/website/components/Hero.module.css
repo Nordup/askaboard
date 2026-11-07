@@ -19,8 +19,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  height: calc(76 * var(--u));
-  min-height: 52px;
+  height: calc(88 * var(--u));
+  min-height: 56px;
   padding: 0 max(16px, calc(56 * var(--u)));
   font-size: clamp(14px, calc(17 * var(--u)), 17px);
 }

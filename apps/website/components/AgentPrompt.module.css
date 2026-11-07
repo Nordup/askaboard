@@ -1,0 +1,123 @@
+/*
+ * The agent app's window in front of the app shell (AgentPrompt.tsx): the hero windows' chrome in
+ * the quiet look (Board.module.css .window .quiet, sized in CSS px: --k is 1px here), with a
+ * chat inside: the app's mark and name in the title bar, the person's message bubble, the reply. It sits on the shell's lower-left corner, overlapping it a little.
+ */
+.app {
+  --k: 1px;
+  position: absolute;
+  left: -44px;
+  bottom: -46px;
+  z-index: 1;
+  width: 340px;
+  rotate: -2deg;
+  cursor: grab;
+  touch-action: none;
+}
+
+.app:active {
+  cursor: grabbing;
+}
+
+.title {
+  position: absolute;
+  left: 50%;
+  translate: -50% 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.title svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The app's mark in its own colour: Claude's orange, OpenAI's white. */
+.claude {
+  fill: var(--logo-claude);
+}
+
+.openai {
+  fill: var(--text);
+}
+
+.body {
+  padding: 14px 14px 16px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* The person's message: a muted bubble on the right that grows as the request is typed. */
+.message {
+  display: grid;
+  justify-items: end;
+  align-items: start;
+}
+
+.bubble {
+  grid-area: 1 / 1;
+  max-width: 82%;
+  padding: 7px 12px;
+  border-radius: 14px;
+  background: var(--bg-elevated-2);
+  color: var(--text);
+}
+
+.ghost {
+  visibility: hidden;
+}
+
+.caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.1em;
+  margin-left: 1px;
+  margin-right: -2.5px;
+  vertical-align: -0.2em;
+  background: var(--muted);
+}
+
+/* The app's answer: its mark and a muted line, shown once the request is typed. */
+.reply {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.reply svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.reply[data-shown] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reply {
+    transition: none;
+  }
+}
+
+/* Phone: just under the shell's bottom edge, full readable size, overlapping it a little. */
+@media (max-width: 719px) {
+  .app {
+    --app-w: min(320px, calc(100vw - 48px));
+    left: 50%;
+    bottom: auto;
+    top: calc(100% - 18px);
+    width: var(--app-w);
+    margin-left: calc(var(--app-w) / -2);
+    rotate: -1.5deg;
+  }
+}
