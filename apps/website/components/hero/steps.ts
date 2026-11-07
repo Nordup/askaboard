@@ -14,8 +14,13 @@ import { mulberry32 } from '@/lib/board/random'
 import { spline } from '@/lib/board/spline'
 import type { Draw } from './scene'
 
-/** The stacked question's box (design units). Its words are centred on x = 65; it fits the ~123-unit margin at 1440 px. */
+/**
+ * The stacked question's box (design units). The engine sets its width to the margin's width; the
+ * words scale to fill that width, so they are never cut off and grow with a wide margin.
+ */
 export const QUESTION_BOX = { w: 130, h: 440 }
+/** The largest scale of the question's words, so a very wide margin does not make them shout. */
+const MAX_SCALE = 1.7
 /** The phone's question box: one or two lines, centred. */
 export const PHONE_QUESTION_BOX = { w: 340, h: 76 }
 const PACE = 1.7
@@ -23,21 +28,28 @@ const PACE = 1.7
 /** A word of the question: its text, size, turn (degrees) and a small sideways shift. */
 export type Word = readonly [text: string, size: number, turn: number, shift: number]
 
-/** The question, word under word; the lines are spaced by their sizes. */
+/** The question, word under word; the lines are spaced by their sizes, and all scale to fit the box's width. */
 export function stackedQuestion(words: readonly Word[], color: string): Draw {
   let placed: { ink: Ink; x: number; y: number; r: number; at: number }[] | null = null
-  return (g, t, still) => {
-    if (t < 0) return
-    if (!placed) {
+  let scale = 1
+  let builtFor = 0
+  return (g, t, still, box) => {
+    if (t < 0 || !box) return
+    if (!placed || builtFor !== box.w) {
+      builtFor = box.w
+      const inks = words.map(([text, size]) => write(text, size, 0, 0, color, { center: true }))
+      // The widest word, with its sideways shift, fits the box at this scale.
+      const widest = Math.max(...inks.map((ink, i) => ink.box.x1 - ink.box.x0 + 2 * Math.abs(words[i][3]) + 2 * ink.width))
+      scale = Math.min(MAX_SCALE, box.w / widest)
       // The words sit in the middle of the box, so the box's place is the question's middle.
-      const total = words.reduce((sum, [, size]) => sum + size * 1.24 + 6, -6)
-      let y = (QUESTION_BOX.h - total) / 2
+      const total = words.reduce((sum, [, size]) => sum + (size * 1.24 + 6) * scale, -6 * scale)
+      let y = (box.h - total) / 2
       let at = 0
-      placed = words.map(([text, size, turn, shift]) => {
-        const ink = write(text, size, 0, 0, color, { center: true })
-        y += size * 0.62
-        const item = { ink, x: QUESTION_BOX.w / 2 + shift, y, r: (turn * Math.PI) / 180, at }
-        y += size * 0.62 + 6
+      placed = words.map(([, size, turn, shift], i) => {
+        const ink = inks[i]
+        y += size * 0.62 * scale
+        const item = { ink, x: box.w / 2 + shift * scale, y, r: (turn * Math.PI) / 180, at }
+        y += (size * 0.62 + 6) * scale
         at += ink.duration / PACE + 0.1
         return item
       })
@@ -46,7 +58,7 @@ export function stackedQuestion(words: readonly Word[], color: string): Draw {
     for (const p of placed) {
       const k = still ? 1 : share(t, p.at, p.ink, PACE)
       if (k < 1) done = false
-      if (k > 0) g.at(p.x, p.y, p.r, 1, () => g.ink(p.ink, k))
+      if (k > 0) g.at(p.x, p.y, p.r, scale, () => g.ink(p.ink, k))
     }
     return done
   }

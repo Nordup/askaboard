@@ -303,6 +303,11 @@ export function mountBoard(o: {
           // The brace spans the step's area, less the gap to the next one.
           item.h = item.bodyH = Math.max(40, (sizes.step - STEP_GAP) / u / item.place.s)
           item.el.style.setProperty('--h', String(item.h))
+        } else if (anchor === 'upper') {
+          // The question fills its margin's width, less a little air to the window and the page's edge.
+          const margin = side === 'left' ? frame.left - hostBox.left : W - (frame.right - hostBox.left)
+          item.w = Math.max(40, (margin * 0.84) / u / item.place.s)
+          item.el.style.setProperty('--w', String(item.w))
         }
         placeFrom(item, item.place, x, y)
       }
