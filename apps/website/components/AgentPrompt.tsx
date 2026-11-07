@@ -25,13 +25,15 @@ export function AgentPrompt({ index, onDone }: { index: number; onDone: (i: numb
   const [working, setWorking] = useState(false)
   const done = useRef(onDone)
   done.current = onDone
+  /** The use cases whose request was typed out once: asked again, the request shows whole and the board plays at once. */
+  const typedOnce = useRef(new Set<number>())
 
   useEffect(() => {
     setTyped(0)
     setWorking(false)
     if (index < 0) return
     const text = USE_CASES[index].request
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (typedOnce.current.has(index) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       setTyped(text.length)
       setWorking(true)
       done.current(index)
@@ -47,6 +49,8 @@ export function AgentPrompt({ index, onDone }: { index: number; onDone: (i: numb
         frame = requestAnimationFrame(step)
         return
       }
+      // Marked only when the typing ends, so StrictMode's second effect run still types it.
+      typedOnce.current.add(index)
       setWorking(true)
       timer = window.setTimeout(() => done.current(index), WORK_MS)
     }
