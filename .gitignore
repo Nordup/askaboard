@@ -109,3 +109,7 @@ share-videos/
 !space/resources/**/*.jpeg
 !space/resources/**/*.gif
 !space/resources/**/*.webp
+
+# Browser-check logs and local website videos (not for git)
+.playwright-mcp/
+apps/website/public/video/
