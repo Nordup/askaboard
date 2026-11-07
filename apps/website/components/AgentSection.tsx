@@ -18,7 +18,7 @@ const COPY = {
 
 /**
  * The agent section (website plan, page item 4), in the board's own look: a heading and one line
- * as on the hero, then three quiet app windows, one case each (it sees, it checks, it builds 3D),
+ * as on the hero, then three quiet app windows, one case each (it sees, it checks, it explains),
  * with hand-ink captions. The windows and captions are board items placed from this section
  * (layout.ts, anchor `agents`).
  */

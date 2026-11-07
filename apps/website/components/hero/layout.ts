@@ -117,17 +117,17 @@ export const SPRITES: SpriteDef[] = [
     start: 2.0,
     anchor: 'agents',
     make: () =>
-      diagramNote(['it builds 3D', 'you can turn'], [200, 56], [
-        [118, 50],
-        [74, 36],
-        [52, 4]
+      diagramNote(['it explains it', 'so you get it'], [206, 50], [
+        [124, 46],
+        [80, 34],
+        [56, 4]
       ])
   },
   ...(
     [
       ['sees', 'your agent sees what you write', 190],
       ['checks', 'it checks your work', 412],
-      ['builds', 'it builds 3D you can turn', 668]
+      ['builds', 'it explains it so you get it', 668]
     ] as const
   ).map(
     ([id, text, y]): SpriteDef => ({
