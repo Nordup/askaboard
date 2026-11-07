@@ -8,7 +8,7 @@ import styles from './Sections.module.css'
 /** The words of this section, in one place (the founder may rewrite them). The captions by the windows are in layout.ts (`agent-*-note`, `agent-*-caption`). */
 const COPY = {
   heading: 'Connect your agent',
-  line: 'Claude, ChatGPT or Cursor connects to the board over MCP, on the plan you already pay for.',
+  line: 'Connect Claude, ChatGPT or Cursor over MCP, using your existing subscription. Learning Space is free.',
   logos: [
     ['claude', 'Claude'],
     ['openai', 'ChatGPT and Codex'],

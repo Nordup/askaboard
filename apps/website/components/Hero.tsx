@@ -37,7 +37,7 @@ export async function Hero() {
           <br />
           Learn anything.
         </h1>
-        <p className={styles.sub}>A shared canvas for you and your AI.</p>
+        <p className={styles.sub}>A shared canvas for learning with your AI.</p>
         <DownloadButton className={styles.download} />
         <a className={`${styles.note} ${styles.source}`} href={REPO_URL} target="_blank" rel="noreferrer">
           <svg className={styles.github} viewBox="0 0 16 16" aria-hidden="true">
