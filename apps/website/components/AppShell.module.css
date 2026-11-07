@@ -20,8 +20,8 @@
   /* Over the board's back layer (the steps' ink passes behind the window), under the visitor's ink. */
   position: relative;
   z-index: 2;
-  /* A gap under the hero (the founder: room after the hero before the shell); in design units, so the hero's scale stays. */
-  padding: calc(104 * var(--u)) 16px 96px;
+  /* The window's top sits GAPS.heroToShell below the hero's content (lib/spacing.ts sets --pad-desk); the section ends at its track, and the gap after it belongs to the next section. Never set by hand. */
+  padding: calc(var(--pad-desk) * var(--u) - var(--hero-h) / 2) 16px 0;
 }
 
 .track {
@@ -457,7 +457,7 @@
     --step: 70svh;
     /* On a phone the window sticks and lets go at the marks' ends, as before. */
     --stick-cut: 0px;
-    padding: 32px 16px 64px;
+    padding: calc(var(--pad-phone) * var(--u)) 16px 0;
   }
 
   /* The phone: the inside is 540 × 700 app px, scaled to the screen's width (--z, AppShell.tsx). */

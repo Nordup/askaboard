@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Icon } from './hero/tools'
 import { ToolPill } from './ToolPill'
-import { nextStep, shellSizes } from '@/lib/shell-steps'
+import { GLIDE, nextStep, shellSizes } from '@/lib/shell-steps'
+import { SHELL_PAD } from '@/lib/spacing'
 import { USE_CASES, type Animation, type CreateAnimation } from './usecases'
 import styles from './AppShell.module.css'
 
@@ -151,7 +152,7 @@ export function AppShell() {
     // motion the stage stays sticky and stops plainly.
     let knee = 0
     const measureGlide = (): void => {
-      knee = 0.155 * window.innerHeight
+      knee = GLIDE * window.innerHeight
     }
     let shown = NaN
     const placeStage = (trackTop: number, trackH: number, winH: number): void => {
@@ -282,7 +283,7 @@ export function AppShell() {
   const current = USE_CASES[index]
 
   return (
-    <section className={styles.section} ref={sectionRef} aria-label="Learning Space at work">
+    <section className={styles.section} ref={sectionRef} aria-label="Learning Space at work" style={{ '--pad-desk': SHELL_PAD.desk, '--pad-phone': SHELL_PAD.phone } as CSSProperties}>
       <div className={styles.track} ref={trackRef} data-shell-track="">
         <div className={styles.stage} ref={stageRef}>
           <div className={styles.frame} ref={frameRef} data-shell-frame="">

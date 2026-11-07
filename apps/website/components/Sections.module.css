@@ -7,16 +7,28 @@
   position: relative;
 }
 
-/* Room between the sections (the founder: "they need more space to breathe"); the places inside a section stay. */
-.agents {
-  height: calc(600 * var(--u));
-  margin-top: calc(170 * var(--u));
+/*
+ * A section's margin and height come from its content and the gaps in lib/spacing.ts (sectionBox):
+ * the component sets --m-desk, --h-desk, --m-phone, --h-phone. Never set them by hand.
+ * The agent section follows the app shell, whose window ends --glide-tail below its track after it
+ * lets go (lib/shell-steps.ts GLIDE); with reduced motion it does not glide.
+ */
+.agents,
+.download {
+  --m: var(--m-desk);
+  --h: var(--h-desk);
+  height: calc(var(--h) * var(--u));
+  margin-top: calc(var(--m) * var(--u));
 }
 
-/* Its height also holds the room before the footer. */
-.download {
-  height: calc(590 * var(--u));
-  margin-top: calc(50 * var(--u));
+.agents {
+  margin-top: calc(var(--m) * var(--u) + var(--glide-tail));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents {
+    margin-top: calc(var(--m) * var(--u));
+  }
 }
 
 /* ---------- The agent section: a heading and one line as on the hero; the rest is board items ---------- */
@@ -139,9 +151,10 @@
 
 /* ---------- Phones: the 390-wide frame ---------- */
 @media (max-width: 719px) {
-  .agents {
-    height: calc(880 * var(--u));
-    margin-top: calc(100 * var(--u));
+  .agents,
+  .download {
+    --m: var(--m-phone);
+    --h: var(--h-phone);
   }
 
   .agentTitle {
@@ -160,10 +173,6 @@
     height: calc(16 * var(--u));
   }
 
-  .download {
-    height: calc(400 * var(--u));
-    margin-top: calc(90 * var(--u));
-  }
 
   .quiet {
     font-size: calc(14 * var(--u));

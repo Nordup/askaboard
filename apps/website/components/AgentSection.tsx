@@ -1,5 +1,8 @@
 import type { Logo } from '@/lib/agents'
 import { LOGO_PATHS } from '@/lib/logos'
+import { GLIDE } from '@/lib/shell-steps'
+import { GAPS, sectionBox } from '@/lib/spacing'
+import type { CSSProperties } from 'react'
 import styles from './Sections.module.css'
 
 /** The words of this section, in one place (the founder may rewrite them). The captions by the windows are in layout.ts (`agent-*-note`, `agent-*-caption`). */
@@ -19,9 +22,14 @@ const COPY = {
  * with hand-ink captions. The windows and captions are board items placed from this section
  * (layout.ts, anchor `agents`).
  */
+/** The heading and line block (.agentWords), design units from the section's top: on a phone the line wraps. */
+const TEXT = { desk: [{ top: 0, bottom: 104 }], phone: [{ top: 0, bottom: 112 }] }
+const BOX = sectionBox('agents', TEXT, GAPS.shellToAgents)
+
 export function AgentSection() {
+  const style = { '--m-desk': BOX.marginDesk, '--h-desk': BOX.heightDesk, '--m-phone': BOX.marginPhone, '--h-phone': BOX.heightPhone, '--glide-tail': `${GLIDE * 50}svh` } as CSSProperties
   return (
-    <section className={`${styles.section} ${styles.agents}`} data-anchor="agents" aria-labelledby="agent-title">
+    <section className={`${styles.section} ${styles.agents}`} data-anchor="agents" aria-labelledby="agent-title" style={style}>
       <div className={styles.agentWords}>
         <h2 id="agent-title" className={styles.agentTitle}>
           {COPY.heading}

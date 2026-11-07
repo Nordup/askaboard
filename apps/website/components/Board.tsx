@@ -75,7 +75,7 @@ export function Board() {
               <canvas className={styles.body} />
             </div>
           ) : (
-            <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
+            <div key={def.id} className={styles.sprite} data-sprite={def.id} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
               <canvas className={styles.body} />
             </div>
           )

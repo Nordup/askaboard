@@ -33,9 +33,9 @@ export async function Hero() {
 
       <div className={styles.head}>
         <h1 className={styles.title}>
-          Think it through.
+          Ask anything.
           <br />
-          See it clearly.
+          Learn anything.
         </h1>
         <p className={styles.sub}>A shared canvas for you and your AI.</p>
         <DownloadButton className={styles.download} />

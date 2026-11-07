@@ -26,6 +26,13 @@ export function shellParts(host: ParentNode): ShellParts | null {
   return track && frame ? { track, frame } : null
 }
 
+/**
+ * The window's glide into and out of its sticky place, as a share of the viewport's height
+ * (AppShell.tsx). After the release the window stays half of it below the track's end, so the
+ * shell's content ends there (lib/spacing.ts, the agent section's margin).
+ */
+export const GLIDE = 0.155
+
 /** Where the first mark's top is when the window sticks, and the last mark's bottom when it lets go: shares of the viewport's height from its top. Keep in sync with --stick-cut (AppShell.module.css). */
 export const STICK_AT = 0.25
 export const RELEASE_AT = 0.72
