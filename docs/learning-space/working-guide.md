@@ -106,6 +106,20 @@ and what went wrong before.
 
 ## Choosing lab tests (live drawing)
 
+**The only way to see real agent behaviour or to make an example** (founder,
+2026-11-07): a council run with `--brief-only` and the user's exact sentence
+as the task, for example
+`node scripts/lab/council.mjs --client claude --model opus --effort medium --brief-only --task "How does my phone know where I am?"`.
+The agent then gets what it gets in the app: the brief, the guide and the
+MCP tools, and nothing from us. The founder:
+
+> this is the only way to test how the agents behave like in the app and
+> when you're trying to emulate something or trying to create examples and
+> stuff, this is the only way
+
+The founder's own setting is Opus at medium effort; pass `--effort medium`
+(without it, `claude -p` uses its default effort).
+
 Lab and perf runs give agents what the real apps give them (decision W10):
 Claude with every tool and `--permission-mode bypassPermissions`, Codex with
 `danger-full-access` and the network, web on unless `--no-web`. Each perf run

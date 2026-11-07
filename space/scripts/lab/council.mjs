@@ -9,9 +9,13 @@
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
  *        [--codex-home <SCRATCH>/codex-home] [--no-news-hook] [--keep-app]
  *        [--brief-only] [--no-code] [--no-html] [--brief <file>] [--no-web] [--interview] [--wait-media]
+ *        [--learner-text "<text>"] [--learner-at x,y]
  *
  * Tasks: council/tasks.json (id → text; "learner": "S3" draws the bench's S3
- * strokes before the session), or any text. The prompt is council/purpose.md
+ * strokes before the session), or any text. --learner-text writes that text
+ * (lines split by \n; a/b as a stacked fraction) as the learner's ink first, from
+ * the hand font with a person's variation (learner-text.mjs), at --learner-at
+ * (board points, top-left; default -320,-80). meta.json: learner_text, learner_at. The prompt is council/purpose.md
  * plus the task. Defaults: Claude opus; Codex gpt-6.1-sol at effort medium.
  * --no-code starts the app with LS_LAB_NO_CODE=1 (src/main/lab-switch.ts): no
  * world() in scenes, and no word of them in the brief,
@@ -45,10 +49,11 @@
  * output files and meta.json (numbers.after_agent_ms: the agent's end to the
  * app stopped; media: "pending" until the videos are made, then "done").
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import {
+  DRIVE,
   LAB,
   SCRATCH,
   isWrite,
@@ -79,6 +84,7 @@ import {
   withMcp
 } from './common.mjs'
 import { writeGallery } from './gallery.mjs'
+import { learnerText } from './learner-text.mjs'
 
 const { option, flag } = args()
 const say = (...p) => log('council', ...p)
@@ -110,8 +116,12 @@ const opts = {
   // LS_LAB_BRIEF: a draft brief served instead of resources/brief.md (absolute path).
   brief: option('--brief', null) ? resolve(option('--brief', null)) : null,
   // Web search and fetch, as the agent apps have in real sessions; --no-web turns them off.
-  web: !flag('--no-web')
+  web: !flag('--no-web'),
+  // The learner's own handwriting on the board before the agent starts.
+  learnerText: option('--learner-text', null),
+  learnerAt: option('--learner-at', '-320,-80').split(',').map(Number)
 }
+if (opts.learnerAt.length !== 2 || opts.learnerAt.some((v) => !Number.isFinite(v))) throw new Error('--learner-at is x,y in board points')
 if (!['claude', 'codex'].includes(opts.client)) throw new Error('--client is claude or codex')
 if (opts.brief && !existsSync(opts.brief)) throw new Error(`--brief: no file ${opts.brief}`)
 if (!opts.task) throw new Error('--task <id|text> is required')
@@ -163,7 +173,7 @@ async function main() {
   const tasks = JSON.parse(readFileSync(join(LAB, 'council/tasks.json'), 'utf8'))
   const known = tasks[opts.task]
   const task = known ? { id: opts.task, ...known } : { id: 'custom', title: opts.task.slice(0, 60), text: opts.task }
-  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no worlds' : ''}${opts.noHtml ? ' — no HTML' : ''}${opts.brief ? ` — brief ${basename(opts.brief)}` : ''}`
+  const title = opts.title ?? `${task.title} — ${opts.client} ${opts.model}${opts.effort ? ` ${opts.effort}` : ''}${opts.noCode ? ' — no worlds' : ''}${opts.noHtml ? ' — no HTML' : ''}${opts.brief ? ` — brief ${basename(opts.brief)}` : ''}${opts.learnerText ? ` — learner wrote "${opts.learnerText.replace(/\\n|\n/g, ' / ')}"` : ''}`
   const purpose = stripComments(readFileSync(join(LAB, 'council/purpose.md'), 'utf8'))
   const interview = stripComments(readFileSync(join(LAB, 'council/interview.md'), 'utf8'))
   const prompt = opts.briefOnly ? task.text : `${purpose}\n\n## The task\n\n${task.text}`
@@ -190,6 +200,17 @@ async function main() {
       drive(state.debugPort, 'draw', '--strokes', JSON.stringify(LEARNER[task.learner]()))
       await sleep(1500) // the autosave records the learner's edit
       say(`drew the learner's ${task.learner} strokes`)
+    }
+    if (opts.learnerText) {
+      const [x, y] = opts.learnerAt
+      // The strokes go through stdin: a long text is too long for one argument.
+      execFileSync(process.execPath, [DRIVE, '--port', String(state.debugPort), 'draw', '-'], {
+        input: JSON.stringify(learnerText(opts.learnerText, { x, y })),
+        encoding: 'utf8',
+        timeout: 120_000
+      })
+      await sleep(1500) // the autosave records the learner's edit
+      say(`wrote the learner's text "${opts.learnerText}"`)
     }
 
     // Phase 1: work, recorded.
@@ -312,6 +333,8 @@ async function main() {
       no_code: opts.noCode,
       no_html: opts.noHtml,
       brief: opts.brief,
+      learner_text: opts.learnerText,
+      learner_at: opts.learnerText ? opts.learnerAt : null,
       started: new Date(t0).toISOString(),
       ok: work.exit_code === 0 && !work.is_error,
       error: work.is_error ? (work.errors?.join(' | ') || `exit ${work.exit_code}`) : null,
