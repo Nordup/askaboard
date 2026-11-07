@@ -353,8 +353,9 @@ export class LiveItem {
     if (clock) {
       const rate = clock.playing ? 1 : 0
       this.sceneEnd = clock.end
-      // The same clock as the world has (it moves on by itself): nothing to send.
-      if (this.scene.active && rate === this.clock.rate && clock.step === this.scene.step && Math.abs(clock.t - predicted) < 1 / TICK_HZ) return
+      // The same clock as the world has (it moves on by itself): nothing to send. A held clock does not move by itself: any new time goes.
+      const same = rate === 0 ? clock.t === this.clock.t : Math.abs(clock.t - predicted) < 1 / TICK_HZ
+      if (this.scene.active && rate === this.clock.rate && clock.step === this.scene.step && same) return
       // A seek or a replay: back in time, or forward by more than the clock moves by itself.
       const jump = clock.t < predicted - 2 / TICK_HZ || clock.t > predicted + JUMP_S
       this.clock = { t: clock.t, at: now, rate }
@@ -372,6 +373,12 @@ export class LiveItem {
       this.followClock()
       this.wantChanged()
     }
+  }
+
+  /** Exact frames (dev): the page shows this world at its held scene clock, or no held scene clock asks for a time. */
+  showsClock(): boolean {
+    if (!this.scene.active || this.clock.rate !== 0 || this.status.state === 'error' || !this.runs()) return true
+    return this.host !== null && !this.catchingUp && this.host.shownTime() === this.clock.t * 1000
   }
 
   private wantChanged(): void {
@@ -603,6 +610,11 @@ export function liveSummary(node: LiveNode): string {
 /** Every world on the page with its status (dev checks). */
 export function liveItems(): Array<{ id: string; visible: boolean; host: boolean } & LiveStatus> {
   return [...items.values()].map((item) => ({ id: item.id, visible: item.isVisible, host: item.world !== null, ...item.status }))
+}
+
+/** Exact frames (dev): the worlds that do not show their held scene clock on the page yet. */
+export function worldsBehindClock(): string[] {
+  return [...items.values()].filter((item) => !item.showsClock()).map((item) => item.id)
 }
 
 /** Totals for dev checks. */

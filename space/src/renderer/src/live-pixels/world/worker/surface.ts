@@ -17,6 +17,9 @@ export const SURFACE = String.raw`
   let THREE = null, renderer = null, canvas = null, compositeMat = null, compositeScene = null, compositeCam = null;
   const surface = { width: 0, height: 0, dpr: 1, margin: 0, camera: null, seq: 0, dirty: false };
   let sent = 0, waiting = false, dead = false, uncapped = false;
+  // Exact frames (the dev hook frameAt, a fixed-clock recording): every picture is full quality with every world in it,
+  // and after each frame the worker says which time each world shows (settled). A clock owes one frame, even with nothing to tick.
+  let exact = false, uncappedAsked = false, owed = false;
 
   const sizeSurface = (m) => {
     surface.dpr = m.dpr;
@@ -134,7 +137,7 @@ export const SURFACE = String.raw`
     // Quality falls only while a world moves. It renders sharp again when it rests.
     const zooming = !!old && !same;
     if (zooming) w.movedAt = sent;
-    const quality = w.moving || zooming ? w.quality : 0, res = Math.min(QUALITY[quality], ceilingShare(crop));
+    const quality = !exact && (w.moving || zooming) ? w.quality : 0, res = Math.min(QUALITY[quality], ceilingShare(crop));
     // A size stays on the grid at any resolution, so a change of crop or of quality meets the sizes that the pool already has.
     const W = Math.max(GRID, Math.ceil(((crop.r - crop.l) * res) / GRID) * GRID), H = Math.max(GRID, Math.ceil(((crop.b - crop.t) * res) / GRID) * GRID);
     const m = surface.margin * surface.dpr;
@@ -305,13 +308,13 @@ export const SURFACE = String.raw`
       let spent = 0, pixels = 0;
       skipped = 0;
       if (meter) meterBegin();
-      const solo = soloPlan(plans);
+      const solo = exact ? null : soloPlan(plans);
       nextSolo = !!solo;
       for (const plan of plans) {
         // The others keep what they need, and the next picture renders them: this is no slow picture.
         if (solo && plan !== solo) continue;
         const cost = costOf(plan.w, plan.pixels / 1e6);
-        if (pixels > 0 && spent + cost > PICTURE_MS) { plan.w.waited++; skipped++; continue; }
+        if (!exact && pixels > 0 && spent + cost > PICTURE_MS) { plan.w.waited++; skipped++; continue; }
         spent += cost;
         pixels += plan.pixels;
         try { renderPlan(plan); changed = true; } catch (e) { fail(plan.w, e); }
@@ -594,8 +597,11 @@ export const SURFACE = String.raw`
   const wanted = () => {
     if (waiting || gpuBusy || busyFrame || !renderer || dead) return false;
     if (surface.dirty && surface.camera) return true;
+    if (owed) return true;
     for (const w of worlds.values()) {
-      if (due(w)) return true;
+      // A tick that ran while the last picture waited for the page is in no picture yet.
+      // paint() clears ticked under the same conditions (and only with a camera), so this asks for one frame, not a loop.
+      if (due(w) || (surface.camera && w.ticked && w.placement && w.placement.shown && !w.failed && (w.setUp || w.ran))) return true;
       // A world below full quality has one sharp render still to come, even when no tick will ask for it.
       if ((w.stale || (w.drawn && w.drawn.quality > 0)) && !w.compiling && w.placement && w.placement.shown && !w.culled && !w.failed && (w.setUp || w.ran)) return true;
     }
@@ -605,12 +611,23 @@ export const SURFACE = String.raw`
     if (busyFrame) return;
     busyFrame = true;
     try {
+      owed = false;
       for (const w of [...worlds.values()]) if (due(w)) await live(w);
       if (!waiting) paint();
+      if (exact) postSettled();
     } finally {
       busyFrame = false;
       schedule();
     }
+  };
+  /** Exact frames: the item time (ms) that each world's part of picture 'sent' shows, for the worlds with nothing left to draw. */
+  const postSettled = () => {
+    const times = [];
+    for (const w of worlds.values()) {
+      if (w.failed || w.stepping || w.busy || w.compiling || w.stale || w.ticked || due(w)) continue;
+      times.push([w.key.node, w.key.generation, itemTimeNow(w) * 1000]);
+    }
+    post({ type: 'settled', n: sent, times });
   };
   /** The next display frame, or a timer when display frames do not come (a hidden frame). */
   const schedule = () => {
@@ -653,7 +670,8 @@ export const SURFACE = String.raw`
     else if (m.type === 'add') addWorld(m.world);
     else if (m.type === 'remove') removeWorld(m.key);
     else if (m.type === 'stats') setStats(m.on);
-    else if (m.type === 'uncapped') { uncapped = m.on || !!tune.uncapped; if (uncapped) waiting = false; }
+    else if (m.type === 'uncapped') { uncappedAsked = m.on; uncapped = uncappedAsked || exact || !!tune.uncapped; if (uncapped) waiting = false; }
+    else if (m.type === 'exact') { exact = m.on; uncapped = uncappedAsked || exact || !!tune.uncapped; if (uncapped) waiting = false; owed = exact; }
     else if (m.type === 'ping') post({ type: 'pong', n: m.n, running: current ? current.key.node : last ? last.key.node : null, info: infoNow() });
     else {
       const w = m.key ? worlds.get(idOf(m.key)) : null;
@@ -662,7 +680,7 @@ export const SURFACE = String.raw`
         if (m.type === 'pick') post({ type: 'picked', key: m.key, request: m.request, hit: null });
         return;
       }
-      if (m.type === 'clock') follow(w, m);
+      if (m.type === 'clock') { follow(w, m); if (exact) owed = true; }
       else if (m.type === 'live') {
         // A step world reached the tick of its clock: from here it follows the clock live, with the item's params.
         if (!w.stepping || w.failed) return;
@@ -673,6 +691,7 @@ export const SURFACE = String.raw`
         Object.assign(w.params, m.params);
         syncParts(w);
         follow(w, m);
+        if (exact) owed = true;
       } else if (m.type === 'run') w.running = !!m.on;
       else if (m.type === 'params') {
         w.base = Object.assign({}, m.params);

@@ -82,6 +82,24 @@ answering"), and a clock in the corner shows real time. `video-real.mp4`
 keeps real time. `recut.py` (Pillow, frames piped to ffmpeg) makes the watch
 video; `meta.json` has `numbers.watch_s`, `numbers.recorded_s` and `cuts`.
 
+## Record a board video (fixed clock)
+
+```sh
+npm run build
+node scripts/lab/record.mjs job.json [--copies 12] [--frames 0-299] [--keep-frames] [--no-audio]
+```
+
+For website videos of an existing scene: frame k shows scene time t0 + k/fps
+exactly, however long a frame takes. The job file names the scene, its
+sources, the camera, fps and size (see the script header). The script starts
+`--copies` built lab apps (on Linux with no display, each in its own headless
+mutter) and gives each a slice of the frames. For each frame it calls the dev
+hook `scene.frameAt(t)` (the scene held at t, every world drawn at exactly t,
+the page painted) and takes one screenshot. Then ffmpeg makes the H.264 video
+with the voice lines at their scene times, and a poster. `<work>/report.json`
+lists the repeated frames, the frames per second and the CPU use. It stops
+the exact PIDs it started.
+
 ## The gallery
 
 Runs go to `space/.lab/runs/<YYYYMMDD-HHMMSS>-<slug>/` (not in git).

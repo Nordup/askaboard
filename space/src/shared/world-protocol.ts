@@ -174,6 +174,8 @@ export type PageToWorld =
   | { type: 'stats'; on: boolean }
   /** While on, a picture waits only for the GPU: not for the page, not for a display frame. */
   | { type: 'uncapped'; on: boolean }
+  /** Dev only (frameAt): while on, every picture is at full quality with every world in it, and a `settled` follows each frame. */
+  | { type: 'exact'; on: boolean }
   /** A pointer event. Send it only while the world's last `subscribe` says pointer. */
   | { type: 'pointer'; key: WorldKey; event: WorldPointer }
   /** What is at a board point. The answer is `picked` with the same request. */
@@ -222,6 +224,8 @@ export type WorldToPage =
       /** Board positions of published points by node, name: [x, y, visible], for exactly the state in this picture. */
       points: Record<string, Record<string, [number, number, boolean]>>
     }
+  /** Exact frames only: after picture n, the item time (ms) that each listed world shows. A world that still draws is not listed. */
+  | { type: 'settled'; n: number; times: Array<[node: string, generation: number, ms: number]> }
   | { type: 'alive'; key: WorldKey; frames: number; tick: number }
   | { type: 'progress'; key: WorldKey; tick: number }
   | { type: 'at'; key: WorldKey; request: number; tick: number }

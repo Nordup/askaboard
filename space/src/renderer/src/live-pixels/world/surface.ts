@@ -120,6 +120,15 @@ export function setWorldUncapped(on: boolean): void {
   for (const surface of boardSurfaces) surface.send({ type: 'uncapped', on })
 }
 
+let exact = false
+
+/** Dev only (frameAt): tell every board surface, now and after a new worker, to send exact frames and say what time each world shows. */
+export function setWorldExact(on: boolean): void {
+  if (exact === on) return
+  exact = on
+  for (const surface of boardSurfaces) surface.send({ type: 'exact', on })
+}
+
 const keyOf = (key: WorldKey): string => `${key.node}\u0000${key.generation}`
 
 /** The placement of a world: its node and the playback overrides, so rotation, scale, fades and draw() reach the surface. */
@@ -203,6 +212,10 @@ export class WorldSurface {
   private waiting: Picture | null = null
   /** The camera of the picture on the canvas. */
   private shownCamera: WorldCamera | null = null
+  /** Exact frames: the number of the shown picture, the item time (ms) each world shows in it, and a settled that waits for its picture. */
+  private shownN = 0
+  private shownTimes = new Map<string, number>()
+  private settledNext: { n: number; times: Array<[string, number, number]> } | null = null
   /** Where that picture lies, in CSS pixels from the board's top-left corner at its camera. */
   private shownBox: Picture['box'] | null = null
   private size = ''
@@ -297,6 +310,9 @@ export class WorldSurface {
     this.outbox = []
     this.opened = false
     this.size = ''
+    this.shownN = 0
+    this.shownTimes.clear()
+    this.settledNext = null
     this.lastView = ''
     this.running = null
     if (this.waiting) this.waiting.bitmap.close()
@@ -383,7 +399,8 @@ export class WorldSurface {
     const waiting = this.outbox ?? []
     const stats: PageToWorld[] = this.canvas && statsListener ? [{ type: 'stats', on: true }] : []
     const rate: PageToWorld[] = this.canvas && uncapped ? [{ type: 'uncapped', on: true }] : []
-    this.outbox = [{ ...init, tune, fileToken: this.mintToken() }, ...stats, ...rate, ...waiting]
+    const frames: PageToWorld[] = this.canvas && exact ? [{ type: 'exact', on: true }] : []
+    this.outbox = [{ ...init, tune, fileToken: this.mintToken() }, ...stats, ...rate, ...frames, ...waiting]
     this.opened = true
     this.flush()
   }
@@ -407,6 +424,10 @@ export class WorldSurface {
     // World code can reach the port, so the limit of losses must not depend on its word. A worker recycles after 4 generations per world, so one that got too few only claims it.
     else if (m.type === 'recycle') this.recover(null, this.added >= 2 * this.members.size)
     else if (m.type === 'files') this.loadSeen()
+    else if (m.type === 'settled') {
+      if (m.n <= this.shownN) this.takeTimes(m.times)
+      else this.settledNext = m
+    }
     else if ('key' in m) this.members.get(keyOf(m.key))?.receive(m)
   }
 
@@ -505,9 +526,23 @@ export class WorldSurface {
     show(picture.bitmap)
     this.shownCamera = picture.camera
     this.shownBox = picture.box
+    this.shownN = picture.n
+    if (this.settledNext && this.settledNext.n <= picture.n) {
+      this.takeTimes(this.settledNext.times)
+      this.settledNext = null
+    }
     for (const member of this.members.values()) member.showPoints(picture.points[member.key.node])
     this.board?.points(picture.points)
     this.settle(picture)
+  }
+
+  private takeTimes(times: Array<[string, number, number]>): void {
+    for (const [node, generation, ms] of times) this.shownTimes.set(keyOf({ node, generation }), ms)
+  }
+
+  /** Exact frames: the item time (ms) that the world shows on the page now, or null when it is not known. */
+  shownTime(key: WorldKey): number | null {
+    return this.shownTimes.get(keyOf(key)) ?? null
   }
 
   private settle(picture: Picture): void {

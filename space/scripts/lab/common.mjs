@@ -231,7 +231,10 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
  * it runs on. LS_NATIVE_WAYLAND=1 keeps native Wayland, for runs that test Wayland itself.
  */
 export function displaySwitches(env = process.env) {
-  return process.platform === 'linux' && env.WAYLAND_DISPLAY && env.DISPLAY && env.LS_NATIVE_WAYLAND !== '1' ? ['--ozone-platform=x11'] : []
+  if (process.platform !== 'linux' || !env.WAYLAND_DISPLAY) return []
+  // Native Wayland asked for: said outright, since Chromium picks X11 in a session that does not say Wayland (SSH).
+  if (env.LS_NATIVE_WAYLAND === '1') return ['--ozone-platform=wayland']
+  return env.DISPLAY ? ['--ozone-platform=x11'] : []
 }
 
 /** The PIDs that listen on a TCP port: from lsof, or from ss (iproute2) where there is no lsof. */

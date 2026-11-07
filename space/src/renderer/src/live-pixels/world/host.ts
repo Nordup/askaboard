@@ -330,6 +330,11 @@ export class WorldHost implements WorldMember {
     })
   }
 
+  /** Exact frames (dev): the item time (ms) that this generation shows on the page now, or null. */
+  shownTime(): number | null {
+    return this.surface.shownTime(this.key)
+  }
+
   follow(clock: ItemClock, scene: SceneView): void {
     this.surface.send({ type: 'clock', key: this.key, clock, scene })
   }

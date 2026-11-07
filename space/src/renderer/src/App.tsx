@@ -15,7 +15,8 @@ import {
   type Revision
 } from '@shared/board-format'
 import { learnerEditSince } from '@shared/learner-edit'
-import { liveItems, liveResources, validateWorld } from './live-pixels/registry'
+import { liveItems, liveResources, validateWorld, worldsBehindClock } from './live-pixels/registry'
+import { setWorldExact } from './live-pixels/world/surface'
 import { setTrustAsker, setWorldsTrusted } from './live-pixels/trust'
 import type { AgentActivity, AgentServerStatus, BoardChangeOp, BoardChangeResult, BoardList, BoardListEntry, Camera, FailedSave, FileTree, GuideOverrides, ShellState, Snapshot, VoiceFailure } from '@shared/space-api'
 import { scenePlayer } from './live/player'
@@ -114,6 +115,25 @@ const VOICE_NOTICES: Record<VoiceFailure, string> = {
 
 /** The one rule for the boards list: of the same folder, the list with the higher seq stays; a list of another folder replaces it. */
 const newerList = (current: BoardList | null, list: BoardList): BoardList => (current && current.root === list.root && current.seq >= list.seq ? current : list)
+
+/** One display frame of the page. */
+const nextPaint = (): Promise<void> => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+
+/** Dev hook scene.frameAt(t): see the dev hook below. A world that shows no time of t within 20 s is named in the answer, not waited for. */
+async function sceneFrameAt(t: number): Promise<{ ok: boolean; behind: string[] }> {
+  setWorldExact(true)
+  scenePlayer.seek(t)
+  const until = performance.now() + 20000
+  // The first paint puts the board's own items of t in the DOM and mounts a world that t brings in.
+  let behind: string[]
+  do {
+    await nextPaint()
+    behind = worldsBehindClock()
+  } while (behind.length && performance.now() < until)
+  // The paint with the worlds' pictures is done: one more puts it on screen.
+  await nextPaint()
+  return { ok: behind.length === 0, behind }
+}
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
@@ -1219,9 +1239,13 @@ export function App() {
           })
         }
       },
-      /** Live-scene playback (play_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all. */
+      /**
+       * Live-scene playback (play_scene): what plays now; seek(t) holds the current scene at t s, seek(null) lets it run; finish() ends all.
+       * frameAt(t): one frame of a fixed-clock recording (scripts/lab/record.mjs). It holds the scene at t, and resolves once every
+       * world shows exactly its clock of t at full quality and the page painted it. From the first call, world pictures are exact.
+       */
       get scene() {
-        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), finish: () => scenePlayer.finish(), release: () => scenePlayer.release(Number.POSITIVE_INFINITY), frame: () => scenePlayer.debugFrame(), snap: () => { const s = scenePlayer.snapshot(); return s && { overrides: [...s.frame.overrides], inks: s.frame.inks } } }
+        return { ...scenePlayer.state(), seek: (t: number | null) => scenePlayer.seek(t), frameAt: sceneFrameAt, finish: () => scenePlayer.finish(), release: () => scenePlayer.release(Number.POSITIVE_INFINITY), frame: () => scenePlayer.debugFrame(), snap: () => { const s = scenePlayer.snapshot(); return s && { overrides: [...s.frame.overrides], inks: s.frame.inks } } }
       },
       /** Worlds (dev checks): add one, list them with status and frame counts, check code. */
       live: {
