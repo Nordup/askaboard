@@ -4,7 +4,7 @@ import { AgentSection } from '@/components/AgentSection'
 import { DownloadSection } from '@/components/DownloadSection'
 import { Hero } from '@/components/Hero'
 import sections from '@/components/Sections.module.css'
-import { REPO_URL } from '@/lib/site'
+import { REPO_URL, SITE_NAME } from '@/lib/site'
 import styles from './page.module.css'
 
 export default function Home() {
@@ -16,7 +16,7 @@ export default function Home() {
       <DownloadSection />
       <footer className={sections.footer}>
         <a href="/" className={sections.wordmark}>
-          <b>Learning</b> Space
+          <b>{SITE_NAME}</b>
         </a>
         <span>
           MIT · <a href={REPO_URL}>GitHub</a>

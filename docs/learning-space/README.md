@@ -17,8 +17,9 @@ in [`../../space/`](../../space/); work happens on `main`.
 
 **Read [`launch-plan.md`](launch-plan.md) first.** It is the current plan:
 an open-source macOS app for people who already pay for an agent app,
-with a new name, a voice server, analytics and a new website (P23, D7).
+with a voice server, analytics and a new website (P23, D7).
 Where another doc disagrees, the launch plan wins.
+The launch name and approved icon are in the [Askaboard brand kit](../../assets/askaboard/README.md) (D18).
 
 ## Status (2026-11-07)
 
@@ -65,7 +66,7 @@ Where another doc disagrees, the launch plan wins.
 | Voice for everyone (T39), a local Kokoro voice (T40), a Settings dialog (U8, U12), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. Settings was redesigned 2026-11-06/07 (row below) |
 | Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
 | App chrome and Settings (2026-11-06/07): a quiet title row (U9), board history Back/Forward ⌘[ ⌘] (U11), one Settings dialog with one settings owner in main (U12), the app's own dropdown, opaque panels, overlay scrollbars and bundled voice samples (U14), Settings spacing rules, one small control, the key sheet (U15), soft shadows, see-through popups, a rounder radius scale by element size, bigger key caps and switch (U16, U17) | Done and pushed (`1de0461`). Checked in dev mode with `drive.mjs` and one outside review of U12. Not checked: the built `.dmg` with the bundled voice samples, the sound of the samples, Linux. |
-| App packaging and signing (macOS, D7, D10) | Built 2026-11-06: `cd space && npm run dist:mac` makes arm64 and x64 `.dmg` files (about 133 and 140 MB) with telemetry channel `stable`. The arm64 app ran from the `.dmg` in a check: welcome card, a scene on the board, the relay answers. Signed ad-hoc for now: this Mac has no "Developer ID Application" certificate (team CDA73N3FRP). The notarytool profile `learning-space-notary` is not stored yet. Not checked: the x64 app, a real Developer ID signature, notarization, a clean Mac. Waits for the new name and icon |
+| App packaging and signing (macOS, D7, D10) | Built 2026-11-06: `cd space && npm run dist:mac` makes arm64 and x64 `.dmg` files (about 133 and 140 MB) with telemetry channel `stable`. The arm64 app ran from the `.dmg` in a check: welcome card, a scene on the board, the relay answers. Signed ad-hoc for now: this Mac has no "Developer ID Application" certificate (team CDA73N3FRP). The notarytool profile `learning-space-notary` is not stored yet. Not checked: the x64 app, a real Developer ID signature, notarization, a clean Mac. The Askaboard packaging icon is ready. The app identity and branded build remain open. |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Board controls for a mouse and a trackpad (2026-11-06/07, B69–B71, U10, U13, U18): a tool pill with keys as in Excalidraw, a style pill per tool or selection, shapes drawn in the agents' pen ink, rectangle and lasso selection, a right-click menu, paste from other apps, undo and zoom as bare buttons at the bottom right | Done on `main`: [`board-controls-plan.md`](board-controls-plan.md), values in [`design-system.md`](design-system.md) "Board controls", the ink recipe in [`agent-ink.md`](agent-ink.md). Checked on the M1 Air, built and dev; ChatGPT review fixed |
 | Deeper editing (shapes inside SVG, a full style inspector) | Much later |

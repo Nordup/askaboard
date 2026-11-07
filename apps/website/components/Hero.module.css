@@ -26,16 +26,19 @@
 }
 
 .name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: clamp(16px, calc(21 * var(--u)), 21px);
-  font-weight: 400;
+  font-weight: 650;
   letter-spacing: -0.01em;
-  color: var(--muted);
+  color: var(--text);
   white-space: nowrap;
 }
 
-.nameStrong {
-  font-weight: 650;
-  color: var(--text);
+.mark {
+  width: clamp(30px, calc(36 * var(--u)), 36px);
+  height: auto;
 }
 
 .links {

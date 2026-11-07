@@ -6,6 +6,7 @@ import { ToolPill } from './ToolPill'
 import { AgentPrompt } from './AgentPrompt'
 import { GLIDE, nextStep, shellSizes } from '@/lib/shell-steps'
 import { SHELL_PAD } from '@/lib/spacing'
+import { SITE_NAME } from '@/lib/site'
 import { USE_CASES, type Animation } from './usecases'
 import styles from './AppShell.module.css'
 
@@ -413,7 +414,7 @@ export function AppShell() {
   const current = USE_CASES[index]
 
   return (
-    <section className={styles.section} ref={sectionRef} aria-label="Learning Space at work" style={{ '--pad-desk': SHELL_PAD.desk, '--pad-phone': SHELL_PAD.phone } as CSSProperties}>
+    <section className={styles.section} ref={sectionRef} aria-label={`${SITE_NAME} at work`} style={{ '--pad-desk': SHELL_PAD.desk, '--pad-phone': SHELL_PAD.phone } as CSSProperties}>
       <div className={styles.track} ref={trackRef} data-shell-track="">
         <div className={styles.stage} ref={stageRef}>
           <AgentPrompt index={asked} onDone={(i) => showRef.current(i)} />

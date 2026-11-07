@@ -2,7 +2,7 @@
 # builds one signed .dmg per architecture into release/.
 # The name comes from package.json "productName"; the icon is resources/icon.png.
 
-# PLACEHOLDER: change with the new brand (with productName and the icon).
+# Keep the existing bundle ID until the desktop identity and migration are settled.
 appId: app.learningspace.desktop
 
 directories:

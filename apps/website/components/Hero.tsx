@@ -1,5 +1,6 @@
+import Image from 'next/image'
 import { formatStars, getStars } from '@/lib/github'
-import { REPO_URL } from '@/lib/site'
+import { REPO_URL, SITE_NAME } from '@/lib/site'
 import { DownloadButton } from './DownloadButton'
 import styles from './Hero.module.css'
 
@@ -10,7 +11,8 @@ export async function Hero() {
     <section className={styles.hero} data-hero="">
       <header className={styles.bar} data-ui="">
         <a href="/" className={styles.name}>
-          <span className={styles.nameStrong}>Learning</span> Space
+          <Image className={styles.mark} src="/askaboard-mark.svg" width={36} height={20} alt="" />
+          {SITE_NAME}
         </a>
         <nav className={styles.links}>
           <a href="#download" className={styles.link}>

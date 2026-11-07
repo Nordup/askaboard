@@ -2,13 +2,14 @@ import type { Logo } from '@/lib/agents'
 import { LOGO_PATHS } from '@/lib/logos'
 import { GLIDE } from '@/lib/shell-steps'
 import { GAPS, sectionBox } from '@/lib/spacing'
+import { SITE_NAME } from '@/lib/site'
 import type { CSSProperties } from 'react'
 import styles from './Sections.module.css'
 
 /** The words of this section, in one place (the founder may rewrite them). The captions by the windows are in layout.ts (`agent-*-note`, `agent-*-caption`). */
 const COPY = {
   heading: 'Connect your agent',
-  line: 'Connect Claude, ChatGPT or Cursor over MCP, using your existing subscription. Learning Space is free.',
+  line: `Connect Claude, ChatGPT or Cursor over MCP, using your existing subscription. ${SITE_NAME} is free.`,
   logos: [
     ['claude', 'Claude'],
     ['openai', 'ChatGPT and Codex'],
