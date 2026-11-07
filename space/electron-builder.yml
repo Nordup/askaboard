@@ -14,6 +14,10 @@ directories:
 files:
   - out/**/*
   - package.json
+  # electron-builder drops every dependency's top-level `examples` folder, but worlds import
+  # three's helpers (three/addons, three/examples/jsm) through live-item-protocol.ts.
+  - from: node_modules/three/examples/jsm
+    to: node_modules/three/examples/jsm
 
 # Read at run time from process.resourcesPath/resources (src/main/resources.ts):
 # the brief, the guide, the learning-folder template, the .mcpb, the live module.
