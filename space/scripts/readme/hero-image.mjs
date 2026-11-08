@@ -128,6 +128,20 @@ try {
   log(`app started (pid ${appProcess.pid}, MCP ${mcpPort}, debug ${debugPort})`)
   for (let i = 0; i < 100 && !(await listening(mcpPort)); i++) await sleep(300)
   if (!(await listening(mcpPort))) throw new Error(`the app's MCP server did not start; see ${join(scratch, 'app.log')}`)
+  // The MCP server starts before the window's page can answer on the debug port: wait until the
+  // page answers, so the first window command never meets a page that is still loading.
+  let ready = null
+  for (let i = 0; i < 100; i++) {
+    try {
+      drive(debugPort, 'eval-state')
+      ready = true
+      break
+    } catch (error) {
+      ready = error
+      await sleep(300)
+    }
+  }
+  if (ready !== true) throw new Error(`the app's window did not answer on the debug port: ${ready?.message ?? ready}`)
   drive(debugPort, 'window-size', '1280', '720')
   drive(debugPort, 'menu', 'hide-sidebar')
 

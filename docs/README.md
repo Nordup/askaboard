@@ -55,8 +55,6 @@ product vision merely because they appear in a spec.
   course-and-planning-centered concept.
 - [`conversation.md`](conversation.md) preserves the research conversation that
   evaluated that original concept.
-- [`../landing/WIREFRAME.md`](../landing/WIREFRAME.md) preserves an earlier
-  Paper landing-page design and its product assumptions.
 
 These files are historical sources. Do not use their “learning engine,” course
 generator, audience, pricing, or roadmap language as current product guidance.

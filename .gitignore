@@ -8,10 +8,8 @@ build/
 # Swift Package Manager
 .build/
 
-# Local development secrets (read by scripts/sync-backend-config.sh)
+# Local development secrets
 .env.local
-# The device token, compiled into the app from here. Never commit this.
-MathTutor/Config/Backend.local.xcconfig
 
 # macOS
 .DS_Store
@@ -93,11 +91,6 @@ share-videos/
 !docs/learning-space/design-images/**/*.jpeg
 !docs/learning-space/design-images/**/*.gif
 !docs/learning-space/design-images/**/*.webp
-!landing-page/public/**/*.png
-!landing-page/public/**/*.jpg
-!landing-page/public/**/*.jpeg
-!landing-page/public/**/*.gif
-!landing-page/public/**/*.webp
 # The website's product images (the app screenshot under the hero): product assets.
 !apps/website/public/**/*.png
 !apps/website/public/**/*.jpg
