@@ -94,16 +94,6 @@
   fill: var(--text);
 }
 
-/* Words only for screen readers. */
-.hiddenTitle {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .quiet {
   margin: calc(8 * var(--u)) 0 0;
   font-size: calc(18 * var(--u));

@@ -498,6 +498,7 @@ export function mountBoard(o: {
     const el = document.createElement('div')
     el.className = layer.dataset.markClass ?? ''
     const canvas = document.createElement('canvas')
+    canvas.setAttribute('aria-hidden', 'true')
     el.append(canvas)
     const w = b.x1 - b.x0
     const h = b.y1 - b.y0

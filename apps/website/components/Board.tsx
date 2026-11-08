@@ -24,6 +24,11 @@ function placeVars(def: (typeof SPRITES)[number]): CSSProperties {
   } as CSSProperties
 }
 
+/** A sprite's ink words as text, unseen (layout.ts `text`): the one copy that search engines and screen readers read, as the canvas is hidden from them. */
+function Words({ def }: { def: (typeof SPRITES)[number] }) {
+  return def.text ? <p className="visually-hidden">{def.text}</p> : null
+}
+
 /**
  * The board over the whole page (decision D11, "The whole page is one board"): the windows and
  * the loose ink round the headline, the visitor's marks, the draft canvas and the app's tool
@@ -56,27 +61,30 @@ export function Board() {
   return (
     <>
       {/* The use cases' steps: behind the app shell's window, which scrolls them past (steps.ts). */}
-      <div className={`${styles.layer} ${styles.back}`} ref={backRef} aria-hidden="true">
+      <div className={`${styles.layer} ${styles.back}`} ref={backRef}>
         {SPRITES.filter((def) => def.step).map((def) => (
           <div key={def.id} className={styles.sprite} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
-            <canvas className={styles.body} />
+            <canvas className={styles.body} aria-hidden="true" />
+            <Words def={def} />
           </div>
         ))}
       </div>
-      <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite} aria-hidden="true">
+      <div className={styles.layer} ref={layerRef} data-mark-class={styles.sprite}>
         {SPRITES.filter((def) => !def.step).map((def) =>
           def.window ? (
             <div key={def.id} className={`${styles.sprite} ${styles.window} ${styles.quiet}`} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} style={placeVars(def)}>
-              <div className={styles.titlebar}>
+              <div className={styles.titlebar} aria-hidden="true">
                 <i />
                 <i />
                 <i />
               </div>
-              <canvas className={styles.body} />
+              <canvas className={styles.body} aria-hidden="true" />
+              <Words def={def} />
             </div>
           ) : (
             <div key={def.id} className={styles.sprite} data-sprite={def.id} data-pending={def.anchor || def.step ? '' : undefined} data-phone={def.phone ? 'on' : 'off'} data-desk={def.deskOff ? 'off' : 'on'} style={placeVars(def)}>
-              <canvas className={styles.body} />
+              <canvas className={styles.body} aria-hidden="true" />
+              <Words def={def} />
             </div>
           )
         )}

@@ -1,4 +1,10 @@
 export const SITE_NAME = 'Askaboard'
+/** The site's own address, without a trailing slash: the metadata base, robots.txt, the sitemap and the structured data (app/page.tsx) all use it. */
+export const SITE_URL = (process.env.ASKABOARD_SITE_URL || 'https://askaboard.com').replace(/\/+$/, '')
+/** The page's description: the meta tags and the structured data. */
+export const SITE_DESCRIPTION = 'Your agent explains any topic on a shared board. It draws, animates and talks.'
+/** The social preview image (1200 × 630). */
+export const SOCIAL_IMAGE = '/askaboard-social.png'
 export const REPO = 'Nordup/askaboard'
 export const REPO_URL = `https://github.com/${REPO}`
 /** The newest public GitHub release's Mac download. Every release keeps the asset name Askaboard.dmg. */

@@ -26,6 +26,57 @@ export type Draw = (g: Pen, t: number, still: boolean, box?: { w: number; h: num
 const LABEL_SCALE = 0.74
 export const label = (text: string, size: number, x: number, y: number, color = 'text', o: { center?: boolean } = {}): Ink => write(text, size * LABEL_SCALE, x, y, color, o)
 
+/**
+ * The words a drawing writes, in one table: its text, size, place, start (seconds), colour and
+ * whether the text is centred on x. The drawing writes them (`labels`), and the page carries the
+ * same words as text for readers that cannot see the canvas (`wordsOf`, layout.ts `text`).
+ */
+export type Label = readonly [text: string, size: number, x: number, y: number, start: number, color?: string, center?: boolean]
+/** A table's words as ink; `scale` 1 writes at write()'s own size (closing.ts). */
+export const labels = (list: readonly Label[], scale = LABEL_SCALE): [Ink, number][] =>
+  list.map(([text, size, x, y, start, color = 'text', center = true]) => [write(text, size * scale, x, y, color, { center }), start])
+/** A table's words as one line of text. */
+export const wordsOf = (list: readonly Label[]): string => list.map(([text]) => text).join(' ')
+
+/** The words of the hero's drawings (below). */
+export const WAVES_WORDS: readonly Label[] = [
+  ['two waves', 15, 106, 127, 1.9],
+  ['(interference)', 15, 106, 146, 2.3],
+  ['constructive', 15, 312, 120, 2.7],
+  ['interference', 15, 316, 139, 3.1]
+]
+export const NEURON_WORDS: readonly Label[] = [
+  ['neuron', 18, 84, 30, 0],
+  ['dendrite', 14, 180, 108, 3.3],
+  ['(receive)', 14, 182, 126, 3.6],
+  ['axon', 14, 154, 292, 3.9],
+  ['(send)', 14, 158, 311, 4.1],
+  ['synapse', 14, 166, 430, 4.6],
+  ['(to next neuron)', 13, 164, 449, 4.9]
+]
+export const CUBE_WORDS: readonly Label[] = [
+  ['cube', 16, 64, 118, 1.6],
+  ['rotate', 16, 220, 118, 2.6]
+]
+export const EARTH_WORDS: readonly Label[] = [
+  ['short path', 13.5, 246, 18, 2.8, 'text', false],
+  ['through air', 13.5, 246, 37, 3.0, 'text', false],
+  ['air', 13, 352, 84, 3.2, 'blue'],
+  ['(thickness exaggerated)', 11.5, 368, 102, 3.3, 'blue'],
+  ['long path through air', 12.5, 118, 164, 3.6, 'orange'],
+  ['Earth', 15, 238, 184, 3.9, 'green'],
+  ['blue sky: light scattered toward you', 14.5, 222, 236, 4.1, 'blue'],
+  ['red sunset: light left in the direct beam', 14.5, 232, 263, 4.5, 'orange']
+]
+export const MOVE_WORDS: readonly Label[] = [
+  ['move things', 16, 0, 0, 0],
+  ['around', 16, 4, 22, 0.8]
+]
+export const HINT_WORDS: readonly Label[] = [
+  ['draw, write,', 22, 140, 42, 0],
+  ['make shapes', 22, 146, 72, 0.9]
+]
+
 /** Drawing on goes this many times faster than the board's natural pace. */
 const PACE = 1.7
 export const TAU = Math.PI * 2
@@ -146,10 +197,7 @@ export function wavesWindow(): Draw {
         1.0
       ],
       [pen(arrowLines(207, 66, 234, 66), 'text', 2.4, 0.2, 'waves-arrow'), 1.25],
-      [label('two waves', 15, 106, 127, 'text', { center: true }), 1.9],
-      [label('(interference)', 15, 106, 146, 'text', { center: true }), 2.3],
-      [label('constructive', 15, 312, 120, 'text', { center: true }), 2.7],
-      [label('interference', 15, 316, 139, 'text', { center: true }), 3.1]
+      ...labels(WAVES_WORDS)
     ]
     // The waves move to the right, all in step.
     const phase = still ? 0.9 : t * 2.4
@@ -212,20 +260,14 @@ function neuronDrawing(): Draw {
   return (g, t, still) => {
     if (t < 0) return
     inks ??= [
-      [label('neuron', 18, 84, 30, 'text', { center: true }), 0],
       [pen(dendrites, 'yellow', 2.2, 0.3, 'dendrites'), 0.5],
       [pen([arc(soma[0], soma[1], 7, 0, TAU, 18)], 'pink', 2.2, 0.15, 'soma'), 1.5],
       [pen([axon], 'yellow', 2.2, 0.2, 'axon'), 1.7],
       [pen([0, 1, 2, 3, 4].map((i) => capsule(60 - i, 218 + i * 32, 242 + i * 32)), 'green', 2.2, 0.15, 'myelin'), 2.0],
       [pen(ends.map((e) => [[56, 402], [(56 + e[0]) / 2 + 2, (402 + e[1]) / 2 - 4], e]), 'pink', 2.2, 0.25, 'terminals'), 2.6],
       [pen(ends.map((e) => arc(e[0], e[1] + 4, 4, 0, TAU, 10)), 'pink', 2, 0.1, 'synapses'), 3.0],
-      [label('dendrite', 14, 180, 108, 'text', { center: true }), 3.3],
-      [label('(receive)', 14, 182, 126, 'text', { center: true }), 3.6],
-      [label('axon', 14, 154, 292, 'text', { center: true }), 3.9],
-      [label('(send)', 14, 158, 311, 'text', { center: true }), 4.1],
       [pen(arrowLines(130, 302, 80, 304, 6), 'text', 2, 0.2, 'axon-arrow'), 4.3],
-      [label('synapse', 14, 166, 430, 'text', { center: true }), 4.6],
-      [label('(to next neuron)', 13, 164, 449, 'text', { center: true }), 4.9]
+      ...labels(NEURON_WORDS)
     ]
     g.dot(soma[0], soma[1], 2.4, 'pink', part(t, still, 1.6, 0.3))
     drawOn(g, t, still, inks)
@@ -279,8 +321,7 @@ export function cubeWindow(): Draw {
       [pen(solid, 'blue', 2.2, 0.15, 'cube'), 0],
       [pen(hidden, 'blue', 1.8, 0.1, 'cube-hidden'), 0.9],
       [pen(arrowLines(128, 58, 162, 58), 'yellow', 2.4, 0.2, 'cube-arrow'), 1.3],
-      [label('cube', 16, 64, 118, 'text', { center: true }), 1.6],
-      [label('rotate', 16, 220, 118, 'text', { center: true }), 2.6]
+      ...labels(CUBE_WORDS)
     ]
     drawOn(g, t, still, inks)
     // The turning cube: yaw at one turn per 7.5 s, a fixed tilt toward the viewer.
@@ -349,14 +390,7 @@ export function earthWindow(): Draw {
       [pen([long, ...arrowLines(40, 139, 62, 138.5, 6).slice(1)], 'orange', 2.6, 0.15, 'long'), 1.8],
       [pen(scatter.flatMap(([a, b]) => arrowLines(a[0], a[1], b[0], b[1], 6)), 'blue', 2, 0.15, 'scatter'), 2.4],
       [pen([oval(eye[0], eye[1], 7, 4), [[eye[0] + 0.5, eye[1]], [eye[0] - 0.5, eye[1]]]], 'text', 1.8, 0.05, 'eye'), 2.6],
-      [label('short path', 13.5, 246, 18, 'text'), 2.8],
-      [label('through air', 13.5, 246, 37, 'text'), 3.0],
-      [label('air', 13, 352, 84, 'blue', { center: true }), 3.2],
-      [label('(thickness exaggerated)', 11.5, 368, 102, 'blue', { center: true }), 3.3],
-      [label('long path through air', 12.5, 118, 164, 'orange', { center: true }), 3.6],
-      [label('Earth', 15, 238, 184, 'green', { center: true }), 3.9],
-      [label('blue sky: light scattered toward you', 14.5, 222, 236, 'blue', { center: true }), 4.1],
-      [label('red sunset: light left in the direct beam', 14.5, 232, 263, 'orange', { center: true }), 4.5]
+      ...labels(EARTH_WORDS)
     ]
     drawOn(g, t, still, inks)
     if (still || t < 5.2) return
@@ -487,10 +521,7 @@ function moveDrawing(): Draw {
   return (g, t, still) => {
     if (t < 0) return
     paths ??= hand.map((d) => new Path2D(d))
-    inks ??= [
-      [label('move things', 16, 0, 0, 'text', { center: true }), 0],
-      [label('around', 16, 4, 22, 'text', { center: true }), 0.8]
-    ]
+    inks ??= labels(MOVE_WORDS)
     g.at(64, 26, -0.2, 1, () => drawOn(g, t, still, inks!))
     const show = part(t, still, 1.4, 0.4)
     if (show <= 0) return
@@ -537,10 +568,7 @@ export function pillHint(): Draw {
   let inks: [Ink, number][] | null = null
   return (g, t, still) => {
     if (t < 0) return
-    inks ??= [
-      [label('draw, write,', 22, 140, 42, 'text', { center: true }), 0],
-      [label('make shapes', 22, 146, 72, 'text', { center: true }), 0.9]
-    ]
+    inks ??= labels(HINT_WORDS)
     drawOn(g, t, still, inks)
     // The arrow draws on, then its tip nods toward the pill now and then.
     const nod = still ? 0 : Math.max(0, Math.sin((cyc(t - 2.4, 4.2) / 4.2) * TAU * 2)) * 3 * (cyc(t - 2.4, 4.2) < 1.05 ? 1 : 0)

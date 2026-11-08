@@ -106,3 +106,14 @@ a {
 .hand {
   font-family: var(--hand);
 }
+
+/* Words not seen on screen: a heading only for screen readers, and the words of the board's ink (Board.tsx), which a canvas does not carry as text. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

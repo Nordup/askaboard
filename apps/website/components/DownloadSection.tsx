@@ -15,7 +15,7 @@ export function DownloadSection() {
   const style = { '--m-desk': BOX.marginDesk, '--h-desk': BOX.heightDesk, '--m-phone': BOX.marginPhone, '--h-phone': BOX.heightPhone } as CSSProperties
   return (
     <section id="download" className={`${styles.section} ${styles.download}`} data-anchor="download" aria-labelledby="dl-title" style={style}>
-      <h2 id="dl-title" className={styles.hiddenTitle}>
+      <h2 id="dl-title" className="visually-hidden">
         Open a board, start learning
       </h2>
       <div className={styles.cta}>

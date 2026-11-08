@@ -7,7 +7,15 @@
 import type { Point } from '@/lib/board/hand'
 import { arc, Ink, oval, pen, share, star, write } from '@/lib/board/kit'
 import { spline } from '@/lib/board/spline'
-import { arrowLines, label, type Draw } from './scene'
+import { arrowLines, label, labels, type Draw, type Label } from './scene'
+
+/** The words of the agent windows' drawings (below), at write()'s own size (`labels(…, 1)`). */
+export const SEES_WORDS: readonly Label[] = [['x² = 9', 36, 150, 84, 0.2]]
+export const CHECKS_WORDS: readonly Label[] = [
+  ['x = 3', 30, 92, 64, 0.2],
+  ['and −3?', 22, 300, 44, 1.2, 'blue'],
+  ['x = ±3', 30, 110, 146, 2.6]
+]
 
 /** Drawing on goes this many times faster than the board's natural pace (as scene.ts). */
 const PACE = 1.7
@@ -113,7 +121,7 @@ export function seesScene(): Draw {
   return (g, t, still) => {
     if (t < 0) return
     inks ??= [
-      [write('x² = 9', 36, 150, 84, 'text', { center: true }), 0.2],
+      ...labels(SEES_WORDS, 1),
       [pen([oval(150, 82, 96, 46, -0.05)], 'blue', 2.6, 0.2, 'sees-ring'), 1.4]
     ]
     return drawOnce(g, t, still, inks)
@@ -126,8 +134,7 @@ export function checksScene(): Draw {
   return (g, t, still) => {
     if (t < 0) return
     inks ??= [
-      [write('x = 3', 30, 92, 64, 'text', { center: true }), 0.2],
-      [write('and −3?', 22, 300, 44, 'blue', { center: true }), 1.2],
+      ...labels(CHECKS_WORDS, 1),
       [
         curvedArrow(
           [
@@ -140,7 +147,6 @@ export function checksScene(): Draw {
         ),
         1.9
       ],
-      [write('x = ±3', 30, 110, 146, 'text', { center: true }), 2.6],
       [
         pen(
           [

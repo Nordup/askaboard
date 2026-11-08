@@ -35,7 +35,7 @@ export async function Hero() {
 
       <div className={styles.head}>
         <h1 className={styles.title}>
-          Ask anything.
+          Ask anything.{' '}
           <br />
           Learn anything.
         </h1>
