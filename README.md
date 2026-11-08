@@ -93,6 +93,12 @@ built.
 | [`assets/askaboard/`](assets/askaboard/README.md) | Logo, icon and brand files |
 | `web/`, `server/` | An earlier tutor app, paused |
 
+## Feedback
+
+Questions, ideas and bugs are welcome. Open an
+[issue](https://github.com/Nordup/askaboard/issues) or email
+[nordup.ondr@gmail.com](mailto:nordup.ondr@gmail.com).
+
 ## License
 
 [MIT](LICENSE). Askaboard uses open-source work by others; see
