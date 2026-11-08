@@ -9,3 +9,9 @@ export const REPO = 'Nordup/askaboard'
 export const REPO_URL = `https://github.com/${REPO}`
 /** The newest public GitHub release's Mac download. Every release keeps the asset name Askaboard.dmg. */
 export const DOWNLOAD_URL = `${REPO_URL}/releases/latest/download/Askaboard.dmg`
+/** The repo's GitHub Discussions: questions and ideas. */
+export const DISCUSSIONS_URL = `${REPO_URL}/discussions`
+/** The public plugin repo: the Claude Code, ChatGPT and Codex, Cursor plugins and the Claude Desktop extension. */
+export const PLUGINS_URL = 'https://github.com/Nordup/askaboard-plugins'
+/** The privacy page: PRIVACY.md in the repo on GitHub. */
+export const PRIVACY_URL = `${REPO_URL}/blob/main/PRIVACY.md`

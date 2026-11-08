@@ -116,7 +116,9 @@
   margin-top: calc(19 * var(--u));
 }
 
-/* ---------- The footer (t3.codes): one line ---------- */
+/* ---------- The footer (t3.codes): one row ----------
+   Left: the app icon and the copyright line. Right: five text links.
+   On phones the links come first, and the copyright line goes under them. */
 
 .footer {
   position: relative;
@@ -124,20 +126,29 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 24px var(--gutter);
+  padding: 28px var(--gutter);
   border-top: 1px solid var(--border-subtle);
   font-size: 14px;
   color: var(--muted);
 }
 
-.wordmark {
-  font-size: 16px;
+.legal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   white-space: nowrap;
 }
 
-.wordmark b {
-  font-weight: 650;
-  color: var(--text);
+.legal img {
+  display: block;
+  flex: none;
+}
+
+.footerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 20px;
 }
 
 .footer a:hover {
@@ -146,6 +157,16 @@
 
 /* ---------- Phones: the 390-wide frame ---------- */
 @media (max-width: 719px) {
+  .footer {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+  }
+
+  .footerLinks {
+    justify-content: flex-start;
+    gap: 12px 20px;
+  }
+
   .agents,
   .download {
     --m: var(--m-phone);
