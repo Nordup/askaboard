@@ -64,12 +64,9 @@ remain available, but smaller downloads and automatic selection can wait.
    had `anonymize_ips: false` on 2026-11-07, as planned (P24); this means the
    project setting does not discard client IP data. The backend price update
    due before 2027-01-01 is in `launch-plan.md`.
-4. Bundle the Claude Desktop extension before packaging. `npm run build`
-   and `dist:mac` do not run `build:mcpb`. That separate command copies
-   `../learning-space-plugins/claude-extensions/askaboard/dist/askaboard.mcpb`
-   if it exists; otherwise it makes a stand-in. On 2026-11-08 both copies are
-   0.1.4 and the same bytes. After a plugin release, run `npm run build:mcpb`
-   and check the version inside the final DMG.
+4. Bundle the Claude Desktop extension before packaging. `dist:mac` runs `build:mcpb` before packaging. It copies the sibling plugin
+   repository’s bundle when available; otherwise it keeps the committed bundle.
+   Check the bundle version and contents in the final DMG after a plugin release.
 5. Build the exact release after the final changes. Install and open the
    actual downloaded DMG on a clean Mac; complete folder setup, connect an
    agent through the public plugin and play a voiced scene. Check on Apple
