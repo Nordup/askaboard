@@ -1,4 +1,4 @@
-<!-- learning-space brief: placeholder (the app puts the brief here at setup) -->
+<!-- askaboard brief: placeholder (the app puts the brief here at setup) -->
 
 # This learning folder
 
@@ -13,7 +13,7 @@ This folder is a personal learning repository. One person learns here with you o
 | `sessions/` | One log per session: `YYYY-MM-DD-short-topic.md`. | You, at the end of each session. |
 | `topics/<topic>/` | Notes per subject or topic: `notes.md` with what the learner now understands, in their words where possible. | You and the learner. |
 | `materials/` | Sources and readings: files, and `materials/sources.md` with links and one line on each. | You, when you use a source. |
-| `boards/` | Learning Space boards. | The app. |
+| `boards/` | Askaboard boards. | The app. |
 | `boards/scenes/` | Scene programs as JavaScript files, and the library of components that they import (`lib/`). Build on them from session to session. | You. |
 | `assets/` | Images placed on boards. | The app. |
 

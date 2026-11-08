@@ -1,6 +1,6 @@
-# Learning Space
+# Askaboard
 
-Learning Space is a desktop app (Electron) for macOS and Linux. It gives the learner a
+Askaboard is a desktop app (Electron) for macOS and Linux. It gives the learner a
 shared canvas and a local learning folder. The app has no AI inside: external
 agents (Claude Code, Codex, Claude Desktop) connect to it over MCP and work on
 the board with the learner. Its one AI part is the voice, which reads scene lines
@@ -86,11 +86,11 @@ Electron runs native Wayland. Differences from macOS:
   lists the board's scenes and shows the scene and step of a selected item.
 - **Voice.** The app reads `say` lines aloud, and each line lasts as long as
   its audio. With no key, the audio comes from our voice server
-  (`LEARNING_SPACE_VOICE_HOST`, decision T39), with a daily cap per user; an own
-  Gemini key (`GEMINI_API_KEY`, or a line in `~/.learning-space/.env`) goes to
+  (`ASKABOARD_VOICE_HOST`, decision T39), with a daily cap per user; an own
+  Gemini key (`GEMINI_API_KEY`, or a line in `~/.askaboard/.env`) goes to
   Gemini directly. Settings > Voice (⌘,) holds Read Lines Aloud (on by default), the
   voice, the pace, the Gemini key and the local voice: Install downloads
-  Kokoro (about 370 MB, `~/.learning-space/models/kokoro/`, T40). When the
+  Kokoro (about 370 MB, `~/.askaboard/models/kokoro/`, T40). When the
   voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
   silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. The play button's sample of the cloud voice ships with the app (`resources/voice-samples/`), so it plays at once; Kokoro makes its sample on the Mac. Clips stay in the folder's `.learning-space/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
@@ -115,14 +115,14 @@ The agent pill in the top bar opens a popover with two views:
    Codex. Each row has an **Install** button. **Manual setup and other agents**
    opens the plugin repo.
 
-The plugin is in [`github.com/Nordup/learning-space-plugins`](https://github.com/Nordup/learning-space-plugins)
-(marketplace `learning-space`, plugin `learning-space`). The README there has
+The plugin is in [`github.com/Nordup/askaboard-plugins`](https://github.com/Nordup/askaboard-plugins)
+(marketplace `askaboard`, plugin `askaboard`). The README there has
 the manual steps for each agent.
 
-- **Relay command (stdio):** `~/.learning-space/bin/learning-space mcp`. The app
+- **Relay command (stdio):** `~/.askaboard/bin/askaboard mcp`. The app
   writes this command on every launch. The relay lists the tools also when the
   app is closed.
-- **Claude Desktop extension:** `resources/learning-space.mcpb`. **Install**
+- **Claude Desktop extension:** `resources/askaboard.mcpb`. **Install**
   opens it in Claude Desktop. On Linux the app finds Claude Desktop as a
   `claude-desktop` command or a `.desktop` file, and starts it with the file
   path. `npm run build:mcpb` copies the plugin repo's
@@ -134,7 +134,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 ## MCP
 
 - **Endpoint:** `http://127.0.0.1:47821/mcp` (Streamable HTTP), while the app is open.
-- **Port:** `SPACE_MCP_PORT` changes it. The relay reads `LEARNING_SPACE_PORT`.
+- **Port:** `ASKABOARD_PORT` changes it, for the app and the relay (`SPACE_MCP_PORT`, the older name, works too).
 - **Agent text:** `resources/brief.md` (the brief: the managed block in a
   folder's `AGENTS.md`, and `get_brief` for agents without it),
   `resources/guide.md` (the board reference in topics, `get_guide`; decision
@@ -192,7 +192,7 @@ folder paths, tool arguments or error messages.
 
 Each event has a hashed identifier. It is the SHA-256 hash of your Codex
 account id, or of your Claude Code user id, or of a random id for this
-install. The random id is in `~/.learning-space/anonymous-id`. To count the
+install. The random id is in `~/.askaboard/anonymous-id`. To count the
 installs of one person, the app also sends the SHA-256 hash of your OpenAI
 account id and of your Claude account id when you are signed in. The app
 never sends a raw id.
@@ -200,13 +200,13 @@ never sends a raw id.
 Your IP address reaches our server and PostHog. They use it to find your
 approximate location.
 
-To turn usage data off, set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in the
+To turn usage data off, set `ASKABOARD_TELEMETRY_ENABLED=false` in the
 environment of the app. A dev run (`npm run dev`) sends nothing unless you set
-`LEARNING_SPACE_TELEMETRY_ENABLED=true`; a run of a local build sends, tagged
+`ASKABOARD_TELEMETRY_ENABLED=true`; a run of a local build sends, tagged
 with its channel. The voice server gets the same hashed identifier with each
-speech request, also with usage data off (T39): it counts the daily cap. `LEARNING_SPACE_TELEMETRY_HOST`
+speech request, also with usage data off (T39): it counts the daily cap. `ASKABOARD_TELEMETRY_HOST`
 changes the server. A build sets the channel from
-`LEARNING_SPACE_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
+`ASKABOARD_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
 default is dev).
 
 ## Dev automation
@@ -221,7 +221,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_MCP_PORT=port` | Serve MCP on this port instead of 47821. |
 | `SPACE_REMOTE_DEBUG=port` | Dev builds only: Chromium debug port for `scripts/drive.mjs`. |
 | `SPACE_CONNECT_DRY_RUN=1` | **Install** for Claude Desktop logs the `.mcpb` path and does not open it. |
-| `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.learning-space/traces/`. |
+| `SPACE_TRACE_DIR=/abs/dir` | Write session traces here instead of `~/.askaboard/traces/`. |
 | `SPACE_NO_FOCUS=1` | Show the window without activating the app: it never takes focus or switches the desktop (a macOS Space). The lab, the benchmarks and the render run set it. |
 | `SPACE_FAKE_FULL_SCREEN=1` | With `SPACE_REMOTE_DEBUG`: the renderer lays out as in full screen (no window buttons; the title row starts at 12 px), with no real full screen, so a check never moves the window to a new macOS desktop Space. |
 | `SPACE_REMOTE_DEBUG` and the splash | Dev builds: over the debug port, `window.__splash.show({ seed, t, fps, pointer })` restarts the splash artwork with that seed, held at time `t` (seconds), or running from 0 with `t: null`; `fps` sets the calm frame cap and `pointer: false` ignores the pointer (for a measurement); `window.__splashFrameMs` holds the last frames' cost in ms and `window.__splashGlContexts` counts live WebGL contexts. |

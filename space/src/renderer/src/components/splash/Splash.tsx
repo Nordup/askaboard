@@ -6,7 +6,7 @@ import { ConnectList, useAgentClients } from '../ConnectAgents'
 import { startArt } from './art'
 
 /** The project's repository (apps/website/lib/site.ts REPO_URL). */
-const REPO_URL = 'https://github.com/Nordup/math-tutor'
+const REPO_URL = 'https://github.com/Nordup/askaboard'
 
 interface SplashProps {
   recent: RecentFolder[]
@@ -50,11 +50,11 @@ export function Splash({ recent, onOpenFolder, onOpenRecent }: SplashProps) {
   return (
     <div className="splash">
       <div className="splash__drag" />
-      <div className="splash__card" role="dialog" aria-label="Learning Space">
+      <div className="splash__card" role="dialog" aria-label="Askaboard">
         <div className="splash__band" ref={bandRef}>
           <canvas className="splash__art" ref={canvasRef} />
           <div className="splash__name" style={at(0)}>
-            Learning Space
+            Askaboard
           </div>
           <div className="splash__version" style={at(1)}>
             v{window.space.version}

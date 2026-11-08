@@ -34,7 +34,7 @@ export const FOLDER_SETTINGS_DIR = '.learning-space'
 const MAX_OVERRIDE_BYTES = 64 * 1024
 const FOLDER_HEADING = 'Guidance for this learning folder'
 const FOLDER_PREFIX = "The following guidance comes from the learner's folder."
-const REPLACED_LINE = "Learning Space: the learner's folder replaced these instructions."
+const REPLACED_LINE = "Askaboard: the learner's folder replaced these instructions."
 /** The get_guide topic that holds the folder's .learning-space/guide.md (append mode). */
 const FOLDER_TOPIC = 'folder'
 const FOLDER_SUMMARY = "Guidance from this learning folder (its .learning-space/guide.md)."
@@ -150,7 +150,7 @@ function readFolderText(root: string | null, name: FolderFileName): FolderText |
 
 /** The line the agent reads when a folder file was too large. */
 function tooLargeNote(name: FolderFileName, size: number): string {
-  return `Note: ${FOLDER_SETTINGS_DIR}/${name} is ${Math.ceil(size / 1024)} KB, larger than the ${MAX_OVERRIDE_BYTES / 1024} KB limit, so Learning Space ignored it.`
+  return `Note: ${FOLDER_SETTINGS_DIR}/${name} is ${Math.ceil(size / 1024)} KB, larger than the ${MAX_OVERRIDE_BYTES / 1024} KB limit, so Askaboard ignored it.`
 }
 
 /** A built-in resource (the brief: briefPath()), with the lab switches' spans applied (lab-switch.ts). */
@@ -282,7 +282,7 @@ export function serverInstructions(root: string | null): string {
       builtIn = clean(readBuiltIn('instructions.md'))
     } catch (error) {
       console.error(String(error))
-      builtIn = 'Learning Space is a shared board where a person learns with you. If the Learning Space brief is not in your context, read it with get_brief.'
+      builtIn = 'Askaboard is a shared board where a person learns with you. If the Askaboard brief is not in your context, read it with get_brief.'
     }
     if (local?.kind === 'too-large') return `${builtIn}\n\n${tooLargeNote('instructions.md', local.size)}`
     return local ? `${builtIn}\n\n## ${FOLDER_HEADING}\n\n${FOLDER_PREFIX}\n\n${local.body}` : builtIn

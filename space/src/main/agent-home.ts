@@ -4,11 +4,11 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 /**
- * ~/.learning-space/: what an agent needs to reach the app (the contract with
- * the learning-space-plugins repo).
+ * ~/.askaboard/: what an agent needs to reach the app (the contract with
+ * the askaboard-plugins repo).
  *
- *   bin/learning-space  the shim; `learning-space mcp` starts the stdio relay;
- *                       `learning-space news --client <label>` prints the board
+ *   bin/askaboard  the shim; `askaboard mcp` starts the stdio relay;
+ *                       `askaboard news --client <label>` prints the board
  *                       news line (for the plugins' prompt hooks)
  *   relay.json          { port, appVersion, updatedAt }: where the app listens
  *   tools.json          the tools/list result plus the server instructions, so
@@ -20,11 +20,11 @@ import { app } from 'electron'
 
 export function agentHomeDir(): string {
   // os.homedir() follows $HOME, so a check run with HOME=<scratch> writes there.
-  return join(homedir(), '.learning-space')
+  return join(homedir(), '.askaboard')
 }
 
 export function shimPath(): string {
-  return join(agentHomeDir(), 'bin', 'learning-space')
+  return join(agentHomeDir(), 'bin', 'askaboard')
 }
 
 /**
@@ -57,14 +57,14 @@ function shimText(): string {
   const version = app.getVersion()
   return [
     '#!/bin/sh',
-    '# Learning Space agent shim. The app rewrites this file on every launch.',
+    '# Askaboard agent shim. The app rewrites this file on every launch.',
     `# App ${version}, written ${new Date().toISOString()}.`,
     'case "$1" in',
     `  mcp|news) exec env ELECTRON_RUN_AS_NODE=1 ${shellQuote(process.execPath)} ${shellQuote(relayScriptPath())} "$@" ;;`,
-    `  --version|-v) echo ${shellQuote(`learning-space ${version}`)} ;;`,
-    '  *) echo "usage: learning-space mcp     start the MCP relay (stdio) to the Learning Space app" >&2',
-    '     echo "       learning-space news --client <Codex|Claude Code>   print what the learner drew since that agent app last looked" >&2',
-    '     echo "       learning-space --version" >&2',
+    `  --version|-v) echo ${shellQuote(`askaboard ${version}`)} ;;`,
+    '  *) echo "usage: askaboard mcp     start the MCP relay (stdio) to the Askaboard app" >&2',
+    '     echo "       askaboard news --client <Codex|Claude Code>   print what the learner drew since that agent app last looked" >&2',
+    '     echo "       askaboard --version" >&2',
     '     exit 2 ;;',
     'esac',
     ''

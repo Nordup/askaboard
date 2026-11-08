@@ -143,10 +143,10 @@ export function requireState(name) {
 /** The AGENTS.md template with an empty brief block; the app fills it when it opens the folder. */
 function agentsWithEmptyBrief() {
   const template = readFileSync(join(TEMPLATE, 'AGENTS.md'), 'utf8')
-  const placeholder = '<!-- learning-space brief: placeholder (the app puts the brief here at setup) -->'
+  const placeholder = '<!-- askaboard brief: placeholder (the app puts the brief here at setup) -->'
   if (!template.includes(placeholder)) throw new Error('The AGENTS.md template has no brief placeholder.')
   const sha = createHash('sha256').update('').digest('hex').slice(0, 12)
-  const block = `<!-- learning-space brief: start (managed by the Learning Space app; edits here stop its updates) sha=${sha} -->\n<!-- learning-space brief: end -->`
+  const block = `<!-- askaboard brief: start (managed by the Askaboard app; edits here stop its updates) sha=${sha} -->\n<!-- askaboard brief: end -->`
   return template.replace(placeholder, block)
 }
 
@@ -366,7 +366,7 @@ function readdirSafe(path) {
 export function stayAwake() {
   const [command, argv] =
     process.platform === 'linux'
-      ? ['systemd-inhibit', ['--what=idle:sleep', '--who=learning-space-scripts', '--why=A lab, bench or perf run measures', '--mode=block', 'tail', `--pid=${process.pid}`, '-f', '/dev/null']]
+      ? ['systemd-inhibit', ['--what=idle:sleep', '--who=askaboard-scripts', '--why=A lab, bench or perf run measures', '--mode=block', 'tail', `--pid=${process.pid}`, '-f', '/dev/null']]
       : ['caffeinate', ['-i', '-m', '-s', '-w', String(process.pid)]]
   try {
     const child = spawn(command, argv, { stdio: 'ignore', detached: true })
@@ -761,14 +761,14 @@ function runProcess(agent, command, argv, { cwd, env, stdoutFile, stderrFile }) 
 }
 
 function newsHookCommand(state) {
-  const shim = join(state.home, '.learning-space/bin/learning-space')
-  return (label) => `LEARNING_SPACE_PORT=${state.mcpPort} '${shim}' news --client '${label}' 2>/dev/null || true`
+  const shim = join(state.home, '.askaboard/bin/askaboard')
+  return (label) => `ASKABOARD_PORT=${state.mcpPort} '${shim}' news --client '${label}' 2>/dev/null || true`
 }
 
 /** Claude: one `claude -p` turn. resume = the session id of phase 1. raw: the parsed JSON output. */
 export async function claudeTurn(agent, state, dir, prompt, phase, resume = null) {
   const config = join(state.dir, 'mcp.json')
-  writeFileSync(config, JSON.stringify({ mcpServers: { 'learning-space': { type: 'http', url: `http://127.0.0.1:${state.mcpPort}/mcp` } } }, null, 2))
+  writeFileSync(config, JSON.stringify({ mcpServers: { 'askaboard': { type: 'http', url: `http://127.0.0.1:${state.mcpPort}/mcp` } } }, null, 2))
   const hookArgs = []
   if (agent.newsHook) {
     const settings = join(state.dir, 'claude-settings.json')
@@ -776,7 +776,7 @@ export async function claudeTurn(agent, state, dir, prompt, phase, resume = null
     hookArgs.push('--settings', settings)
   }
   // As in the desktop app with permissions bypassed: every built-in tool (Bash too), no permission prompts, only the
-  // Learning Space server (no MCP servers or plugins of the founder's own setup). --no-web takes the web tools away.
+  // Askaboard server (no MCP servers or plugins of the founder's own setup). --no-web takes the web tools away.
   // The prompt goes before --disallowedTools: that flag takes every word after it.
   const argv = ['-p', prompt, ...(resume ? ['--resume', resume] : []), '--model', agent.model, ...(agent.effort ? ['--effort', agent.effort] : []), '--mcp-config', config, '--strict-mcp-config', '--setting-sources', 'project,local', ...hookArgs, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions', ...(agent.web ? [] : ['--disallowedTools', 'WebSearch', 'WebFetch'])]
   const stdoutFile = join(dir, `${phase}-claude.jsonl`)
@@ -841,7 +841,7 @@ export function prepareCodexHome(agent, state) {
       `model_reasoning_effort = ${JSON.stringify(agent.effort)}`,
       'service_tier = "default"',
       '',
-      '[mcp_servers.learning-space]',
+      '[mcp_servers.askaboard]',
       `url = ${JSON.stringify(`http://127.0.0.1:${state.mcpPort}/mcp`)}`,
       // With approval "never", the sandbox declines MCP write tools unless they are approved here.
       'default_tools_approval_mode = "approve"',

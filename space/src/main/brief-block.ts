@@ -8,23 +8,29 @@ import { briefPath, labText } from './lab-switch'
  * The brief (`resources/brief.md`) as a managed block in a learning folder's
  * `AGENTS.md`, so agents in the folder always have it in context:
  *
- *   <!-- learning-space brief: start (managed by …; edits here stop its updates) sha=<hash> -->
+ *   <!-- askaboard brief: start (managed by …; edits here stop its updates) sha=<hash> -->
  *   …the text of brief.md…
- *   <!-- learning-space brief: end -->
+ *   <!-- askaboard brief: end -->
  *
  * `sha` is a short hash of the exact body the app wrote. When the folder
  * opens, a block whose body still has that hash (the learner did not edit it)
  * and differs from the current brief is rewritten; every byte outside the
  * block stays. An edited block is left alone. A file without the start marker
- * never gets a block.
+ * never gets a block. A block with the markers of the old name (Learning Space)
+ * is found too, and its rewrite gets the new markers.
  */
 
-const START_PREFIX = '<!-- learning-space brief: start (managed by the Learning Space app; edits here stop its updates) sha='
+const START_PREFIX = '<!-- askaboard brief: start (managed by the Askaboard app; edits here stop its updates) sha='
 const START_SUFFIX = ' -->'
-const END_LINE = '<!-- learning-space brief: end -->'
+const END_LINE = '<!-- askaboard brief: end -->'
+/** The markers before the rename to Askaboard (2026-11-08), each start with its end. */
+const MARKERS: Array<[start: string, end: string]> = [
+  [START_PREFIX, END_LINE],
+  ['<!-- learning-space brief: start (managed by the Learning Space app; edits here stop its updates) sha=', '<!-- learning-space brief: end -->']
+]
 
 /** The line in the learning-folder template that setup replaces with the block. */
-export const BRIEF_PLACEHOLDER = '<!-- learning-space brief: placeholder (the app puts the brief here at setup) -->'
+export const BRIEF_PLACEHOLDER = '<!-- askaboard brief: placeholder (the app puts the brief here at setup) -->'
 
 function hash(body: string): string {
   return createHash('sha256').update(body, 'utf8').digest('hex').slice(0, 12)
@@ -58,35 +64,43 @@ interface FoundBlock {
 
 /** The managed block in a file, null when there is no start line, or a reason when it is broken. */
 function findBlock(text: string): FoundBlock | null | string {
+  for (const [prefix, endLine] of MARKERS) {
+    const found = findBlockWith(text, prefix, endLine)
+    if (found !== null) return found
+  }
+  return null
+}
+
+function findBlockWith(text: string, prefix: string, endLine: string): FoundBlock | null | string {
   let start = -1
   for (let from = 0; ; ) {
-    const at = text.indexOf(START_PREFIX, from)
+    const at = text.indexOf(prefix, from)
     if (at < 0) break
     if (at === 0 || text.charAt(at - 1) === '\n') {
       start = at
       break
     }
-    from = at + START_PREFIX.length
+    from = at + prefix.length
   }
   if (start < 0) return null
   const lineEnd = text.indexOf('\n', start)
   if (lineEnd < 0) return 'the start line has no block after it'
   const line = text.slice(start, lineEnd)
   if (!line.endsWith(START_SUFFIX)) return 'the start line is not in the expected form'
-  const sha = line.slice(START_PREFIX.length, line.length - START_SUFFIX.length)
+  const sha = line.slice(prefix.length, line.length - START_SUFFIX.length)
   const bodyStart = lineEnd + 1
   let endAt = -1
   for (let from = bodyStart; ; ) {
-    const at = text.indexOf(END_LINE, from)
+    const at = text.indexOf(endLine, from)
     if (at < 0) break
     if (text.charAt(at - 1) === '\n' || at === bodyStart) {
       endAt = at
       break
     }
-    from = at + END_LINE.length
+    from = at + endLine.length
   }
   if (endAt < 0) return 'the end line is missing'
-  return { start, end: endAt + END_LINE.length, sha, body: text.slice(bodyStart, endAt) }
+  return { start, end: endAt + endLine.length, sha, body: text.slice(bodyStart, endAt) }
 }
 
 /** Messages already logged, so each problem shows once per launch. */

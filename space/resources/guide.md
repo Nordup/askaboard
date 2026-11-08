@@ -1,4 +1,4 @@
-# Learning Space: the agent guide
+# Askaboard: the agent guide
 
 ## The board
 <!-- topic: model -->

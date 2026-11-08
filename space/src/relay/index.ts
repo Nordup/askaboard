@@ -1,5 +1,5 @@
 /**
- * The Learning Space stdio relay: `~/.learning-space/bin/learning-space mcp`.
+ * The Askaboard stdio relay: `~/.askaboard/bin/askaboard mcp`.
  *
  * An agent (Claude Code, Codex, the Claude app) starts this process and talks
  * MCP over stdin/stdout. The relay forwards every JSON-RPC message to the
@@ -7,7 +7,7 @@
  * every answer back. It never re-implements a tool.
  *
  * When the app is not running, the relay answers by itself: `initialize` with
- * the cached server instructions, `tools/list` from ~/.learning-space/tools.json,
+ * the cached server instructions, `tools/list` from ~/.askaboard/tools.json,
  * and `tools/call` with a tool error that asks the agent to have the learner
  * open the app. Every later request tries the app again. When the app comes
  * up (or restarts), the relay opens a new upstream session with the client's
@@ -16,7 +16,7 @@
  * It runs under Node (Electron's binary with ELECTRON_RUN_AS_NODE=1). stdout
  * carries protocol messages only; every log line goes to stderr.
  *
- * `learning-space news --client <label>` runs the same file for one request:
+ * `askaboard news --client <label>` runs the same file for one request:
  * it prints the board news line (see printNews below) and exits.
  */
 import { readFileSync } from 'node:fs'
@@ -36,12 +36,12 @@ import {
   type RequestId
 } from '@modelcontextprotocol/sdk/types.js'
 
-const SERVER_NAME = 'learning-space'
+const SERVER_NAME = 'askaboard'
 const DEFAULT_PORT = 47821
 const HANDSHAKE_TIMEOUT_MS = 5000
 const PROBE_TIMEOUT_MS = 1500
-const NOT_RUNNING_LINE = 'Learning Space is not running — ask the learner to open the app.'
-const NOT_RUNNING_TOOL_ERROR = 'Learning Space is not running. Ask the learner to open the app, then try again.'
+const NOT_RUNNING_LINE = 'Askaboard is not running — ask the learner to open the app.'
+const NOT_RUNNING_TOOL_ERROR = 'Askaboard is not running. Ask the learner to open the app, then try again.'
 
 // Keep stdout for protocol messages only.
 console.log = console.error
@@ -49,7 +49,7 @@ console.info = console.error
 console.warn = console.error
 
 function log(message: string): void {
-  process.stderr.write(`learning-space relay: ${message}\n`)
+  process.stderr.write(`askaboard relay: ${message}\n`)
 }
 
 /**
@@ -63,7 +63,7 @@ process.stdout.on('error', (error: NodeJS.ErrnoException) => {
   stdoutClosed()
 })
 
-const stateDir = join(homedir(), '.learning-space')
+const stateDir = join(homedir(), '.askaboard')
 
 interface ToolsCache {
   tools: unknown[]
@@ -79,13 +79,13 @@ function readJson<T>(name: string): T | null {
   }
 }
 
-/** LEARNING_SPACE_PORT, else relay.json, else the default port. Read per connect, so a new app port is picked up. */
+/** ASKABOARD_PORT or SPACE_MCP_PORT (as the app reads them), else relay.json, else the default port. Read per connect, so a new app port is picked up. */
 function endpoint(): URL {
   const valid = (value: unknown): number | null => {
     const port = Number(value)
     return Number.isInteger(port) && port > 0 && port < 65536 ? port : null
   }
-  const port = valid(process.env.LEARNING_SPACE_PORT) ?? valid(readJson<{ port?: number }>('relay.json')?.port) ?? DEFAULT_PORT
+  const port = valid(process.env.ASKABOARD_PORT || process.env.SPACE_MCP_PORT) ?? valid(readJson<{ port?: number }>('relay.json')?.port) ?? DEFAULT_PORT
   return new URL(`http://127.0.0.1:${port}/mcp`)
 }
 
@@ -301,7 +301,7 @@ class Relay {
   private async connect(): Promise<StreamableHTTPClientTransport> {
     const url = endpoint()
     const transport = new StreamableHTTPClientTransport(url, { reconnectionOptions: { maxRetries: 2, initialReconnectionDelay: 500, maxReconnectionDelay: 2000, reconnectionDelayGrowFactor: 2 } })
-    const initId = `learning-space-relay-init-${++this.handshakeCount}`
+    const initId = `askaboard-relay-init-${++this.handshakeCount}`
     let settle: ((message: JSONRPCMessage) => void) | null = null
     const answered = new Promise<JSONRPCMessage>((resolve) => {
       settle = resolve
@@ -367,7 +367,7 @@ class Relay {
 const NEWS_TIMEOUT_MS = 1500
 
 /**
- * `learning-space news --client <label>`: print the board news line for that
+ * `askaboard news --client <label>`: print the board news line for that
  * agent app ("Codex", "Claude Code"; see main/news.ts), for a hook that runs
  * before each prompt. It prints nothing when nothing is new, when the app is
  * closed, or on any error, and always exits 0.

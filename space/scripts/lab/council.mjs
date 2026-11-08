@@ -27,7 +27,7 @@
  *
  * Phase 1 (work): `claude -p` (MCP config for the lab only, all tools, no
  * permission prompts) or `codex exec --json` (scratch CODEX_HOME, full access,
- * Learning Space tools approved), as the desktop apps run them (see
+ * Askaboard tools approved), as the desktop apps run them (see
  * scripts/perf/README.md, "How close the lab is to the real apps"), run from inside the lab's learning folder, so AGENTS.md loads. The
  * window is recorded with the screencast for the whole phase, until the last
  * scene has played, plus 1 s.

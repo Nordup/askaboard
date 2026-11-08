@@ -99,7 +99,7 @@ async function startCopy(i) {
     entry.pids.push(c.pid)
     Object.assign(process.env, { WAYLAND_DISPLAY: c.display, ELECTRON_OZONE_PLATFORM_HINT: 'wayland', LS_NATIVE_WAYLAND: '1' })
   }
-  process.env.LEARNING_SPACE_TELEMETRY_ENABLED = 'false'
+  process.env.ASKABOARD_TELEMETRY_ENABLED = 'false'
   // startInstance reads the environment when it spawns: one copy at a time.
   const state = await startInstance({ name, mcpPort: port + i, debugPort: port + 100 + i, built: true, spawnOnly: true })
   for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key]

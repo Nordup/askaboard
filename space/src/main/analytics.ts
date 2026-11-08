@@ -10,9 +10,9 @@ import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
  * Only names, enums, counts, durations and booleans go into properties: never board content,
  * scene text, said lines, file names, folder paths, tool arguments or error messages.
  *
- * Env: LEARNING_SPACE_TELEMETRY_ENABLED (false turns it off; under `npm run dev` only true turns
- * it on), LEARNING_SPACE_TELEMETRY_HOST (the ingest). The channel is set at build time
- * (electron.vite.config.ts, LEARNING_SPACE_TELEMETRY_CHANNEL).
+ * Env: ASKABOARD_TELEMETRY_ENABLED (false turns it off; under `npm run dev` only true turns
+ * it on), ASKABOARD_TELEMETRY_HOST (the ingest). The channel is set at build time
+ * (electron.vite.config.ts, ASKABOARD_TELEMETRY_CHANNEL).
  */
 
 /** Our ingest ignores the key (it adds its own); PostHog's wire format has the field. */
@@ -73,8 +73,8 @@ function parseBoolean(raw: string | undefined): boolean | undefined {
 
 /** The dev renderer (electron-vite dev) counts as a dev run, as T3's dev runner: off unless the variable turns it on. */
 const devRun = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
-const enabled = parseBoolean(process.env.LEARNING_SPACE_TELEMETRY_ENABLED) ?? !devRun
-const host = (process.env.LEARNING_SPACE_TELEMETRY_HOST?.trim() || DEFAULT_HOST).replace(/\/+$/, '')
+const enabled = parseBoolean(process.env.ASKABOARD_TELEMETRY_ENABLED) ?? !devRun
+const host = (process.env.ASKABOARD_TELEMETRY_HOST?.trim() || DEFAULT_HOST).replace(/\/+$/, '')
 
 /** A UUIDv7 (RFC 9562): 48 bits of Unix ms, then random bits; PostHog deduplicates retries by it. */
 function uuidV7(): string {

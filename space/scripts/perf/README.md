@@ -139,16 +139,16 @@ The same:
 - The agent CLI and model of the real app (`claude`, `codex`), with the effort given.
 - All of the agent's own tools, with no permission prompts. Claude: `--permission-mode bypassPermissions`, no tool allow-list (Bash, Write, Edit, Read, ToolSearch, sub-agents, WebSearch and WebFetch). Codex: `sandbox_mode = "danger-full-access"` (network on), `approval_policy = "never"`, `--search` (live web search). This is how the founder's own Codex config runs. `--no-web` takes the web tools away (Claude: `--disallowedTools WebSearch WebFetch`; Codex: no `--search`).
 - The learning folder: `AGENTS.md` with the brief, `plan.md`, `learner.md`, an empty board; the agent starts inside it.
-- The Learning Space MCP server with the same tools and texts, and the board news hook (`UserPromptSubmit`).
+- The Askaboard MCP server with the same tools and texts, and the board news hook (`UserPromptSubmit`).
 - The app itself: `--dev` (the default) runs the current source as `npm run dev` does.
 
 Known differences:
 
 - Headless: `claude -p` and `codex exec`, one prompt, no person who answers, watches or draws. No voice.
 - A fresh session, a fresh app and an empty folder per run: no history, memory or earlier boards; caches start cold (the prompt cache too).
-- A clean install: Claude loads only project and local settings (`--setting-sources project,local`) and only the Learning Space server (`--strict-mcp-config`); Codex uses its own `CODEX_HOME` with only the lab server. The founder's plugins, skills, other MCP servers and global instructions are not there.
+- A clean install: Claude loads only project and local settings (`--setting-sources project,local`) and only the Askaboard server (`--strict-mcp-config`); Codex uses its own `CODEX_HOME` with only the lab server. The founder's plugins, skills, other MCP servers and global instructions are not there.
 - The agents reach the app over direct HTTP (`127.0.0.1:<port>/mcp`) from their config, not through an installed plugin. The relay's own time is not measured. A plugin bug does not show here: the Agent Plugin cut of all tool text was invisible in the lab (I30). To check through the plugin, see "A real plugin" in `docs/learning-space/working-guide.md`.
-- Claude: the desktop app asks before some actions by default; the lab never asks. Codex: `default_tools_approval_mode = "approve"` for the Learning Space server (the desktop app asks once, then remembers).
+- Claude: the desktop app asks before some actions by default; the lab never asks. Codex: `default_tools_approval_mode = "approve"` for the Askaboard server (the desktop app asks once, then remembers).
 - Codex: `service_tier = "default"`. The `[features]` lines of earlier lab configs (`js_repl = false`, `multi_agent_v2 = true`) are gone: in Codex 0.164 `js_repl` is a removed feature and `multi_agent_v2` is on by default.
 - The app window is covered or in the background, with the switches that keep it rendering; the screencast of a video run adds CPU load.
 

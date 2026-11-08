@@ -41,9 +41,9 @@ function stageBundles(): Plugin {
 
 // Usage data (main/analytics.ts): our release builds set the channel; local builds and forks send "dev".
 const TELEMETRY_CHANNELS = ['stable', 'nightly', 'preview', 'dev']
-const telemetryChannel = process.env.LEARNING_SPACE_TELEMETRY_CHANNEL?.trim() || 'dev'
+const telemetryChannel = process.env.ASKABOARD_TELEMETRY_CHANNEL?.trim() || 'dev'
 if (!TELEMETRY_CHANNELS.includes(telemetryChannel)) {
-  throw new Error(`LEARNING_SPACE_TELEMETRY_CHANNEL must be one of ${TELEMETRY_CHANNELS.join(', ')}, got "${telemetryChannel}".`)
+  throw new Error(`ASKABOARD_TELEMETRY_CHANNEL must be one of ${TELEMETRY_CHANNELS.join(', ')}, got "${telemetryChannel}".`)
 }
 
 export default defineConfig({

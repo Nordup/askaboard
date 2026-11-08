@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Summarise Learning Space session traces (see src/main/trace.ts).
+ * Summarise Askaboard session traces (see src/main/trace.ts).
  *
  *   node scripts/trace-report.mjs <trace.jsonl | folder> [--json] [--all]
  *

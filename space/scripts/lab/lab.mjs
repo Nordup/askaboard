@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Start, stop or show the lab app: an own Learning Space instance for
+ * Start, stop or show the lab app: an own Askaboard instance for
  * live-drawing experiments, with a scratch HOME, user-data-dir, traces and a
  * learning folder with one board under SCRATCH/<name>/ (common.mjs: /tmp/claude-<uid>/ls-lab).
  *

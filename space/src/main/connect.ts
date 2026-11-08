@@ -9,18 +9,18 @@ import { resourcePath } from './resources'
 
 /**
  * The "Connect an agent" buttons. Plugin first: Claude Code and Codex get the
- * Learning Space plugin from the public marketplace (`claude plugin install`,
- * `codex plugin add`). A hand-made `learning-space` MCP entry is detected, so
+ * Askaboard plugin from the public marketplace (`claude plugin install`,
+ * `codex plugin add`). A hand-made `askaboard` MCP entry is detected, so
  * the popover can switch it to the plugin or remove the duplicate. Every
  * command is a fixed argv run with execFile (no shell string) and a timeout.
  * The Claude app gets the bundled .mcpb, which it installs from its own dialog.
  */
 
 /** The MCP server name, for the plugin and for a manual entry. */
-const SERVER_NAME = 'learning-space'
-const MARKETPLACE_REPO = 'Nordup/learning-space-plugins'
-const MARKETPLACE_NAME = 'learning-space'
-const PLUGIN_ID = 'learning-space@learning-space'
+const SERVER_NAME = 'askaboard'
+const MARKETPLACE_REPO = 'Nordup/askaboard-plugins'
+const MARKETPLACE_NAME = 'askaboard'
+const PLUGIN_ID = 'askaboard@askaboard'
 const SHELL_TIMEOUT_MS = 8000
 const STATUS_TIMEOUT_MS = 20_000
 /** The marketplace add clones a GitHub repository. */
@@ -173,7 +173,7 @@ function findPlugin(value: unknown): { enabled: boolean } | null {
   return { enabled: entry.enabled !== false }
 }
 
-/** `plugin marketplace list --json` of either CLI holds the Learning Space marketplace. */
+/** `plugin marketplace list --json` of either CLI holds the Askaboard marketplace. */
 function hasMarketplace(value: unknown): boolean {
   const list = Array.isArray(value) ? value : value && typeof value === 'object' ? (value as { marketplaces?: unknown }).marketplaces : null
   return Array.isArray(list) && list.some((item) => (item as { name?: unknown })?.name === MARKETPLACE_NAME)
@@ -188,9 +188,9 @@ async function pluginState(file: string, env: NodeJS.ProcessEnv): Promise<{ plug
 }
 
 /**
- * `claude mcp get learning-space` exits 0 for a manual entry and prints the
+ * `claude mcp get askaboard` exits 0 for a manual entry and prints the
  * remove command with its scope. The plugin's server has another name
- * (`plugin:learning-space:learning-space`), so it never matches.
+ * (`plugin:askaboard:askaboard`), so it never matches.
  */
 async function claudeManual(tools: Tools): Promise<{ manual: boolean; scope: string; error: string | null }> {
   const result = await run(tools.claude as string, ['mcp', 'get', SERVER_NAME], tools.env, STATUS_TIMEOUT_MS)
@@ -209,14 +209,14 @@ function codexConfigText(): string {
   }
 }
 
-/** A [mcp_servers.learning-space] table, with a URL or a command: both count. */
+/** A [mcp_servers.askaboard] table, with a URL or a command: both count. */
 function codexHasManual(text: string): boolean {
-  return /^\s*\[\s*mcp_servers\s*\.\s*(?:"learning-space"|'learning-space'|learning-space)\s*\]/m.test(text)
+  return /^\s*\[\s*mcp_servers\s*\.\s*(?:"askaboard"|'askaboard'|askaboard)\s*\]/m.test(text)
 }
 
 /** The plugin table, read from config.toml when the codex CLI is missing. */
 function codexHasPluginTable(text: string): boolean {
-  return /^\s*\[\s*plugins\s*\.\s*"learning-space@learning-space"\s*\]/m.test(text)
+  return /^\s*\[\s*plugins\s*\.\s*"askaboard@askaboard"\s*\]/m.test(text)
 }
 
 async function found(cli: Cli, tools: Tools): Promise<Found> {
@@ -326,7 +326,7 @@ function claudeApp(dirs: string[]): ClaudeApp | null {
  * The Claude app unpacks each extension into its own folder under "Claude
  * Extensions", in its folder of the app data (macOS: ~/Library/Application
  * Support/Claude, Linux: ~/.config/Claude). The folder name is not a published
- * contract, so any folder whose name holds "learning-space" counts.
+ * contract, so any folder whose name holds "askaboard" counts.
  */
 function claudeAppHasExtension(): boolean {
   try {
@@ -466,7 +466,7 @@ async function cliAction(cli: Cli, action: AgentClientAction): Promise<ConnectRe
 
 /** Absolute: Claude Desktop on Linux reads the path from its argv and ignores the working directory. */
 function mcpbPath(): string {
-  return resolve(resourcePath('learning-space.mcpb'))
+  return resolve(resourcePath('askaboard.mcpb'))
 }
 
 /**

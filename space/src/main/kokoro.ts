@@ -12,7 +12,7 @@ import { agentHomeDir } from './agent-home'
  * The app is MIT, and espeak-ng (which Kokoro uses for words outside its word list, numbers among
  * them) is GPL-3.0. So nothing of it is in the app: on Install the app downloads sherpa-onnx's
  * prebuilt command-line program and the Kokoro model from sherpa-onnx's own GitHub releases into
- * ~/.learning-space/models/kokoro/<VERSION>/, and runs the program as a separate process with
+ * ~/.askaboard/models/kokoro/<VERSION>/, and runs the program as a separate process with
  * command-line arguments. It reads the WAV that the program writes. It never links or loads it.
  *
  * sherpa-onnx stays on 1.13.x: since 2.0 it no longer uses espeak-ng and skips every word that is

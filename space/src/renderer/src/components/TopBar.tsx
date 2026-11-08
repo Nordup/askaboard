@@ -53,7 +53,7 @@ export function TopBar(props: TopBarProps) {
         ) : boardName ? (
           <span className="topbar__board">{boardName}</span>
         ) : (
-          <span className="topbar__folder">{folderName ?? 'Learning Space'}</span>
+          <span className="topbar__folder">{folderName ?? 'Askaboard'}</span>
         )}
         {saveStatus && (
           // The live region stays while a board is open; it holds words only when a save failed.

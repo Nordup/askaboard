@@ -7,7 +7,7 @@ import { agentHomeDir } from './agent-home'
 /**
  * The ids of usage data (decision P24), copied from T3 Code's telemetry/Identify.ts:
  *
- *   installId    SHA-256 of ~/.learning-space/anonymous-id, a random UUID made once
+ *   installId    SHA-256 of ~/.askaboard/anonymous-id, a random UUID made once
  *   distinctId   SHA-256 of the Codex account_id, else of the Claude userID, else installId
  *   owners       SHA-256 of the OpenAI user id (Codex id_token) and of the Claude account uuid
  *

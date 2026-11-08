@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Drive a running Learning Space dev app over the Chrome DevTools Protocol,
+ * Drive a running Askaboard dev app over the Chrome DevTools Protocol,
  * so check agents never need computer use for input. The input reaches the
  * page even when the window is in the background.
  *

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { agentHomeDir } from './agent-home'
 
 /**
- * The learner's own Gemini key for the cloud voice: the one owner of GEMINI_API_KEY in ~/.learning-space/.env.
+ * The learner's own Gemini key for the cloud voice: the one owner of GEMINI_API_KEY in ~/.askaboard/.env.
  * voice.ts reads the key at each use (readVoiceKey); Settings saves and removes it here (main/settings.ts calls these).
  * The key never goes back to the renderer, into a log, analytics or state.json: Settings hears only whether one is saved.
  */

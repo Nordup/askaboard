@@ -3,6 +3,7 @@ import { Agent, request as httpsRequest } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import type { LookupFunction } from 'node:net'
 import { BlockList, isIP } from 'node:net'
+import { app } from 'electron'
 
 /**
  * Image downloads for agent-chosen URLs (a scene's image() and html() <img src="https://…">).
@@ -158,7 +159,7 @@ function requestOnce(
         Accept: 'image/*',
         'Accept-Encoding': 'identity',
         // Some hosts (Wikimedia) refuse requests without a User-Agent.
-        'User-Agent': 'LearningSpace/0.0.1 (image download)'
+        'User-Agent': `Askaboard/${app.getVersion()} (image download)`
       }
     })
     let settled = false

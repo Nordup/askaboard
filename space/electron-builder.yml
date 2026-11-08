@@ -2,8 +2,7 @@
 # builds a signed, notarized universal .dmg into release/.
 # The name comes from package.json "productName"; the icon is resources/icon.png.
 
-# Keep the existing bundle ID until the desktop identity and migration are settled.
-appId: app.learningspace.desktop
+appId: com.askaboard.app
 
 directories:
   output: release
@@ -25,7 +24,7 @@ extraResources:
   - from: resources
     to: resources
 
-# The stdio relay runs outside the app: the shim (~/.learning-space/bin/learning-space)
+# The stdio relay runs outside the app: the shim (~/.askaboard/bin/askaboard)
 # hands this file to the app's binary as Node (src/main/agent-home.ts), so it
 # must be a real file, at app.asar.unpacked/out/relay/index.js.
 asarUnpack:

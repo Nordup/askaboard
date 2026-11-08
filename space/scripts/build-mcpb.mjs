@@ -1,4 +1,4 @@
-// Build resources/learning-space.mcpb: the Claude app (desktop chat) extension.
+// Build resources/askaboard.mcpb: the Claude app (desktop chat) extension.
 // It holds only a manifest (and resources/icon.png when it exists). The
 // manifest points at the shim the app writes on launch, so the extension runs
 // the same stdio relay as Claude Code and Codex.
@@ -6,8 +6,9 @@
 // The zip is deterministic: fixed file order, fixed mtimes, no extra fields
 // (TZ=UTC zip -X). Usage: node scripts/build-mcpb.mjs  (npm run build:mcpb)
 //
-// The plugin repo (learning-space-plugins) owns the real artifact. When it is
-// checked out next to this repo, the script copies that file; otherwise it
+// The plugin repo (askaboard-plugins; the local folder is still named
+// learning-space-plugins) owns the real artifact. When it is checked out next
+// to this repo, the script copies that file; otherwise it
 // builds this stand-in.
 import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
@@ -17,13 +18,13 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-const out = join(root, 'resources', 'learning-space.mcpb')
+const out = join(root, 'resources', 'askaboard.mcpb')
 const icon = join(root, 'resources', 'icon.png')
-const shim = '${HOME}/.learning-space/bin/learning-space'
+const shim = '${HOME}/.askaboard/bin/askaboard'
 
 // The plugin repo owns the real artifact (with icon and long description).
 // When it is checked out next to this repo, ship that file instead.
-const pluginArtifact = resolve(root, '../../learning-space-plugins/claude-extensions/learning-space/dist/learning-space.mcpb')
+const pluginArtifact = resolve(root, '../../learning-space-plugins/claude-extensions/askaboard/dist/askaboard.mcpb')
 if (existsSync(pluginArtifact)) {
   copyFileSync(pluginArtifact, out)
   console.log(`copied ${pluginArtifact} -> ${out}`)
@@ -32,11 +33,11 @@ if (existsSync(pluginArtifact)) {
 
 const manifest = {
   manifest_version: '0.3',
-  name: 'learning-space',
-  display_name: 'Learning Space',
+  name: 'askaboard',
+  display_name: 'Askaboard',
   version: pkg.version,
   description: pkg.description,
-  author: { name: 'Learning Space' },
+  author: { name: 'Askaboard' },
   ...(existsSync(icon) ? { icon: 'icon.png' } : {}),
   server: {
     type: 'binary',
@@ -46,7 +47,7 @@ const manifest = {
   compatibility: { platforms: ['darwin', 'linux'] }
 }
 
-const stage = mkdtempSync(join(tmpdir(), 'learning-space-mcpb-'))
+const stage = mkdtempSync(join(tmpdir(), 'askaboard-mcpb-'))
 try {
   const files = ['manifest.json']
   writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)

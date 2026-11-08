@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The agent bench: run the fixed scenarios (scenarios.mjs) with a real agent
- * client against an own Learning Space instance, and write the measurements.
+ * client against an own Askaboard instance, and write the measurements.
  * This is a measurement, not a test: nothing passes or fails.
  *
  *   node scripts/bench/run.mjs [--scenarios S1,S2,S3,S4,P1,P2,P3] [--model opus] [--client claude|codex]
@@ -31,7 +31,7 @@
  * --client codex runs `codex exec --json` (the founder's model, gpt-6.1-sol at
  * reasoning effort medium, unless --model / --effort say otherwise) with a
  * scratch CODEX_HOME (--codex-home) whose config.toml holds only the bench's
- * learning-space server. Its auth.json is a symlink to ~/.codex/auth.json (the
+ * askaboard server. Its auth.json is a symlink to ~/.codex/auth.json (the
  * runner makes it when it is missing). Follow-ups resume the thread by its id;
  * turn 0 of P scenarios uses the same model at effort low. Codex reports no
  * cost: the metrics hold its token usage, and brief_loaded says whether the
@@ -45,7 +45,7 @@
  * web tools unless --no-web. The agent output is agent-claude.json or
  * agent-codex.jsonl, agent-stderr.txt (Codex also agent-reply.md).
  *
- * The agent gets the plugins' prompt hook (UserPromptSubmit runs `learning-space news
+ * The agent gets the plugins' prompt hook (UserPromptSubmit runs `askaboard news
  * --client <label>` from the run's own HOME, at --mcp-port), so the board news reaches
  * each prompt as it does with the installed plugins; --no-news-hook leaves it out.
  * Claude gets it through --settings, Codex through a -c hooks override with
@@ -97,7 +97,7 @@ const opts = {
   mcpPort: Number(option('--mcp-port', '47870')),
   debugPort: Number(option('--debug-port', '9470')),
   timeoutMs: Number(option('--timeout-min', '15')) * 60_000,
-  // The board-news prompt hook (`learning-space news`), as the plugins install it. --no-news-hook measures without it.
+  // The board-news prompt hook (`askaboard news`), as the plugins install it. --no-news-hook measures without it.
   newsHook: !flag('--no-news-hook'),
   // The agent's web tools (Claude WebSearch and WebFetch, Codex --search). --no-web takes them away.
   web: !flag('--no-web')
@@ -144,10 +144,10 @@ function portInUse(port) {
  */
 function agentsWithEmptyBrief() {
   const template = readFileSync(join(TEMPLATE, 'AGENTS.md'), 'utf8')
-  const placeholder = '<!-- learning-space brief: placeholder (the app puts the brief here at setup) -->'
+  const placeholder = '<!-- askaboard brief: placeholder (the app puts the brief here at setup) -->'
   if (!template.includes(placeholder)) throw new Error('The AGENTS.md template has no brief placeholder.')
   const sha = createHash('sha256').update('').digest('hex').slice(0, 12)
-  const block = `<!-- learning-space brief: start (managed by the Learning Space app; edits here stop its updates) sha=${sha} -->\n<!-- learning-space brief: end -->`
+  const block = `<!-- askaboard brief: start (managed by the Askaboard app; edits here stop its updates) sha=${sha} -->\n<!-- askaboard brief: end -->`
   return template.replace(placeholder, block)
 }
 
@@ -289,7 +289,7 @@ async function runAgent(scenario, work, dir, model = opts.model, effort = opts.e
 /** Was the learning folder's brief (AGENTS.md) in the agent's context? Looks at the context items, not at tool results. */
 function briefInRollout(file) {
   if (!file) return null
-  const marker = 'learning-space brief: start'
+  const marker = 'askaboard brief: start'
   for (const line of readFileSync(file, 'utf8').split('\n')) {
     if (!line.includes(marker)) continue
     try {

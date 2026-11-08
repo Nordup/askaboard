@@ -12,7 +12,7 @@ import { agentHomeDir } from './agent-home'
  *   <root>/<YYYY-MM-DD>/<HHMMSS>-<client>-<shortSessionId>-<n>.png   screenshots the agent received
  *   <root>/<YYYY-MM-DD>/learner-edits.jsonl                          learner edits, for all sessions and boards
  *
- * The root is ~/.learning-space/traces, or $SPACE_TRACE_DIR. Events (one JSON
+ * The root is ~/.askaboard/traces, or $SPACE_TRACE_DIR. Events (one JSON
  * object per line, `type` first):
  *
  *   session_open   t, session_id, client {name, version}, folder, board

@@ -6,8 +6,8 @@
 //   node --no-warnings scripts/voice/make-samples.mjs        # all clips (Node 23.6+: it runs the .ts module)
 //   node --no-warnings scripts/voice/make-samples.mjs Kore   # only the voices named
 //
-// LEARNING_SPACE_VOICE_HOST changes the server, as in the app. The server counts its daily cap by the install id;
-// this script sends LEARNING_SPACE_VOICE_USER, by default "voice-sample-build".
+// ASKABOARD_VOICE_HOST changes the server, as in the app. The server counts its daily cap by the install id;
+// this script sends ASKABOARD_VOICE_USER, by default "voice-sample-build".
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,7 +18,7 @@ import { PACES, SAMPLE_DIR, SAMPLE_TEXT, VOICES, sampleFile, speechRequest, voic
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'resources', SAMPLE_DIR)
 /** AAC at 40 kbit/s: the server's 24 kHz mono speech stays clear, about 30 KB a clip. */
 const BITRATE = '40000'
-const user = process.env.LEARNING_SPACE_VOICE_USER?.trim() || 'voice-sample-build'
+const user = process.env.ASKABOARD_VOICE_USER?.trim() || 'voice-sample-build'
 const voices = process.argv.length > 2 ? process.argv.slice(2) : [...VOICES]
 const scratch = mkdtempSync(join(tmpdir(), 'voice-samples-'))
 mkdirSync(OUT, { recursive: true })

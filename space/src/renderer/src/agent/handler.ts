@@ -98,7 +98,7 @@ function canvasBackground(): string {
 }
 
 function requireBoard(context: AgentContext): { path: string; board: BoardHandle; log: ChangeLog | null } {
-  if (!context.folder) throw new Error('No learning folder is open in Learning Space. Ask the learner to open one.')
+  if (!context.folder) throw new Error('No learning folder is open in Askaboard. Ask the learner to open one.')
   if (!context.openPath || !context.board) {
     throw new Error(
       context.boards.length
@@ -373,7 +373,7 @@ function screenshotPlan(context: AgentContext, params: AgentMethods['screenshotP
 }
 
 async function openBoard(context: AgentContext, path: string): Promise<void> {
-  if (!context.folder) throw new Error('No learning folder is open in Learning Space.')
+  if (!context.folder) throw new Error('No learning folder is open in Askaboard.')
   if (!context.boards.includes(path)) {
     throw new Error(
       `"${path}" is not a board in this folder. Boards: ${context.boards.length ? context.boards.join(', ') : '(none)'}.`
@@ -487,7 +487,7 @@ export async function handleAgentRequest(request: AgentRequest, getContext: () =
       return { path: context.openPath, unsaved: context.unsaved, digest: digestBoard(nodes), groups, ...(matches ? { matches } : {}) }
     }
     case 'boardChange': {
-      if (!context.folder) throw new Error('No learning folder is open in Learning Space.')
+      if (!context.folder) throw new Error('No learning folder is open in Askaboard.')
       return context.changeBoard(request.params as AgentMethods['boardChange']['params'])
     }
     case 'openBoard': {

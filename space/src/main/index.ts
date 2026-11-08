@@ -20,6 +20,7 @@ import { refreshBriefBlock } from './brief-block'
 import { cleanFolder, cleanTraces, limitDiskCache, removedBoardData, trimCodeCache } from './storage'
 import { boardIdOf } from './scene-store'
 import { installShim, writeRelayState } from './agent-home'
+import { migrateFromLearningSpace } from './migrate'
 import { dropRecovery, keepUnsaved, moveRecovery, readRecovery } from './recovery'
 import { agentClients, connectAgentClient, isAgentClientAction, isAgentClientId } from './connect'
 import * as store from './state'
@@ -640,7 +641,7 @@ function createWindow(): BrowserWindow {
     minWidth: MIN_PAGE[0],
     minHeight: MIN_PAGE[1],
     show: false,
-    title: 'Learning Space',
+    title: 'Askaboard',
     backgroundColor: BACKGROUND,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     // Centred on the 44 CSS px title row at the window's Interface Size (applyInterfaceSize moves them when it changes).
@@ -726,6 +727,7 @@ async function capture(win: BrowserWindow, path: string): Promise<void> {
   if (captureQuit) app.quit()
 }
 
+migrateFromLearningSpace()
 store.loadState()
 
 /**

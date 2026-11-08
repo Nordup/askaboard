@@ -12,7 +12,7 @@ import { getAgentLook, setAgentLook } from './state'
  * and board, the app keeps the board seq up to which the learner's changes
  * were delivered, in memory and in userData/state.json, so it survives a new
  * MCP connection and an app restart. News is delivered when it is sent: as the
- * first line of a tool result, or through GET /news (the `learning-space news`
+ * first line of a tool result, or through GET /news (the `askaboard news`
  * prompt hook). A look (get_screenshot, get_changes) also counts as delivered.
  * The next news covers only the learner's changes after that. So the hook,
  * which runs before the prompt, and the tool results of the same turn never

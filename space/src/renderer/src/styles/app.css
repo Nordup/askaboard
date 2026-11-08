@@ -322,7 +322,7 @@ button:focus-visible {
   margin-right: calc(var(--space-3) - var(--space-2));
 }
 
-/* No board open: the folder name, or "Learning Space" without a folder. */
+/* No board open: the folder name, or "Askaboard" without a folder. */
 .topbar__folder {
   overflow: hidden;
   color: var(--text-secondary);

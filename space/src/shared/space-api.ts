@@ -205,7 +205,7 @@ export interface SettingsSnapshot {
     paces: { id: string; label: string }[]
     local: LocalVoiceStatus
     localDownloadMb: number
-    /** A Gemini key is saved in ~/.learning-space/.env. */
+    /** A Gemini key is saved in ~/.askaboard/.env. */
     keySaved: boolean
   }
   about: {
@@ -623,8 +623,8 @@ export type AgentClientId = 'claude-code' | 'codex' | 'claude-app'
 
 /**
  * One agent app in the popover.
- * plugin: the Learning Space plugin is installed and enabled.
- * manual: a hand-made `learning-space` MCP entry, no plugin.
+ * plugin: the Askaboard plugin is installed and enabled.
+ * manual: a hand-made `askaboard` MCP entry, no plugin.
  * both: the plugin and a manual entry (the tools appear twice).
  * connected: Claude Desktop (chat) has the extension (a folder-name heuristic).
  * available: the app is installed and not connected. missing: the app was
@@ -654,7 +654,7 @@ export interface AgentClientStatus {
 }
 
 export interface AgentClientsStatus {
-  /** ~/.learning-space/bin/learning-space */
+  /** ~/.askaboard/bin/askaboard */
   shimPath: string
   clients: AgentClientStatus[]
 }
@@ -744,7 +744,7 @@ export interface SpaceApi {
   removeLocalVoice(): Promise<void>
   /** A short sample in the current model, voice and pace: the cloud voice's bundled AAC clip, or a WAV of the local voice. */
   playVoiceSample(): Promise<{ bytes: Uint8Array; type: string }>
-  /** Write GEMINI_API_KEY into ~/.learning-space/.env, or remove it. */
+  /** Write GEMINI_API_KEY into ~/.askaboard/.env, or remove it. */
   saveGeminiKey(key: string): Promise<void>
   removeGeminiKey(): Promise<void>
   /** A scene's voice failed and the scene plays silent: at most once a day per kind per app run. */

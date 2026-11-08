@@ -11,7 +11,7 @@ import { SettingRow } from './settings/parts'
  * an action is main's (AgentClientStatus.last, texts in main/connect.ts), so both places show the same one.
  */
 
-export const MANUAL_SETUP_URL = 'https://github.com/Nordup/learning-space-plugins#manual-setup'
+export const MANUAL_SETUP_URL = 'https://github.com/Nordup/askaboard-plugins#manual-setup'
 
 /** The agent apps, in list order. Internal ids stay as connect.ts names them. */
 export const CLIENT_NAMES: Record<AgentClientId, string> = {
@@ -23,9 +23,9 @@ export const CLIENT_ORDER: AgentClientId[] = ['claude-code', 'claude-app', 'code
 
 /** Settings > Agents: what the install adds to each app. */
 const CLIENT_DESCRIPTIONS: Record<AgentClientId, string> = {
-  'claude-code': 'The Learning Space plugin for Claude Code',
-  'claude-app': 'The Learning Space extension for Claude Desktop',
-  codex: 'The Learning Space plugin for ChatGPT and Codex'
+  'claude-code': 'The Askaboard plugin for Claude Code',
+  'claude-app': 'The Askaboard extension for Claude Desktop',
+  codex: 'The Askaboard plugin for ChatGPT and Codex'
 }
 
 export function isInstalled(client: AgentClientStatus): boolean {
