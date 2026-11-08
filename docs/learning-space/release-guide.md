@@ -8,8 +8,8 @@ local-only rule and authorized Vercel deployment on 2026-11-08.
 ## Where each part goes
 
 - **App and source:** this repository. The current Git remote is
-  `Nordup/askaboard` (renamed from `Nordup/askaboard` on 2026-11-08,
-  still private). The plugin remains in the separate `learning-space-plugins` repo.
+  `Nordup/askaboard` (renamed from `Nordup/math-tutor` on 2026-11-08,
+  still private). The plugin is in the public `Nordup/askaboard-plugins` repo.
 - **Mac download:** planned for GitHub Releases on the public app repo. A
   release holds a versioned tag, release notes and the signed DMG as a
   release asset. Do not commit the DMG to Git or Git LFS.
@@ -18,8 +18,9 @@ local-only rule and authorized Vercel deployment on 2026-11-08.
   226 MiB file itself. The existing `whiteboardai` project builds
   `apps/website` from `Nordup/askaboard`; pushes trigger deployments and
   `main` is production. `www.askaboard.com` redirects to the apex domain.
-- **Voice and analytics:** the existing private backend on Hetzner stays
-  separate. It is not the file download host.
+- **Voice and analytics:** `https://api.askaboard.com` reaches the private
+  backend on Hetzner; the old sslip.io host still serves existing builds.
+  The backend is not the download host. Its local Git repo has no remote.
 
 Use one universal download by default (D14). It runs natively on Apple
 Silicon and Intel. A build on 2026-11-07 made a 226 MiB universal DMG;
@@ -129,8 +130,8 @@ that the DMG itself passes the disk-image check.
    a manually uploaded asset. `OWNER`, `REPO` and `ASSET-NAME` are
    placeholders here; do not ship this example URL. Check the link from a
    signed-out browser and confirm it downloads the correct version.
-5. Deploy the website to Vercel. Verify the live download and plugin
-   instructions after publication.
+5. Push the website link change to `main`; Vercel deploys it. Verify the
+   live download and plugin instructions after publication.
 
 Later, automate the approved flow after GitHub, release names and hosting are
 settled: a reproducible build on an appropriate macOS runner, protected signing
