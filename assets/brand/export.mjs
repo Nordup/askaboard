@@ -107,10 +107,15 @@ const web = join(exportsDir, 'web')
 const publicDir = join(root, 'apps/website/public')
 const transparent = squareMark(1024, 880)
 const backed = squareMark(1024, 880, mark, `<rect width="1024" height="1024" fill="${ink}"/>`)
+// Keep the entire mark inside a circular avatar crop, including at the corners
+// of its rectangular viewBox.
+const avatar = squareMark(1024, 700, mark, `<rect width="1024" height="1024" fill="${ink}"/>`)
 const appIcon = dockTile(1024, 100, 182, 672)
 
 await save(join(logo, 'mark-transparent.svg'), transparent)
 await save(join(logo, 'mark-dark.svg'), backed)
+await save(join(logo, 'avatar-dark.svg'), avatar)
+await save(join(logo, 'avatar-dark-1024.png'), await png(avatar, 1024, { opaque: true }))
 await save(join(mac, 'Askaboard.svg'), appIcon)
 for (const [name, color] of [['black', '#000000'], ['white', '#ffffff']]) {
   const source = solidMark(color)

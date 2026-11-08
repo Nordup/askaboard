@@ -9,6 +9,7 @@ uses its own interface font for the header label.
 | --- | --- | --- |
 | Website header, docs, slides, or print | [Mark source](mark.svg), [light-text lockup](exports/logo/lockup-light-text.svg), [dark-text lockup](exports/logo/lockup-dark-text.svg) | Scalable SVG. Both lockups also have 1224 × 246 transparent PNGs. |
 | Artwork and profile images | [Logo exports](exports/logo/) | Square PNGs at 16, 32, 64, 128, 256, 512 and 1024 px, with either alpha or an opaque dark field. Black and white variants have SVG and 512 px transparent PNGs. |
+| Circular profile and project avatars | [Avatar PNG](exports/logo/avatar-dark-1024.png), [SVG](exports/logo/avatar-dark.svg) | 1024 × 1024 dark square with extra space around the mark for a circular crop. |
 | Mac Dock, Finder and release packaging | [Packaging PNG](../../apps/desktop/resources/icon.png), [Mac icon source](exports/mac/Askaboard.svg), [ICNS](exports/mac/Askaboard.icns) | 1024 × 1024 PNG with transparent outer padding. ICNS contains Apple’s 16, 32, 128, 256 and 512 pt representations at 1× and 2×. Electron Builder uses the packaging PNG. |
 | Future macOS status item | [Template](exports/mac/AskaboardTemplate.svg), [1× PNG](exports/mac/AskaboardTemplate.png), [2× PNG](exports/mac/AskaboardTemplate@2x.png) | Black and alpha. The 16 and 32 px PNGs share the Electron template basename and let macOS tint the mark. |
 | Website tab and Apple home screen | [SVG favicon](../../apps/website/app/icon.svg), [ICO fallback](exports/web/favicon.ico), [Apple touch icon](../../apps/website/public/apple-touch-icon.png) | 32 px SVG, 16/32/48 px ICO, 180 px opaque touch PNG. The website serves the SVG and touch icon. |
@@ -25,9 +26,7 @@ node assets/brand/export.mjs
 The exporter uses the website's existing Sharp dependency and macOS
 `iconutil`. Commit source changes with their matching exports. The generated
 brand assets are ready for use. The Mac app has no status item today. The
-first public Mac release still needs its app identity, version, signed and
-notarized DMG, and a clean-Mac install check. The website still follows the
-local-only deployment rule in [AGENTS.md](../../AGENTS.md).
+first public Mac release is published; a clean-Mac install check remains.
 
 Release references: [Apple app icons](https://developer.apple.com/design/human-interface-guidelines/app-icons),
 [Apple iconsets](https://developer.apple.com/library/archive/documentation/GraphicsAnimation/Conceptual/HighResolutionOSX/Optimizing/Optimizing.html),
