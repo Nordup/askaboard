@@ -168,7 +168,7 @@ unless the learner edited it.
 ## Usage data
 
 The app sends product usage events to our own server at
-`135-181-38-113.sslip.io`. The server keeps a copy of each event and forwards
+`api.askaboard.com`. The server keeps a copy of each event and forwards
 it to PostHog (US). The code is `src/main/analytics.ts`.
 
 The events:
@@ -197,8 +197,10 @@ installs of one person, the app also sends the SHA-256 hash of your OpenAI
 account id and of your Claude account id when you are signed in. The app
 never sends a raw id.
 
-Your IP address reaches our server and PostHog. They use it to find your
-approximate location.
+Your IP address is used only to find your country and city. Our server does
+not store it with the events, and PostHog discards it after the lookup. For
+the daily limit of the free voice, the server keeps your IP address for 7
+days, then deletes it.
 
 To turn usage data off, set `ASKABOARD_TELEMETRY_ENABLED=false` in the
 environment of the app. A dev run (`npm run dev`) sends nothing unless you set

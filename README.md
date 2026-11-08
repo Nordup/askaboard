@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/Nordup/askaboard/releases/latest">Download for Mac</a> ·
   <a href="#connect-your-agent">Connect your agent</a> ·
-  <a href="#privacy">Privacy</a>
+  <a href="PRIVACY.md">Privacy</a>
 </p>
 
 <p align="center">Free and open source · macOS, Apple silicon and Intel</p>
@@ -49,19 +49,6 @@ The app connects agents for you (step 3). To do it by hand:
 
 All the details are in [`Nordup/askaboard-plugins`](https://github.com/Nordup/askaboard-plugins).
 
-## Privacy
-
-Your boards are files in your folder, on your Mac. The app shows them only
-to the agent you connect.
-
-- **Usage data.** The app sends basic usage events to our server, which
-  forwards them to PostHog: for example, that a board opened or a scene
-  played. The events never include board content, scene text, spoken lines,
-  file names or folder paths. Each event has a hashed id, never a raw one.
-  To turn usage data off, set `ASKABOARD_TELEMETRY_ENABLED=false` in the
-  app's environment. The full list of events is in
-  [`apps/desktop/README.md`](apps/desktop/README.md#usage-data).
-
 ## Run from source
 
 Askaboard is an Electron app in [`apps/desktop/`](apps/desktop/). It also runs on Linux
@@ -80,6 +67,7 @@ built.
 
 ## For agents and contributors
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) tells how to run, check and send a change.
 - [`AGENTS.md`](AGENTS.md) is the start for an AI agent that works in this
   repo: where things live, how to run them, and the rules.
 - [`docs/`](docs/README.md) has the design

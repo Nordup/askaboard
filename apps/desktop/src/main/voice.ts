@@ -328,7 +328,9 @@ async function requestAudio(speaker: Exclude<Speaker, { source: 'local' }>, text
               model: MODEL,
               input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
               response_format: { type: 'audio' },
-              generation_config: { speech_config: [{ voice }] }
+              generation_config: { speech_config: [{ voice }] },
+              // Gemini keeps no copy of the request or the response (the default is store: true)
+              store: false
             })
           }
         ]
