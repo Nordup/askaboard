@@ -20,7 +20,8 @@ local-only rule and authorized Vercel deployment on 2026-11-08.
   `main` is production. `www.askaboard.com` redirects to the apex domain.
 - **Voice and analytics:** `https://api.askaboard.com` reaches the private
   backend on Hetzner; the old sslip.io host still serves existing builds.
-  The backend is not the download host. Its local Git repo has no remote.
+  The backend is not the download host. Its Git remote is the private
+  `Nordup/askaboard-backend` repository.
 
 Use one universal download by default (D14). It runs natively on Apple
 Silicon and Intel. A build on 2026-11-07 made a 226 MiB universal DMG;
