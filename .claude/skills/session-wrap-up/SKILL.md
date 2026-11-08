@@ -15,8 +15,7 @@ Two repos get updates:
 - **The private notes repo** (`../askaboard-notes/`) holds the status, the
   plans, the roadmap, research, logs, drafts and history.
 - **This public repo** holds reference docs only: decisions and their
-  reasons, constraints and traps that the code cannot show. It names no
-  competitors and quotes no internal text of other products.
+  reasons, constraints and traps that the code cannot show.
 
 Write in plain, short English (the founder's global rule: ASD-STE100 style).
 Delegate reading to Haiku subagents; write the docs yourself.
@@ -51,9 +50,9 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 | File | Rule |
 | --- | --- |
 | `../askaboard-notes/launch-plan.md` / `work-map.md` (private) | The status, the roadmap and the open work. Mark finished items, and add new open items with the founder's words. |
-| `../askaboard-notes/` other files (private) | Research, logs, studies of other products, strategy, drafts and screenshots go here, never to the public repo. |
+| `../askaboard-notes/` other files (private) | Research, logs, strategy, drafts and screenshots go here, never to the public repo. |
 | `docs/README.md` | Keep the reading order and the glossary current. It has no status section. |
-| `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. Write the reason in our own terms: name no competitor, and quote no internal text of another product. |
+| `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. |
 | `working-guide.md` | Add new pitfalls, check recipes and founder preferences. Remove recipes that no longer work. |
 | `architecture.md` | Change only when structure changed (a process, a module's job, a data flow, a file location). No line numbers. |
 | `design-system.md` | Add new shared parts, tokens and approved screens. Same commit as the CSS change. |
