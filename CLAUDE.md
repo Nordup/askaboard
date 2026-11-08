@@ -19,4 +19,4 @@
 - **Implementation briefs for `apps/desktop/`** name: the files, the rules above, the design system (for UI), own ports / scratch `HOME` / `--user-data-dir` / scratch folders, a build in a scratch copy while the founder's app runs, "stop only exact PIDs", and the acceptance checks. `docs/working-guide.md` has the check recipes.
 - **End of a working session:** run the `session-wrap-up` skill (`.claude/skills/session-wrap-up/SKILL.md`) to update the docs and remove stale lines.
 
-- The paused tutor and the iPad client live in git history only (D24). Paper's agent interface (for reference when designing Askaboard tools) is captured in `docs/reference/paper/` (local only).
+- The paused tutor and the iPad client live in git history only (D24). Notes on Paper's agent interface are local only (`docs/reference/`, git-ignored).

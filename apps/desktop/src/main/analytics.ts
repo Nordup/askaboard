@@ -3,7 +3,7 @@ import { app } from 'electron'
 import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
 
 /**
- * Usage data (decision P24). The delivery copies T3 Code's telemetry/AnalyticsService.ts: an
+ * Usage data (decision P24). The delivery is adapted from T3 Code (MIT; THIRD_PARTY_NOTICES.md): an
  * in-memory buffer, a flush every 10 s in batches of 20, retries with backoff, one short flush at
  * quit. Events go as PostHog batches to our ingest (P25), which keeps a copy and forwards them.
  *

@@ -43,8 +43,9 @@ talk costs less than a pull request that we cannot merge.
 ## Agents and docs
 
 - An AI agent that works in this repo reads [`AGENTS.md`](AGENTS.md) first.
-- The working docs (plans, decisions, design and guides) are in `docs/`.
-  Start at [`docs/README.md`](docs/README.md).
+- The reference docs (architecture, decisions, design and guides) are in
+  `docs/`. Start at [`docs/README.md`](docs/README.md).
+- Open work is in the [issues](https://github.com/Nordup/askaboard/issues).
 
 ## License
 

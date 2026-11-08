@@ -13,7 +13,7 @@ and what went wrong before.
 - Wants to stay in control of product decisions. Research the options, explain
   them with concrete learning examples, recommend one, and let the founder
   choose. Ask with buttons, not long prose.
-- Design taste: dark, calm, compact, IDE-like (Codex, Claude Desktop, Paper).
+- Design taste: dark, calm, compact, IDE-like (as the Codex app and Claude Desktop).
   Rejects anything with too much text, too many buttons, or a look that does
   not match the rest of the app. **Show a mockup first** (the inline widget
   tool works well), build only after approval, and match the mockup exactly,
@@ -26,7 +26,8 @@ and what went wrong before.
 - Wants to talk through **how** a fix will be built before it is built:
   propose the design, listen, and let the founder's picture decide.
 - For text that agents read, follow [`writing-agent-text.md`](writing-agent-text.md).
-- Agent text changes start as a draft in `docs/history/drafts/`, sent
+- Agent text changes start as a draft in the private notes repo
+  (`../askaboard-notes/history/drafts/`), sent
   to the founder, applied only after "approved", then measured in the lab.
   When asked to fix one passage, change only that passage, in the voice of
   the whole brief, and read the whole brief first.
@@ -51,17 +52,17 @@ and what went wrong before.
   the voice, the fix came first and the generation for all scenes came after.
 - The MacBook has little free storage. A new kind of file that the app writes
   needs an owner for its clean-up from the first commit (T35).
-- UI taste (2026-11-06/07): the ChatGPT and Claude Code desktop apps are the
-  references. Soft, wide shadows with no dark band; corners a little round;
+- UI taste (2026-11-06/07): soft, wide shadows with no dark band; corners a little round;
   no outline on status items or buttons (a soft fill instead); no empty
   strips or gaps that look unused; controls of one family look alike (a
-  button looks like the dropdown next to it). The founder sends screenshots
-  of other apps: copy the feel, not the pixels, and show a mockup first.
+  button looks like the dropdown next to it). When the founder sends a
+  screenshot for a feel, take the feel, not the pixels, and show a mockup first.
 
 ## The workflow that worked
 
 1. **Plan the step** with the founder; record decisions in
-   [`decisions.md`](decisions.md) and status in [`plan.md`](history/plan.md).
+   [`decisions.md`](decisions.md) and status in the private launch plan
+   (`../askaboard-notes/launch-plan.md`).
 2. **Research with Haiku agents** in parallel (one narrow question each,
    sources required, "NOT FOUND" instead of guesses).
 3. **Implement with one Opus agent** (medium effort) per area; two at once
@@ -72,7 +73,7 @@ and what went wrong before.
    screenshots for design judgment.
 5. **Measure behaviour changes:** for anything that changes how agents act
    (the brief, tool descriptions, perception), run the bench twice before and
-   after (see [`baseline.md`](baseline.md)), and let the founder try a real
+   after (see `apps/desktop/scripts/perf/README.md`), and let the founder try a real
    session.
 6. **Commit per step** with a clear message; push when the founder asks.
 7. Resume the same implementer with `SendMessage` for follow-ups on its own
@@ -98,7 +99,7 @@ and what went wrong before.
 | A real plugin (Codex) | The lab connects from config, so it misses plugin bugs (I30). Copy `../learning-space-plugins` without `.git` to a scratch folder and set the lab port in `plugins/askaboard/mcp*.json`. In a scratch `CODEX_HOME` add `[marketplaces.learning-space]` with `source_type = "local"` and that folder, and `[plugins."learning-space@learning-space"]` with `enabled = true`, then run `codex plugin add learning-space@learning-space`. Put a `codex` wrapper first on `PATH`: it swaps the `[mcp_servers.learning-space]` block that `council.mjs` writes for those lines and runs the app's Codex with `-c features.code_mode_host=true` (macOS: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`; Linux: the `codex` command, `~/.local/bin/codex` on the founder's Linux machine; the plugin path is not checked there). Run `council.mjs --codex-home <home>`. The rollout in `<home>/sessions/` shows what the model received. Keep the scratch files out of the repo. |
 | Measure perception | `node scripts/bench/run.mjs --scenarios P1,P2,P3 --model opus --out <dir>`: a busy board, a prior look, then new learner work and a new connection (about 5 minutes per run). |
 | Board news hook in the bench | On by default: the agent gets the plugins' `UserPromptSubmit` hook against the run's own app (Claude: `--settings`; Codex: `-c hooks.UserPromptSubmit=…` with `--dangerously-bypass-hook-trust`). `--no-news-hook` measures without it. `metrics.json` → `news_in_prompt` (Codex) holds the line that reached the prompt. Board news is delivered once per agent app and board: after the hook sent it, the tool results of that turn do not repeat it. |
-| Read a real session of the founder | Askaboard trace: `~/.askaboard/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
+| Read a real session of the founder | Askaboard trace: `~/.askaboard/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; each voice request arrives as a user message from the voice model. The files hold base64 images: parse line by line, never print them. Read only. |
 | Keep the founder's focus | Launch with `SPACE_NO_FOCUS=1`. On macOS, after launching, also `osascript -e 'tell application "Claude" to activate'`. |
 | Settings and the voice (2026-11-06) | Launch with `SPACE_FOLDER` (the welcome screen has no Settings route), then `node scripts/drive.mjs --port <debug port> menu settings`. A Kokoro install check needs a scratch `HOME` (it writes about 370 MB to `~/.askaboard/models/kokoro/`): delete that folder after the check. A check agent cannot hear: confirm playback from the renderer (an audio element's `currentTime` moves after `play()`). |
 | UI checks (2026-11-07) | `drive.mjs`: `hover x y` (tooltips), `menu <id>` / `menu-state <id>` (CDP keys never reach a menu accelerator such as ⌘K or ⌘[, so drive the menu item), `select <css> [label]` (the app's dropdown), `element-rect <css>` for measured gaps. Full screen without moving the window to a new desktop Space: `SPACE_FAKE_FULL_SCREEN=1` with `SPACE_REMOTE_DEBUG`. Never put a check window into real full screen. |
@@ -170,7 +171,8 @@ whole set every time, and one run per model is usually enough.
 Use `--brief-only` to measure what a real session sees (the brief through
 `AGENTS.md`, no council purpose text); without it the prompt starts with
 `council/purpose.md`, which says the purpose out loud. Compare with the
-earlier runs of the same task in `history/live-drawing-log.md`.
+earlier runs of the same task in the private notes
+(`../askaboard-notes/history/live-drawing-log.md`).
 
 Use `--no-code` (also on `lab.mjs start`) to measure a run without worlds:
 the app starts with `LS_LAB_NO_CODE=1`, scenes have no `world()`, and the

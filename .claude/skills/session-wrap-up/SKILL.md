@@ -1,22 +1,30 @@
 ---
 name: session-wrap-up
-description: Update and clean the Learning Space documentation at the end of a working session — record decisions, research, lessons and status, and remove outdated lines.
+description: Update and clean the Askaboard documentation at the end of a working session — record decisions and traps in the public docs, and status, plans, research and logs in the private notes repo; remove outdated lines.
 when_to_use: When the founder says "wrap up", "update the docs", "document what we did", "end of session", or after a step of the plan is finished.
 ---
 
 # Session wrap-up
 
-Goal: the next agent can read `docs/README.md` and know the
-current state, the reasons, and what to do next. Nothing in the docs
-contradicts the code or another doc.
+Goal: the next agent can read `docs/README.md` and
+`../askaboard-notes/launch-plan.md` and know the current state, the reasons,
+and what to do next. Nothing in the docs contradicts the code or another doc.
+
+Two repos get updates:
+
+- **The private notes repo** (`../askaboard-notes/`) holds the status, the
+  plans, the roadmap, research, logs, drafts and history.
+- **This public repo** holds reference docs only: decisions and their
+  reasons, constraints and traps that the code cannot show. It names no
+  competitors and quotes no internal text of other products.
 
 Write in plain, short English (the founder's global rule: ASD-STE100 style).
 Delegate reading to Haiku subagents; write the docs yourself.
 
 ## 1. Gather what changed
 
-1. Find the last wrap-up: the date in the "Status (…)" line of
-   `docs/README.md`.
+1. Find the last wrap-up: the date of the last `notes: session wrap-up`
+   commit in `../askaboard-notes/` (`git log --oneline -5` there).
 2. `git log --oneline --since=<that date>` on the current branch, and the same
    in `../learning-space-plugins` if it exists.
 3. List, from the conversation and the log:
@@ -33,7 +41,7 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 > Read-only audit of `docs/*.md`, `AGENTS.md`, `CLAUDE.md`,
 > `docs/README.md`, `apps/desktop/README.md`, `apps/desktop/resources/learning-folder/AGENTS.md`,
 > `apps/desktop/resources/guide.md`, `apps/desktop/resources/instructions.md`, `apps/desktop/src/main/mcp.ts` (tool descriptions), and
-> `../learning-space-plugins/README.md`. CURRENT STATE: <the list from step 1>.
+> `../learning-space-plugins/README.md`, and `../askaboard-notes/launch-plan.md`. CURRENT STATE: <the list from step 1>.
 > Report outdated or contradictory lines with file:line and what is true now,
 > and missing sections a newcomer would need. Check tool names against
 > `apps/desktop/src/main/mcp.ts` and file paths against the tree. Max 80 lines.
@@ -42,25 +50,29 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 
 | File | Rule |
 | --- | --- |
-| `docs/README.md` | Update the short status and its date. Put details in the linked doc, not here. Keep the reading order and glossary current. |
-| `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. |
-| `launch-plan.md` / `work-map.md` | The roadmap and the open work. Mark finished items, and add new open items with the founder's words. |
+| `../askaboard-notes/launch-plan.md` / `work-map.md` (private) | The status, the roadmap and the open work. Mark finished items, and add new open items with the founder's words. |
+| `../askaboard-notes/` other files (private) | Research, logs, studies of other products, strategy, drafts and screenshots go here, never to the public repo. |
+| `docs/README.md` | Keep the reading order and the glossary current. It has no status section. |
+| `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. Write the reason in our own terms: name no competitor, and quote no internal text of another product. |
 | `working-guide.md` | Add new pitfalls, check recipes and founder preferences. Remove recipes that no longer work. |
 | `architecture.md` | Change only when structure changed (a process, a module's job, a data flow, a file location). No line numbers. |
 | `design-system.md` | Add new shared parts, tokens and approved screens. Same commit as the CSS change. |
-| `docs/history/` | Finished plans, logs, research and drafts. Do not rewrite them. Change only a status note or a link path. Never rewrite the founder's words (`history/idea.md` and the other idea files). |
+| `../askaboard-notes/history/` (private) | Finished plans, logs, research and drafts. Do not rewrite them. Change only a status note or a link path. Never rewrite the founder's words (`history/idea.md` and the other idea files). |
 | `AGENTS.md` / `CLAUDE.md` | Only binding rules (what every agent must or must not do). Facts and history go to the docs above. |
 | `apps/desktop/README.md` | Run, connect, tool table, dev automation. Keep it under ~150 lines. |
 | Templates (`apps/desktop/resources/…`) | Fix tool names or behaviour that changed. They ship to users. |
 
 ## 4. Move finished plans to history
 
-- A plan or a log moves to `docs/history/` when its work is done, when a new
-  plan replaces it, or when it is a dated record. Use `git mv` and keep the
-  file name.
+- In the notes repo, a plan or a log moves to `../askaboard-notes/history/`
+  when its work is done, when a new plan replaces it, or when it is a dated
+  record. Use `git mv` and keep the file name.
 - Fix every link to a moved file, and every link from it: `git grep` the
-  file name in all tracked files, code comments included.
-- Keep a draft in `docs/history/drafts/` only when the founder wants to keep it.
+  file name in both repos. A public doc names a private file in plain text
+  ("private notes: `launch-plan.md`"), never as a relative link. A code
+  comment points to a decision id, not to a private file.
+- Keep a draft in `../askaboard-notes/history/drafts/` only when the founder
+  wants to keep it.
 
 ## 5. Remove outdated lines
 
@@ -89,8 +101,10 @@ of copying them.
 
 ## 8. Commit and report
 
-1. Commit the docs on their own: `docs: session wrap-up <YYYY-MM-DD>` (end the
-   message with the attribution line from the system reminder).
-2. Push only if the founder asked to push in this session.
-3. Tell the founder in a few lines: which docs changed, what was removed as
+1. Commit the public docs on their own: `docs: session wrap-up <YYYY-MM-DD>`
+   (end the message with the attribution line from the system reminder).
+2. Commit the notes repo separately, in `../askaboard-notes/`:
+   `notes: session wrap-up <YYYY-MM-DD>`.
+3. Push only if the founder asked to push in this session.
+4. Tell the founder in a few lines: which docs changed, what was removed as
    outdated, and the open follow-ups.

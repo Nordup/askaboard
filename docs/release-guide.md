@@ -63,7 +63,7 @@ remain available, but smaller downloads and automatic selection can wait.
    privacy notice and the plugin installation path. PostHog project 714991
    had `anonymize_ips: false` on 2026-11-07, as planned (P24); this means the
    project setting does not discard client IP data. The backend price update
-   due before 2027-01-01 is in `launch-plan.md`.
+   due before 2027-01-01 is in the private launch plan (`../askaboard-notes/launch-plan.md`).
 4. Bundle the Claude Desktop extension before packaging. `dist:mac` runs `build:mcpb` before packaging. It copies the sibling plugin
    repository’s bundle when available; otherwise it keeps the committed bundle.
    Check the bundle version and contents in the final DMG after a plugin release.

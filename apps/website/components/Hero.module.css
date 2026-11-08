@@ -9,7 +9,7 @@
   height: var(--hero-h);
 }
 
-/* ---------- The top bar (t3.codes) ---------- */
+/* ---------- The top bar ---------- */
 
 .bar {
   position: absolute;
@@ -116,7 +116,7 @@
   color: var(--muted);
 }
 
-/* The open-source link under the button, as on t3.codes: the GitHub mark, the words, an outward arrow. */
+/* The open-source link under the button: the GitHub mark, the words, an outward arrow. */
 .source {
   display: inline-flex;
   align-items: center;

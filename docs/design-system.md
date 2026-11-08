@@ -7,7 +7,7 @@ also in [`../AGENTS.md`](../AGENTS.md) ("Askaboard UI").
 ## Principles
 
 1. **Dark only.** Calm near-black surfaces, thin hairlines, one blue accent.
-   The look is close to the Codex app, Claude Desktop and Paper.
+   The look is close to the Codex app and Claude Desktop.
 2. **Quiet.** One primary action per view. Short labels. No explanations in
    the UI when a link or a second view can hold them. If a screen needs a
    paragraph, the design is wrong.
@@ -195,7 +195,7 @@ All paths are under `apps/desktop/src/renderer/src/`.
   toast, a code block, the preview image) takes `--radius-lg`. The rename
   field stays `--radius-sm` (concentric in its row); the selection
   handles take `--handle-radius` (3); circles and pills stay round
-- Shadow (U16, soft and wide, low contrast; ChatGPT app as the reference):
+- Shadow (U16, soft and wide, low contrast):
   `--shadow-float` (inner top line white 0.05, 0 12 40 black 0.24, 0 2 8
   black 0.14) for popups, tooltips, the script panel, toasts and the board's
   tool pill (U18; the style pill has none); `--shadow-card` (inner top line, 0 24 80 black 0.3, 0 4 16 black

@@ -6,13 +6,13 @@ understanding, not finished answers. **Askaboard is the main product**
 (decision P8, 2026-10-24); work happens on `main`. The founder's own
 words in `docs/` come first.
 
-**Now (2026-11-06/07): the launch.** Read
-[`docs/launch-plan.md`](docs/launch-plan.md)
-first: an open-source macOS app, the Askaboard name and brand (D18, D20), a voice server,
-PostHog analytics and a new website.
+**Now (2026-11-06/07): the launch.** The launch plan is private: when the
+folder `../askaboard-notes/` exists, read `../askaboard-notes/launch-plan.md`
+first. The launch is an open-source macOS app, the Askaboard name and brand
+(D18, D20), a voice server, PostHog analytics and a new website.
 
 **Start at [`docs/README.md`](docs/README.md).**
-It gives the status, the reading order and a glossary. Before you change
+It gives the reading order and a glossary. Before you change
 any text that agents read (the brief, instructions, tool descriptions), read
 `docs/writing-agent-text.md`.
 
@@ -23,9 +23,10 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `apps/desktop/` | Askaboard: Electron canvas app with no AI inside (except the voice, decision P1); agents connect over MCP | **Main product.** Docs in `docs/` |
 | `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/askaboard-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension. Keep it a Codex plugin: no `plugin.json` or `mcp.json` at the plugin root (decision I30) | Active, separate repo |
 | `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://api.askaboard.com`. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
-| `apps/website/` | The Askaboard website (Next.js; D8, [`website-plan.md`](docs/website-plan.md)) | Active; Vercel deployment authorized |
+| `apps/website/` | The Askaboard website (Next.js; D8, D11, D12) | Active; Vercel deployment authorized |
 | `assets/brand/` | Logo, icon and brand files | Active |
-| `docs/` | Askaboard docs: status, plans, decisions, design and guides. Finished plans, logs, research and drafts are in `docs/history/` | Active |
+| `docs/` | Reference docs: architecture, decisions and their reasons, the design system, guides and traps | Active |
+| `../askaboard-notes` | Private notes repo (`github.com/Nordup/askaboard-notes`, D26): the current plan and roadmap, strategy, research, logs, drafts, history and design images | Active, separate private repo |
 | (git history) | The paused built-in tutor (`web/`, `server/`, `design/`, `scripts/`, its docs), the SwiftUI iPad client and the tutor's landing page | **Removed** from the tree 2026-11-08 (D24); restore from history if needed |
 
 ## Run it
@@ -44,8 +45,9 @@ cd apps/desktop && npm run build                # type-check + bundle + relay
 - **Record decisions.** A product or architecture decision goes into `docs/decisions.md` in the same commit; a replaced decision is marked "Replaced", not deleted.
 - **Wrap up each working session** with the procedure in `.claude/skills/session-wrap-up/SKILL.md` (Claude runs it as the `session-wrap-up` skill; other agents follow the file): update the Askaboard docs and remove outdated lines.
 - **The working tree is often dirty with the user's own work.** Never `git checkout`/`git restore`/`stash` a file to undo your edits — remove your own change with an edit. Re-read files before editing; the user edits and builds concurrently.
-- **No check, test, debug or iteration images in git** (founder, 2026-10-29). `.gitignore` ignores images outside the asset folders; never `git add -f` an image. An approved design screenshot that should stay goes to `docs/design-images/`, and only when the founder asks for it.
+- **No check, test, debug or iteration images in git** (founder, 2026-10-29). `.gitignore` ignores images outside the asset folders; never `git add -f` an image. An approved design screenshot that should stay goes to `../askaboard-notes/design-images/`, and only when the founder asks for it. Only our own product assets go to `docs/design-images/`.
 - **Agent behaviour is tested and examples are made only through the lab** (founder, 2026-11-07). To see how an agent behaves in the app, or to make an example board (launch videos, demos), run `node scripts/lab/council.mjs --client claude --model opus --effort medium --brief-only --task "<the user's exact sentence>"` from `apps/desktop/` (details: `docs/working-guide.md`, "Choosing lab tests"). The prompt is only the sentence a real user would type; everything else comes from the app's brief, guide and MCP tools. Never build your own environment for an agent, and never give it a long prompt of your own. The learner's own work that a run starts from is a scene program that the app's own code turns into the learner's ink (`--learner-board`; decision D17). The website's use cases come from the lab too: the site plays the agent's own scene file, unchanged, with its voice, in the browser with JavaScript (`apps/desktop/scripts/lab/export-scene.mjs`; decisions D16, D17). Never record a video of a scene for the site.
+- **No plans, research notes, drafts or agent scratch files in this repo** (founder, 2026-11-08; D26). They go to `../askaboard-notes/`. Do not name competitors or quote other products' internal text in this repo.
 - Ask before pushing.
 
 ## Askaboard UI (`apps/desktop/`)

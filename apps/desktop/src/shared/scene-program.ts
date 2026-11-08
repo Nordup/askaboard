@@ -1,8 +1,7 @@
 import { BOARDS_DIR } from './board-format'
 
 /**
- * What a scene program is, for the main process and the stage (spec: docs/history/drafts/
- * story-foundation-2026-10-27/spec.md, section 0).
+ * What a scene program is, for the main process and the stage (decision B16).
  *
  * The source of a program is a snapshot: the entry module (inline code from write_scene, or a
  * file in <learning folder>/boards/scenes/) and every file it imports, read once at

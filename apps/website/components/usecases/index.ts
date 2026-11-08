@@ -1,6 +1,5 @@
 /**
- * The use cases that play in the app shell under the hero (decisions D12, D16, D17; website-plan.md,
- * "The use cases are scenes in the app's look"): each is a lab agent's own scene, played in the
+ * The use cases that play in the app shell under the hero (decisions D12, D16, D17): each is a lab agent's own scene, played in the
  * browser by agent-scene.ts from what apps/desktop/scripts/lab/export-scene.mjs makes of it.
  *
  * THE ANIMATION INTERFACE

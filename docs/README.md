@@ -1,9 +1,9 @@
 # Askaboard docs: start here
 
-This folder holds the working docs for the agents and the contributors who
-build Askaboard: plans, decisions, the roadmap, the design and how-to guides.
-These docs are not for users. Users get the [website](https://askaboard.com)
-and the app.
+This folder holds the reference docs for the agents and the contributors who
+build Askaboard: how the app works, the decisions and their reasons, the
+design system and the guides. These docs are not for users. Users get the
+[website](https://askaboard.com) and the app.
 
 Askaboard is a desktop app for learning with an AI agent on a shared board.
 The agent explains on the board with animations, and the learner talks with
@@ -15,60 +15,37 @@ work happens on `main`.
 
 ## Read in this order
 
-1. [`launch-plan.md`](launch-plan.md): the current plan and the roadmap.
-   Read it first. Where another doc disagrees, the launch plan wins (P23, D7).
-2. [`architecture.md`](architecture.md): how the app fits together and where each part lives.
-3. [`decisions.md`](decisions.md): every decision, with the reason and the rejected alternatives.
-4. [`working-guide.md`](working-guide.md): how to build and check the app, the founder's preferences, and known pitfalls.
-5. [`design-system.md`](design-system.md): the UI rules. Read it before any UI change.
-6. [`writing-agent-text.md`](writing-agent-text.md): how to write the texts that agents read. Read it before you change one.
+1. [`architecture.md`](architecture.md): how the app fits together and where each part lives.
+2. [`decisions.md`](decisions.md): every decision, with the reason and the rejected alternatives.
+3. [`working-guide.md`](working-guide.md): how to build and check the app, the founder's preferences, and known pitfalls.
+4. [`design-system.md`](design-system.md): the UI rules. Read it before any UI change.
+5. [`writing-agent-text.md`](writing-agent-text.md): how to write the texts that agents read. Read it before you change one.
 
 Reference docs, for when your work touches the topic:
 
 | Doc | Topic |
 | --- | --- |
-| [`work-map.md`](work-map.md) | Open work on scenes, speed and the voice, in batches. |
 | [`one-world-architecture.md`](one-world-architecture.md) | How worlds (three.js on the board) work. |
 | [`playback-pitfalls.md`](playback-pitfalls.md) | Known failure classes of scene sampling and playback. Read it when an animation glitches. |
 | [`agent-ink.md`](agent-ink.md) | The pen recipe of agent ink, with every parameter. |
-| [`baseline.md`](baseline.md) | How we measure agent behaviour (trace, bench, scenarios) and the results. |
 | [`release-guide.md`](release-guide.md) | The build, signing, GitHub release and website download steps. |
-| [`website-plan.md`](website-plan.md) | The website in `apps/website/`. |
-| [`launch-qa-2026-11-08.md`](launch-qa-2026-11-08.md) | The first-user check of the release and its open issues. |
-| [`strategy.md`](strategy.md) | The founder's view of the bet, the core loop and how we grow. |
-| [`competitors.md`](competitors.md) | Studies of products near Askaboard, with sources. |
-| [`in-app-agent-idea.md`](in-app-agent-idea.md) | The idea to try after the launch: the agent works inside the app. |
-| [`history/`](history/) | Finished plans, logs, research, drafts and old status tables. Read them for the reasons behind a decision. |
 
 The brand kit is in [`../assets/brand/README.md`](../assets/brand/README.md) (D18, D20).
 
-## Status (2026-11-08)
+## Plans, research and history are private
 
-Done:
-
-- **The app.** A learning folder with many boards, ink with pressure, and one editable document per board (ink, frames, text with math, SVG, images). Agents see the board through the MCP server (screenshots, changes, board news, I4).
-- **Agent texts.** The brief v18 and the tool texts are in Anthropic's style (I16–I22, I31). The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16).
-- **Scenes.** Scenes are JavaScript files that stream to the board (T25–T32, T36, T37). A world is the only way to run code on the board (P18, P19), and toon is its only look (P22).
-- **Voice.** The app reads `say()` lines aloud through our voice server, or with a local Kokoro voice (T34, T39, T40). The voice explainer is parked (I28).
-- **Controls and chrome.** Mouse and trackpad tools (B69–B71, U10, U13, U18), the left panel (U6, U7), and the title row and Settings (U9–U17).
-- **Launch.** Askaboard 0.1.0 is published as [`v0.1.0`](https://github.com/Nordup/askaboard/releases/tag/v0.1.0), notarized (D7, D14, D20). Plugins 0.1.4 are pushed. The backend runs at `https://api.askaboard.com` (P25, D23). Usage data goes to PostHog (P24). The website is live at `https://askaboard.com` (D8, D22). The repo is public, with the T3 Code layout (D21, D24).
-- **Linux.** The app runs from source on Linux (D6). It is not checked on KDE, X11 or with a pen tablet.
-
-Open:
-
-- A clean-Mac install check of the release ([`launch-plan.md`](launch-plan.md), item 8; [`launch-qa-2026-11-08.md`](launch-qa-2026-11-08.md)).
-- The "Later" list of [`launch-plan.md`](launch-plan.md): search indexing, the Claude Desktop extension, guide pages on the website, the voice price change before 2027-01-01.
-- Open batches of [`work-map.md`](work-map.md).
-
-The full status table of 2026-11-08, with all measurements, is in [`history/status-2026-11-08.md`](history/status-2026-11-08.md). The paused tutor and the iPad client are in the git history only (D24).
+The maintainers keep the current plan, the roadmap, research, logs, drafts
+and history in the private repo `Nordup/askaboard-notes` (decision D26). Its
+checkout is next to this repo, at `../askaboard-notes/`. When that folder
+exists, read `../askaboard-notes/launch-plan.md` for the current plan before
+you start. Open work for contributors goes into
+[GitHub issues](https://github.com/Nordup/askaboard/issues).
 
 ## How to keep these docs current
 
+- **Public docs hold what the code cannot show:** decisions and their reasons, constraints and traps.
+- **Plans, research, logs, drafts and screenshots** go to the private notes repo, not to this repo.
 - **A decision** goes into [`decisions.md`](decisions.md), in the same commit as the change. Never delete a decision. Mark a replaced decision "Replaced" and name the new one.
-- **The roadmap and open work** go into [`launch-plan.md`](launch-plan.md) or [`work-map.md`](work-map.md).
-- **A plan or a log moves to `history/`** when its work is done, when a new plan replaces it, or when it is a dated record. Use `git mv` and keep the file name. Then fix the links to it.
-- **A draft** goes into `history/drafts/` only when the founder wants to keep it.
-- **This file** keeps a short status. Put the details in the linked doc.
 - **At the end of a working session**, run the `session-wrap-up` skill ([`../.claude/skills/session-wrap-up/SKILL.md`](../.claude/skills/session-wrap-up/SKILL.md)).
 
 ## Related places
@@ -77,9 +54,10 @@ The full status table of 2026-11-08, with all measurements, is in [`history/stat
 | --- | --- |
 | `apps/desktop/` | The Electron app. Its README covers running and dev automation. |
 | `github.com/Nordup/askaboard-plugins` (checkout `../learning-space-plugins`) | Plugins for Claude Code, ChatGPT and Codex, Cursor; the Claude Desktop extension. |
+| `github.com/Nordup/askaboard-notes` (checkout `../askaboard-notes`) | Private: the plan, the roadmap, research, logs, drafts and history. |
 | `apps/desktop/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
 | `apps/desktop/resources/brief.md`, `guide.md`, `instructions.md`; tool descriptions in `apps/desktop/src/main/mcp.ts` | The brief (`get_brief`), the board reference in topics (`get_guide`, decision T11), the server instructions and the tool descriptions. |
-| `docs/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
+| `docs/reference/` | Local notes on other tools. Local only (git-ignored). |
 | `~/Projects/learning/learning-space` | The founder's own learning folder. Never use it for checks. |
 
 ## Glossary

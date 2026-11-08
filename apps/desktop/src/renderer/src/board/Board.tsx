@@ -268,7 +268,7 @@ const PICK_HOLD_MS = 30
 const PICK_MARK_MS = 300
 /** A wheel event this soon after the last one belongs to the same gesture. */
 const WHEEL_GAP_MS = 200
-/** One mouse-wheel notch with ⌘ or Ctrl zooms by this factor (tldraw and ruimte use about 1.1; the founder found that a little slow). */
+/** One mouse-wheel notch with ⌘ or Ctrl zooms by this factor (1.1 felt a little slow to the founder). */
 const NOTCH_ZOOM = 1.15
 /**
  * A notch glides to its zoom with this time constant: it settles in about 3.5 of them (about 280 ms). It is longer

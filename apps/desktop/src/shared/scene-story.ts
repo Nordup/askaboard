@@ -2,8 +2,7 @@ import { serializeNode, type BoardNode } from './board-format'
 import type { SceneStep, SceneVoice } from './live-scene'
 
 /**
- * The story of a scene and the scene records (spec: docs/history/drafts/
- * story-foundation-2026-10-27/spec.md, sections 1-6).
+ * The story of a scene and the scene records (decision B16).
  *
  * The steps of a scene are computed once, by stepLines, when its description reaches the
  * board (renderer/live/run.ts): the player, the script panel, the agent's reads and the

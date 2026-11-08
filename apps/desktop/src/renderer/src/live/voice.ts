@@ -3,7 +3,7 @@ import { assetUrl } from '../board/content'
 import { subscribeSettings } from '../lib/settings'
 
 /**
- * The voice of say() lines (docs/history/voice-lines-plan.md). The
+ * The voice of say() lines (decision T34). The
  * player clock is the one clock: each frame the player gives the exact scene
  * time, and the one audio element is set from that alone. So pause, next,
  * replay, seek, a hold and a cut need no code here: they all arrive as a time,

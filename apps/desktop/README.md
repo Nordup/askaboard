@@ -7,7 +7,7 @@ the board with the learner. Its one AI part is the voice, which reads scene line
 aloud: our voice server by default (T39), the learner's own Gemini key, or a
 local Kokoro model that the learner installs from Settings (T40).
 
-**Status (2026-11-07):** the main product of this repository (since 2026-10-24). The app chrome and Settings were redesigned on 2026-11-06/07 (U9–U17; how to build UI in that style: `design-system.md`, "How to build UI here"). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/history/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../../docs/work-map.md).
+**Status (2026-11-07):** the main product of this repository (since 2026-10-24). The app chrome and Settings were redesigned on 2026-11-06/07 (U9–U17; how to build UI in that style: `design-system.md`, "How to build UI here"). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (T27, T32), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work for contributors is in GitHub issues.
 
 - [`../../docs/README.md`](../../docs/README.md): start here.
 - [`architecture.md`](../../docs/architecture.md): processes, data flow and where the code lives.
@@ -49,8 +49,8 @@ Electron runs native Wayland. Differences from macOS:
   board when another program changes it on disk. If a save fails at close,
   the board goes to a recovery file and a dialog offers to try again.
 - **Ink with pressure.** Pen, marker, eraser, rectangle and lasso select,
-  undo and redo, pan and zoom. Tools for a mouse and a trackpad, with keys
-  as in Excalidraw: Hand, rectangle, ellipse, arrow, line and text, a style
+  undo and redo, pan and zoom. Tools for a mouse and a trackpad, with letter
+  keys: Hand, rectangle, ellipse, arrow, line and text, a style
   pill for colour, width and text, Option-drag to duplicate, a right-click
   menu, paste of text and images from other apps. A mouse or trackpad stroke gets its width from
   its speed (B57). The board's 100% is camera zoom 0.85 (B61): Ctrl/⌘ with =,
@@ -278,8 +278,8 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
   fixed agent scenarios on its own instance (port 47870). Scenarios: S1–S4,
   P1–P3 (a busy board) and V1 ("drew while talking"). `--client codex` runs
   GPT through Codex instead of Claude; `--no-news-hook` turns off the board
-  news hook; `--dev` uses the dev renderer. See
-  [`baseline.md`](../../docs/baseline.md).
+  news hook; `--dev` uses the dev renderer. How to read the results:
+  [`scripts/perf/README.md`](scripts/perf/README.md).
 
 ```sh
 SPACE_REMOTE_DEBUG=9339 SPACE_FOLDER=~/learn/demo npm run dev

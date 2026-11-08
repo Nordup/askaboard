@@ -10,8 +10,7 @@ import { FOLDER_SETTINGS_DIR } from './guide'
 import type { FolderSession } from './folder'
 
 /**
- * The scene records (spec: docs/history/drafts/story-foundation-2026-10-27/spec.md,
- * sections 1-6): one append-only JSON Lines file per board, `.askaboard/scenes/<board id>.jsonl`,
+ * The scene records (decision B16): one append-only JSON Lines file per board, `.askaboard/scenes/<board id>.jsonl`,
  * and the text of every module that ran, once, in `.askaboard/scenes/code/<sha>.js`.
  *
  * This is the only writer. mcp.ts calls it for each event: a `scene` line when the board accepted a

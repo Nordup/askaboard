@@ -2,8 +2,7 @@
 
 > **Status (2026-11-02):** all slices are built, worlds read files (section 7), and toon is the only look (P22). GPT-6.1 Sol
 > reviewed slices 1 to 4 twice. A world is the only way to run code on the board
-> (decision P19). This file says how [`one-world-design.md`](history/one-world-design.md)
-> is built. Terms:
+> (decision P19). This file says how the one world (P18) is built. Terms:
 > a **world** is a live node with mode `world`. The **surface** is the one GPU
 > canvas that draws all worlds. The contract between the page and the worker is
 > `apps/desktop/src/shared/world-protocol.ts`.

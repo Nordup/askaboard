@@ -116,7 +116,7 @@
   margin-top: calc(19 * var(--u));
 }
 
-/* ---------- The footer (t3.codes): one row ----------
+/* ---------- The footer: one row ----------
    Left: the app icon and the copyright line. Right: five text links.
    On phones the links come first, and the copyright line goes under them. */
 

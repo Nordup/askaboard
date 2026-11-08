@@ -4,7 +4,7 @@ import { REPO_URL, SITE_NAME } from '@/lib/site'
 import { DownloadButton } from './DownloadButton'
 import styles from './Hero.module.css'
 
-/** The hero (decision D11): the top bar as on t3.codes and the headline. The board round it is Board.tsx, over the whole page. */
+/** The hero (decision D11): the top bar (the name on the left, Download and GitHub stars on the right) and the headline. The board round it is Board.tsx, over the whole page. */
 export async function Hero() {
   const stars = await getStars()
   return (
