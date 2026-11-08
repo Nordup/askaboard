@@ -52,15 +52,6 @@ function lockup(width, height, color) {
     place(wordmark.replace('currentColor', color), 125, 11, 270, 60))
 }
 
-function socialCard(width, height) {
-  const brand = place(lockup(408, 82, light), (width - 816) / 2, (height - 230) / 2, 816, 164)
-  return svg(width, height, `<defs><pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="12" cy="12" r="1.2" fill="#ffffff" fill-opacity=".09"/></pattern></defs>
-<rect width="${width}" height="${height}" fill="${dark}"/>
-<rect width="${width}" height="${height}" fill="url(#dots)"/>
-${brand}
-<text x="${width / 2}" y="${height / 2 + 113}" text-anchor="middle" font-family="sans-serif" font-size="30" fill="${light}">A shared canvas for learning with your AI.</text>`)
-}
-
 async function save(file, content) {
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, content)
@@ -150,5 +141,3 @@ await save(join(web, 'favicon.ico'), await faviconIco(favicon))
 await save(join(root, 'apps/website/app/icon.svg'), favicon)
 await save(join(publicDir, 'askaboard-mark.svg'), mark + '\n')
 await save(join(publicDir, 'apple-touch-icon.png'), await png(touch, 180, { opaque: true }))
-await save(join(publicDir, 'askaboard-social.png'), await png(socialCard(1200, 630), 1200, { height: 630, opaque: true }))
-await save(join(web, 'github-social.png'), await png(socialCard(1280, 640), 1280, { height: 640, opaque: true }))

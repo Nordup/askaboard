@@ -5,7 +5,7 @@ import './globals.css'
 const title = `${SITE_NAME} | A shared canvas for learning with your AI`
 const description = 'Your agent explains any topic on a shared board. It draws, animates and talks.'
 const siteUrl = process.env.ASKABOARD_SITE_URL
-const socialImage = { url: '/askaboard-social.png', width: 1200, height: 630, alt: 'Askaboard — a shared canvas for learning with your AI' }
+const socialImage = { url: '/askaboard-social.png', width: 1200, height: 630, alt: 'Askaboard: a board with drawings and the words "Ask anything. Learn anything.", and a Claude Code window' }
 
 export const metadata: Metadata = {
   title,

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/askaboard/readme/hero.png" alt="Askaboard: Ask anything. Learn anything. A shared canvas for learning with your AI.">
+  <img src="assets/askaboard/readme/hero.png" alt="An Askaboard board: Ask anything. Learn anything. A shared canvas for learning with your AI.">
 </p>
 
 <p align="center">
