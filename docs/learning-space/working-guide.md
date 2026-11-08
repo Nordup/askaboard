@@ -1,6 +1,6 @@
-# Learning Space — how to work on it
+# Askaboard — how to work on it
 
-Practical knowledge for agents that build and check Learning Space. The
+Practical knowledge for agents that build and check Askaboard. The
 binding rules are in [`../../AGENTS.md`](../../AGENTS.md) and
 [`../../CLAUDE.md`](../../CLAUDE.md); this file explains how to follow them
 and what went wrong before.
@@ -82,27 +82,27 @@ and what went wrong before.
 
 | Need | How |
 | --- | --- |
-| Own app instance | Start the Electron binary directly: `HOME=<scratch home> SPACE_FOLDER=<scratch folder> SPACE_MCP_PORT=<47822…> SPACE_REMOTE_DEBUG=<93xx> ./node_modules/.bin/electron --user-data-dir=<scratch> .` (from `space/`). The founder's app uses port 47821. Without a scratch `HOME`, the instance writes its port into the founder's `~/.learning-space/relay.json` (and `tools.json`, `bin/`), and the founder's agents then connect to it (happened twice on 2026-10-29). On Linux, in a shell that an agent app started, put `env -u ELECTRON_RUN_AS_NODE` first (see the pitfall below). |
-| Dev-mode check | Run `electron-vite dev` with the same env vars and a `--user-data-dir` too. React StrictMode only exists there. On macOS a scratch `HOME` does not move Electron's user data: without `--user-data-dir` the run writes into the founder's `~/Library/Application Support/Learning Space/state.json` (happened 2026-11-03). |
+| Own app instance | Start the Electron binary directly: `HOME=<scratch home> SPACE_FOLDER=<scratch folder> SPACE_MCP_PORT=<47822…> SPACE_REMOTE_DEBUG=<93xx> ./node_modules/.bin/electron --user-data-dir=<scratch> .` (from `space/`). The founder's app uses port 47821. Without a scratch `HOME`, the instance writes its port into the founder's `~/.askaboard/relay.json` (and `tools.json`, `bin/`), and the founder's agents then connect to it (happened twice on 2026-10-29). On Linux, in a shell that an agent app started, put `env -u ELECTRON_RUN_AS_NODE` first (see the pitfall below). |
+| Dev-mode check | Run `electron-vite dev` with the same env vars and a `--user-data-dir` too. React StrictMode only exists there. On macOS a scratch `HOME` does not move Electron's user data: without `--user-data-dir` the run writes into the founder's `~/Library/Application Support/Askaboard/state.json` (happened 2026-11-03). |
 | Drive input | `node scripts/drive.mjs --port <debug port> …` draws pen strokes with pressure, presses keys, clicks, drags, wheels, takes screenshots, prints state. Works while the window is behind other windows. |
-| A real agent client | `claude -p "<prompt>" --model haiku --mcp-config <json> --strict-mcp-config --allowedTools "mcp__learning-space__*"`. Put the prompt **before** `--allowedTools` (the flag swallows following words). |
+| A real agent client | `claude -p "<prompt>" --model haiku --mcp-config <json> --strict-mcp-config --allowedTools "mcp__askaboard__*"`. Put the prompt **before** `--allowedTools` (the flag swallows following words). |
 | A multi-turn session | First run `claude -p …`, then `claude -p --continue …` from the same folder. Separate `-p` runs are separate conversations. |
 | A learning folder | Run `claude` from inside the folder so `AGENTS.md` loads. It loads into context, so it never shows up as a file read in a tool trace. |
 | CLI installs (plugins, `mcp add`) | Redirect `HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders. Compare hashes of the founder's real configs before and after. |
-| The relay | Set `HOME` to a scratch folder for the app and pass `LEARNING_SPACE_PORT` in the client's MCP config env. |
+| The relay | Set `HOME` to a scratch folder for the app and pass `ASKABOARD_PORT` in the client's MCP config env. |
 | Cleanup | Record the PIDs you start and stop only those. Never `pkill -f` a pattern: it once killed another check's instance. |
 | Measure agent behaviour | `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus --out <dir>` (after `npm run build`; ports 47870/9470; `--dev` for the dev renderer). One trace: `node scripts/trace-report.mjs <file or folder>`. The set-up writes with scenes (one scene per seeded item, shown at once); check a set-up change without an agent by importing `scripts/bench/busy.mjs` and `scenarios.mjs` (never `run.mjs`) and seeding a lab app. |
 | Measure one change (perf) | `node scripts/perf/run.mjs --client claude --model haiku --effort high --task orbit --label <state>` (fresh app on 47880/9480; `--video` for the first visible change), `node scripts/perf/replay.mjs --from <run folder>` (no model; 47881/9481), `node scripts/perf/report.mjs --baseline <state>`. Behaviour changes: opus / gpt-6.1-sol at effort medium; behind-the-scenes changes: replay, or haiku / gpt-6-luna at effort high. See `scripts/perf/README.md`. |
 | Measure rendering | `node scripts/perf/render.mjs --scenes toon,many --label <state>` (after `npm run build`; ports 47882/9482; `--dev` for the dev renderer, `--tune '<json>'` for one switch). The window opens at its normal place with no focus, so the founder keeps the keyboard and can bring it forward. Run it in the standard condition (P20), and do not ask for a quiet machine. See `scripts/perf/README.md`. |
 | Compare two builds of rendering | Measure both on the same day, in turns (old, new, new, old). A history line of an earlier day is not fair: on 2026-11-01 the same code gave 10 to 15 percent less after the machine load changed. For the old build: `git worktree add --detach <scratch>/old <commit>`, link `space/node_modules`, `npm run build` there, and `git worktree remove --force` after it. Read `--capped` for what a person sees. Uncapped `fps` counts page frames, so it can fall when the app does less: the board pan gave 92 fps against 115 with a quarter of the CPU. For a board change, read renderer CPU, paint time, GPU util and the worst frame. |
-| A real plugin (Codex) | The lab connects from config, so it misses plugin bugs (I30). Copy `../learning-space-plugins` without `.git` to a scratch folder and set the lab port in `plugins/learning-space/mcp*.json`. In a scratch `CODEX_HOME` add `[marketplaces.learning-space]` with `source_type = "local"` and that folder, and `[plugins."learning-space@learning-space"]` with `enabled = true`, then run `codex plugin add learning-space@learning-space`. Put a `codex` wrapper first on `PATH`: it swaps the `[mcp_servers.learning-space]` block that `council.mjs` writes for those lines and runs the app's Codex with `-c features.code_mode_host=true` (macOS: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`; Linux: the `codex` command, `~/.local/bin/codex` on the founder's Linux machine; the plugin path is not checked there). Run `council.mjs --codex-home <home>`. The rollout in `<home>/sessions/` shows what the model received. Keep the scratch files out of the repo. |
+| A real plugin (Codex) | The lab connects from config, so it misses plugin bugs (I30). Copy `../learning-space-plugins` without `.git` to a scratch folder and set the lab port in `plugins/askaboard/mcp*.json`. In a scratch `CODEX_HOME` add `[marketplaces.learning-space]` with `source_type = "local"` and that folder, and `[plugins."learning-space@learning-space"]` with `enabled = true`, then run `codex plugin add learning-space@learning-space`. Put a `codex` wrapper first on `PATH`: it swaps the `[mcp_servers.learning-space]` block that `council.mjs` writes for those lines and runs the app's Codex with `-c features.code_mode_host=true` (macOS: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`; Linux: the `codex` command, `~/.local/bin/codex` on the founder's Linux machine; the plugin path is not checked there). Run `council.mjs --codex-home <home>`. The rollout in `<home>/sessions/` shows what the model received. Keep the scratch files out of the repo. |
 | Measure perception | `node scripts/bench/run.mjs --scenarios P1,P2,P3 --model opus --out <dir>`: a busy board, a prior look, then new learner work and a new connection (about 5 minutes per run). |
 | Board news hook in the bench | On by default: the agent gets the plugins' `UserPromptSubmit` hook against the run's own app (Claude: `--settings`; Codex: `-c hooks.UserPromptSubmit=…` with `--dangerously-bypass-hook-trust`). `--no-news-hook` measures without it. `metrics.json` → `news_in_prompt` (Codex) holds the line that reached the prompt. Board news is delivered once per agent app and board: after the hook sent it, the tool results of that turn do not repeat it. |
-| Read a real session of the founder | Learning Space trace: `~/.learning-space/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
+| Read a real session of the founder | Askaboard trace: `~/.askaboard/traces/<date>/` (`node scripts/trace-report.mjs <file>`). ChatGPT voice sessions run as Codex threads: `~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`, names in `~/.codex/session_index.jsonl`; voice requests arrive as `<realtime_delegation>` user messages. The files hold base64 images: parse line by line, never print them. Read only. |
 | Keep the founder's focus | Launch with `SPACE_NO_FOCUS=1`. On macOS, after launching, also `osascript -e 'tell application "Claude" to activate'`. |
-| Settings and the voice (2026-11-06) | Launch with `SPACE_FOLDER` (the welcome screen has no Settings route), then `node scripts/drive.mjs --port <debug port> menu settings`. A Kokoro install check needs a scratch `HOME` (it writes about 370 MB to `~/.learning-space/models/kokoro/`): delete that folder after the check. A check agent cannot hear: confirm playback from the renderer (an audio element's `currentTime` moves after `play()`). |
+| Settings and the voice (2026-11-06) | Launch with `SPACE_FOLDER` (the welcome screen has no Settings route), then `node scripts/drive.mjs --port <debug port> menu settings`. A Kokoro install check needs a scratch `HOME` (it writes about 370 MB to `~/.askaboard/models/kokoro/`): delete that folder after the check. A check agent cannot hear: confirm playback from the renderer (an audio element's `currentTime` moves after `play()`). |
 | UI checks (2026-11-07) | `drive.mjs`: `hover x y` (tooltips), `menu <id>` / `menu-state <id>` (CDP keys never reach a menu accelerator such as ⌘K or ⌘[, so drive the menu item), `select <css> [label]` (the app's dropdown), `element-rect <css>` for measured gaps. Full screen without moving the window to a new desktop Space: `SPACE_FAKE_FULL_SCREEN=1` with `SPACE_REMOTE_DEBUG`. Never put a check window into real full screen. |
-| Usage data from a check | A run of the built app (`electron .` on `out/`) sends events by default, tagged `dev`; a dev renderer run sends nothing unless `LEARNING_SPACE_TELEMETRY_ENABLED=true`. Set `LEARNING_SPACE_TELEMETRY_ENABLED=false` in checks that do not test usage data, or filter `dev` in PostHog. |
+| Usage data from a check | A run of the built app (`electron .` on `out/`) sends events by default, tagged `dev`; a dev renderer run sends nothing unless `ASKABOARD_TELEMETRY_ENABLED=true`. Set `ASKABOARD_TELEMETRY_ENABLED=false` in checks that do not test usage data, or filter `dev` in PostHog. |
 
 ## Choosing lab tests (live drawing)
 
@@ -138,9 +138,9 @@ between lines. A learner's file (a spreadsheet) goes in with `--file <path>`
 **Website use cases** (D16, D17). The site plays the agent's own scene in the
 browser with JavaScript; no video is recorded. After the run, export the scene
 with `node scripts/lab/export-scene.mjs <record.jsonl> <scene.js> <out.json>`
-(the record is `<lab folder>/.learning-space/scenes/<board>.jsonl`, the program
+(the record is `<lab folder>/.askaboard/scenes/<board>.jsonl`, the program
 is the agent's file in `boards/scenes/`, unchanged), convert the voice clip
-(`.learning-space/voice/<hash>.wav`) to `.m4a` with ffmpeg, and add a module in
+(`.askaboard/voice/<hash>.wav`) to `.m4a` with ffmpeg, and add a module in
 `apps/website/components/usecases/` that calls `agentScene()`.
 
 Lab and perf runs give agents what the real apps give them (decision W10):
@@ -205,7 +205,7 @@ combine; `meta.json` records `no_html` and `brief`.
   conclusion.
 - **The founder's app runs in dev mode** while agents edit code: Vite reloads
   half-finished edits. Tell the founder to restart after a change lands.
-- **One instance overwrites `~/.learning-space/relay.json`.** A dev instance
+- **One instance overwrites `~/.askaboard/relay.json`.** A dev instance
   started with the real `HOME` points the relay at itself.
 - **Hand-made MCP entries plus the plugin** double every tool. The Connect
   popover detects and fixes this.
@@ -213,8 +213,8 @@ combine; `meta.json` records `no_html` and `brief`.
   founder's account during one check; that is the founder's config, not ours.
 
 - **Never `import` or `node -e` the bench runner** (`scripts/bench/run.mjs`): importing it runs `main()` and starts a real Claude bench (it happened once and used the founder's limits).
-- **A test app instance must get a scratch `HOME`.** One launch without it overwrote the founder's `~/.learning-space/relay.json` (port), `tools.json` and the relay command; the founder's app rewrites them on its next start.
-- **Codex in the lab, perf and bench runs** needs the Learning Space tools approved (`default_tools_approval_mode = "approve"`): with `approval_policy = "never"`, Codex declines MCP write tools that are not approved. All three use the shared `prepareCodexHome` in `scripts/lab/common.mjs`.
+- **A test app instance must get a scratch `HOME`.** One launch without it overwrote the founder's `~/.askaboard/relay.json` (port), `tools.json` and the relay command; the founder's app rewrites them on its next start.
+- **Codex in the lab, perf and bench runs** needs the Askaboard tools approved (`default_tools_approval_mode = "approve"`): with `approval_policy = "never"`, Codex declines MCP write tools that are not approved. All three use the shared `prepareCodexHome` in `scripts/lab/common.mjs`.
 - **Codex ignores plugin hooks until the user trusts them** (`/hooks`). The bench passes `--dangerously-bypass-hook-trust` for its scratch home only.
 - **Review before push:** the founder reviews each fix (the problem, the measurement, the change, the result) before its commits are pushed.
 
@@ -257,7 +257,7 @@ combine; `meta.json` records `no_html` and `brief`.
   `--user-data-dir`. Tested on the founder's Mac on 2026-10-31. Metal is
   macOS only; the Linux flags are not checked.
 
-- **A check launch needs a scratch `HOME` and its own `--user-data-dir`.** Every launch rewrites `~/.learning-space/relay.json`, `tools.json` and the shim. Without a scratch `HOME`, the founder's agents point at the test app. Electron ignores `HOME` for its settings on macOS: without `--user-data-dir`, a test folder lands in the founder's `state.json` (both happened on 2026-11-02). On Linux, Electron keeps its settings under `$HOME/.config`, so a scratch `HOME` also moves them; pass `--user-data-dir` anyway. `npx electron . --user-data-dir=…` takes the switch; `electron-vite dev` needs it passed through. Copy only the key line to the scratch `.learning-space/.env`.
+- **A check launch needs a scratch `HOME` and its own `--user-data-dir`.** Every launch rewrites `~/.askaboard/relay.json`, `tools.json` and the shim. Without a scratch `HOME`, the founder's agents point at the test app. Electron ignores `HOME` for its settings on macOS: without `--user-data-dir`, a test folder lands in the founder's `state.json` (both happened on 2026-11-02). On Linux, Electron keeps its settings under `$HOME/.config`, so a scratch `HOME` also moves them; pass `--user-data-dir` anyway. `npx electron . --user-data-dir=…` takes the switch; `electron-vite dev` needs it passed through. Copy only the key line to the scratch `.askaboard/.env`.
 - **An `<audio>` element needs `content-length` and byte ranges from a custom protocol.** Without them `duration` is Infinity, `seekable` becomes [0,0], and every seek goes to 0.
 - **`npm run build` in the repo can stop a running dev app** (2026-11-02). It rewrites `out/` under it. While the founder's app runs, type-check with `npx tsc --noEmit -p tsconfig.node.json`, and build and run in a scratch copy with `node_modules` as a symlink.
 - **A real 429 costs up to a minute.** Flash-Lite TTS allows 10 requests per minute on Tier 1, and the same scene text is a cache hit. The app obeys `retry-after` when the wait leaves 10 s of the 45 s. Keep the checks of parallel agents to a few new texts.

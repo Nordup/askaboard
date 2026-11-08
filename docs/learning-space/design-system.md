@@ -1,8 +1,8 @@
-# Learning Space — design system
+# Askaboard — design system
 
 The founder likes how the app looks. This file keeps it that way. Every
 agent that changes the UI reads it first and follows it. The binding rule is
-also in [`../../AGENTS.md`](../../AGENTS.md) ("Learning Space UI").
+also in [`../../AGENTS.md`](../../AGENTS.md) ("Askaboard UI").
 
 ## Principles
 
@@ -652,7 +652,7 @@ internal data (a path, an id). One shared tooltip instead
   `WIND`, `DEPTH`, `ATLAS`) serves both painters; without
   WebGL, or when its context is lost, the 2D canvas paints everything. After the entry (6 s) the band paints at most 30 times a
   second (its motion is slow), and every display frame again while the
-  parallax catches up with the pointer. "Learning Space" (17 px, 600) bottom
+  parallax catches up with the pointer. "Askaboard" (17 px, 600) bottom
   left, the version bottom right. Under it two columns, Start (Open folder… as the one
   accent-soft row, Connect an agent; the open dialog makes a new folder too) and Recent (folder name, the
   parent path at the right; "No recent folders"), rows of 30 px. A recent

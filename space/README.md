@@ -72,7 +72,7 @@ Electron runs native Wayland. Differences from macOS:
   (`g1`, `g2`, …). Agents place material beside the learner's work, not over it.
 - **Folder setup and an editable folder guide.** The sidebar offers to set up
   a folder for learning. A folder can add a topic to the board reference that
-  `get_guide` returns, or replace the reference, in `.learning-space/guide.md`.
+  `get_guide` returns, or replace the reference, in `.askaboard/guide.md`.
 - **Connect popover and plugin.** The agent pill in the top bar installs the
   plugin for each agent.
 - **Live scenes.** An agent writes a JavaScript program (`write_scene`) that
@@ -92,7 +92,7 @@ Electron runs native Wayland. Differences from macOS:
   voice, the pace, the Gemini key and the local voice: Install downloads
   Kokoro (about 370 MB, `~/.askaboard/models/kokoro/`, T40). When the
   voice fails, or with Read Lines Aloud off, the lines run at a reading pace,
-  silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. The play button's sample of the cloud voice ships with the app (`resources/voice-samples/`), so it plays at once; Kokoro makes its sample on the Mac. Clips stay in the folder's `.learning-space/voice/`.
+  silent. The voice and the pace (also View > Voice and View > Pace) apply to new scenes. The play button's sample of the cloud voice ships with the app (`resources/voice-samples/`), so it plays at once; Kokoro makes its sample on the Mac. Clips stay in the folder's `.askaboard/voice/`.
   The default voice is Charon. A replay makes no API call. A scene written
   before the voice stays silent until one new `write_scene`.
 - **Worlds.** A scene can place a world on the board: plain three.js with no
@@ -152,7 +152,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
 | `open_board` | `board`, `create` | Opens a board by path or unique name, or makes a new one |
 | `move_board` | `path`, `to` | Renames a board, or moves it to the system Trash (`to: "trash"`) |
 | `get_brief` | none | The brief, for agents without the folder's `AGENTS.md` |
-| `get_guide` | `topic` | One topic of the board reference (scene, scene-files, scene-world, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.learning-space/guide.md`); without a topic, all of it |
+| `get_guide` | `topic` | One topic of the board reference (scene, scene-files, scene-world, scene-interact, model, html, math, svg, images, tokens, placement, ink, view, and `folder` when the folder has `.askaboard/guide.md`); without a topic, all of it |
 | `write_scene` | `name`, `code` or `file` | Runs a scene program (inline, or a file in `boards/scenes/`) and keeps the result as a draft by name; the learner sees nothing. Returns steps and items, or the program error with its line. |
 | `preview_scene` | `name`, `at`, `part`, `version` | Read-only: one image of a draft or of a scene on the board, at chosen moments (end, a step, a time, a list, every step), framed on the scene, the view, a region or items. |
 | `play_scene` | `action` (start, status, pause, resume, next, stop, clear_queue, cancel, replay, cut, reset), `name`, `when`, `from_step`, `after_step` | Starts a draft on the board (replacing a scene of the same name in place; returns at once) and controls playback and the stage. |

@@ -1,4 +1,4 @@
-# Learning Space — architecture
+# Askaboard — architecture
 
 Read this once to know how the app fits together and where to look. It
 describes stable structure, not details: for exact behaviour, read the file
@@ -7,13 +7,13 @@ it points to. All paths are under `space/` unless stated otherwise.
 ## The big picture
 
 ```
- Agent clients                     Learning Space (Electron)                 Learning folder (disk)
+ Agent clients                     Askaboard (Electron)                 Learning folder (disk)
  ───────────────                   ─────────────────────────                 ──────────────────────
  Codex / ChatGPT  ── HTTP ──────►  main process                              AGENTS.md, plan.md, …
  Claude Code      ── stdio relay ►   MCP server  ──IPC request──►  renderer  boards/*.board.json
  Claude Desktop   ── stdio relay ►   folder access, setup, guide    (live board,   assets/
-                                     snapshot window (screenshots)  editing, UI)  .learning-space/
-                                     agent home (~/.learning-space)
+                                     snapshot window (screenshots)  editing, UI)  .askaboard/
+                                     agent home (~/.askaboard)
 ```
 
 - The **renderer owns the live board**: nodes, unsaved edits, undo history,
@@ -21,7 +21,7 @@ it points to. All paths are under `space/` unless stated otherwise.
   it, so the learner sees agent work at once and can undo it.
 - The **main process owns the outside world**: the window, the MCP server,
   disk access through one path guard, the snapshot window, the files in
-  `~/.learning-space/`, the voice (`src/main/voice.ts`: our voice server, the
+  `~/.askaboard/`, the voice (`src/main/voice.ts`: our voice server, the
   learner's key or local Kokoro; T34, T39, T40), every user setting (`settings.ts`, the one owner and change path, U12; the sidebar's shown/hidden state is window state, owned by `index.ts`) and
   usage data (`analytics.ts`, P24).
 - The **learning folder is the only persistent store** of learning content.
@@ -45,7 +45,7 @@ it points to. All paths are under `space/` unless stated otherwise.
 | Preload | `src/preload/` | Exposes one typed API, `window.space` (calls plus `on…` events). Types in `src/shared/space-api.ts`. |
 | Renderer | `src/renderer/` | React app: canvas, content layer, sidebar, top bar, menus, agent request handler. |
 | Snapshot window | `src/main/snapshot.ts` + `src/renderer/src/snapshot/` | A hidden offscreen window that loads the renderer with `?snapshot=1`, draws a requested region, and is captured to PNG. Closed when idle. |
-| Relay | `src/relay/` (built to `out/relay/index.js`) | A separate Node process that an agent client starts through `~/.learning-space/bin/learning-space mcp`. Forwards stdio JSON-RPC to the app's HTTP endpoint; answers from a cache when the app is closed. |
+| Relay | `src/relay/` (built to `out/relay/index.js`) | A separate Node process that an agent client starts through `~/.askaboard/bin/askaboard mcp`. Forwards stdio JSON-RPC to the app's HTTP endpoint; answers from a cache when the app is closed. |
 
 Security baseline: the renderer is sandboxed, with context isolation and no
 Node integration. A Content-Security-Policy in `src/renderer/index.html`
@@ -69,7 +69,7 @@ limits scripts, images and media.
 ## The board document
 
 - **File:** any `*.board.json` in the folder. Format
-  `learning-space.board`, version 2: `nextSeq` plus a `nodes` list, one node
+  `askaboard.board`, version 2: `nextSeq` plus a `nodes` list, one node
   per line. Version 1 boards (ink only) load and are saved as version 2.
   Unknown kinds and fields are kept untouched.
 - **Code:** `src/shared/board-format.ts` (parse, serialize, seq stamping,
@@ -177,8 +177,8 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
     `<!-- summary: … -->` markers); without a topic, all of it (decision T11);
   - server instructions, `resources/instructions.md` (a short orientation
     that points to `get_brief` and `get_guide`);
-  - folder overrides `.learning-space/instructions.md` (added to or
-    replacing the server instructions) and `.learning-space/guide.md`
+  - folder overrides `.askaboard/instructions.md` (added to or
+    replacing the server instructions) and `.askaboard/guide.md`
     (the reference's topic `folder`, or with `mode: replace` the whole
     reference) (`src/main/guide.ts`, read fresh per call, 64 KB cap);
   - tool and parameter descriptions in `src/main/mcp.ts` (facts only: what
@@ -186,7 +186,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
     to the `get_guide` topic for details). Each stays under 4,096 characters.
 - **Session trace** (`src/main/trace.ts`, always on): every MCP call, the
   screenshots agents received and the learner's edits, as JSONL in
-  `~/.learning-space/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with
+  `~/.askaboard/traces/<date>/` (or `SPACE_TRACE_DIR`). Read with
   `scripts/trace-report.mjs`.
 - **Board news** (`src/main/news.ts`, decision I4), delivered once: per
   agent app (client label as in `clientLabel()`), folder and board, the app
@@ -223,9 +223,9 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
 
 ## Agent home and connecting clients
 
-- `src/main/agent-home.ts` writes `~/.learning-space/bin/learning-space` (the
+- `src/main/agent-home.ts` writes `~/.askaboard/bin/askaboard` (the
   relay shim), `relay.json` (port) and `tools.json` (tool catalogue for the
-  offline relay) on every launch. `learning-space news --client <label>`
+  offline relay) on every launch. `askaboard news --client <label>`
   prints the board news line (from `GET /news`; nothing when nothing is new,
   the app is closed or anything fails; exit 0; about 0.1 s). The plugins run
   it as a `UserPromptSubmit` hook: `hooks/claude.json` (Claude Code) and
@@ -234,7 +234,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
   for ChatGPT and Codex (through their CLIs), the `.mcpb` for Claude Desktop.
   It detects hand-made entries and duplicates.
 - The plugin itself lives in the sibling repo
-  `github.com/Nordup/learning-space-plugins`
+  `github.com/Nordup/askaboard-plugins`
   (`../learning-space-plugins`): per-client manifests, a small skill, the
   `.mcpb`, validators, CI, one version source.
 
@@ -251,7 +251,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   registry. A later edit of a file changes nothing until the next
   `write_scene`.
 - **Scene record.** Each board keeps an append-only history,
-  `.learning-space/scenes/<board id>.jsonl` (`src/main/scene-store.ts`,
+  `.askaboard/scenes/<board id>.jsonl` (`src/main/scene-store.ts`,
   the only writer; decisions B16, B20). One `scene` line per played version
   (source: module hashes, seed, cut, board context, host answers; story:
   steps, lines, items per step; revert), plus `drop` and `reset` lines.
@@ -400,7 +400,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 - **Voice.** When the voice is on, `write_scene` first runs a lines pass that
   only collects the `say()` texts. Then, outside the stage lock,
   `src/main/voice.ts` makes one speech request for the scene, or finds the clip
-  in `.learning-space/voice/`. In the draft run each `say()` asks main for its
+  in `.askaboard/voice/`. In the draft run each `say()` asks main for its
   line (host request `voiceLine`, answered by main, not by `host.ts`), and the
   audio length becomes the line length. The answers stay in the record, so a
   replay makes no call. `src/renderer/src/live/voice.ts` sets one audio element
@@ -409,7 +409,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   Settings, else the learner's Gemini key, else our voice server
   (`POST /v1/speech`; at its daily cap a `daily_cap` failure, and the board
   shows a toast that opens Settings). `src/main/kokoro.ts` installs pinned
-  sherpa-onnx and model archives into `~/.learning-space/models/kokoro/` and
+  sherpa-onnx and model archives into `~/.askaboard/models/kokoro/` and
   runs the program as a separate process (D9).
 - **Backend.** A private repo, `../learning-space-backend` (P25): FastAPI,
   Postgres and Caddy in Docker on the Hetzner box. It holds the server's
@@ -477,14 +477,14 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
 
 - `npm run dev` (relay build + `electron-vite dev`), `npm run build`
   (type-check, bundle, relay), `npm run build:mcpb`, `npm start`.
-- The voice goes through our voice server, `LEARNING_SPACE_VOICE_HOST`
+- The voice goes through our voice server, `ASKABOARD_VOICE_HOST`
   (default `https://135-181-38-113.sslip.io`); `GEMINI_API_KEY` (any build,
-  also read from `~/.learning-space/.env`) sends it to Gemini directly instead.
+  also read from `~/.askaboard/.env`) sends it to Gemini directly instead.
   Environment switches (dev): `SPACE_FOLDER` (open a folder),
   `SPACE_MCP_PORT`, `SPACE_REMOTE_DEBUG` (Chromium debug port + dev hooks),
   `SPACE_OPEN` (preview a file), `SPACE_CAPTURE*` (window PNG on load),
   `SPACE_CONNECT_DRY_RUN`, `SPACE_TRACE_DIR` (where traces go). The relay
-  reads `LEARNING_SPACE_PORT`. Lab switches (lab runs only,
+  reads `ASKABOARD_PORT`. Lab switches (lab runs only,
   `src/main/lab-switch.ts`): `LS_LAB_NO_CODE`, `LS_LAB_NO_HTML` (hide
   worlds or HTML from the agent), `LS_LAB_BRIEF` (serve a draft brief).
 - `scripts/drive.mjs` drives a running dev app over the debug port: draw

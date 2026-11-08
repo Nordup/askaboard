@@ -8,15 +8,16 @@ local-only rule and authorized Vercel deployment on 2026-11-08.
 ## Where each part goes
 
 - **App and source:** this repository. The current Git remote is
-  `Nordup/askaboard` (renamed from `Nordup/math-tutor` on 2026-11-08,
+  `Nordup/askaboard` (renamed from `Nordup/askaboard` on 2026-11-08,
   still private). The plugin remains in the separate `learning-space-plugins` repo.
 - **Mac download:** planned for GitHub Releases on the public app repo. A
   release holds a versioned tag, release notes and the signed DMG as a
   release asset. Do not commit the DMG to Git or Git LFS.
-- **Website:** the planned host is Vercel. Its Download for Mac button should
+- **Website:** `https://askaboard.com` is live on Vercel. Its Download for Mac button should
   link directly to the GitHub release asset; the website does not serve the
-  226 MiB file itself. The existing `whiteboardai` project serves the old
-  tutor site; the Askaboard website deployment is being set up.
+  226 MiB file itself. The existing `whiteboardai` project builds
+  `apps/website` from `Nordup/askaboard`; pushes trigger deployments and
+  `main` is production. `www.askaboard.com` redirects to the apex domain.
 - **Voice and analytics:** the existing private backend on Hetzner stays
   separate. It is not the file download host.
 
@@ -37,20 +38,18 @@ remain available, but smaller downloads and automatic selection can wait.
   plugin connection and voice flow on a clean Mac remain open; a real Intel
   Mac has not been checked. A normal macOS first-open confirmation may appear.
 - The [Askaboard brand kit](../../assets/askaboard/README.md) supplies the Mac packaging icon and website artwork.
-  The app still uses Learning Space, version `0.0.1`, and bundle ID
-  `app.learningspace.desktop`. Review local data, updates and plugin
-  connections before changing the app identity. The public repo URL, release
-  version and website domain remain open.
+  The app is Askaboard `0.1.0`, bundle ID `com.askaboard.app` (D20). The
+  app repo is `Nordup/askaboard` (still private); the plugin repo is
+  `Nordup/askaboard-plugins`.
 - The release script creates **local artifacts only**. GitHub release upload,
-  publishing, Askaboard website deployment, update delivery and CI are not set up.
+  publishing, update delivery and release CI are not set up.
   Installing this build does not configure automatic app updates.
 
 ## Before the first public release
 
-1. Set the desktop release name and version in `space/package.json`. Decide
-   whether to retain the current bundle ID after checking migration and
-   plugin behavior. The Askaboard packaging icon is `space/resources/icon.png`.
-   Check other branding and links.
+1. Done 2026-11-08 (D20): name, version and bundle ID. For a later release,
+   set the version in `space/package.json`. The packaging icon is
+   `space/resources/icon.png`.
 2. Review the app repository and its history for material that should not be
    public, including credentials and private data. Check the license, README,
    setup steps and the separate public plugin repo. Confirm the final GitHub
@@ -62,15 +61,12 @@ remain available, but smaller downloads and automatic selection can wait.
    had `anonymize_ips: false` on 2026-11-07, as planned (P24); this means the
    project setting does not discard client IP data. The backend price update
    due before 2027-01-01 is in `launch-plan.md`.
-4. Reconcile the bundled Claude Desktop extension before packaging. On
-   2026-11-07, `space/resources/learning-space.mcpb` reported version 0.1.3,
-   while the sibling plugin repo's `claude-extensions/learning-space/dist/learning-space.mcpb`
-   reported 0.1.2. `npm run build` and `dist:mac` do not run
-   `build:mcpb`; that separate command copies the sibling artifact if it
-   exists, otherwise it creates a stand-in. Check the source and release
-   versions, rebuild the intended plugin artifact using its repo README,
-   and deliberately bundle it before building the app. Do not overwrite
-   the newer 0.1.3 with the older 0.1.2. Verify what the final DMG contains.
+4. Bundle the Claude Desktop extension before packaging. `npm run build`
+   and `dist:mac` do not run `build:mcpb`. That separate command copies
+   `../learning-space-plugins/claude-extensions/askaboard/dist/askaboard.mcpb`
+   if it exists; otherwise it makes a stand-in. On 2026-11-08 both copies are
+   0.1.4 and the same bytes. After a plugin release, run `npm run build:mcpb`
+   and check the version inside the final DMG.
 5. Build the exact release after the final changes. Install and open the
    actual downloaded DMG on a clean Mac; complete folder setup, connect an
    agent through the public plugin and play a voiced scene. Check on Apple

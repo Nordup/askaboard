@@ -1,7 +1,7 @@
-# Learning Space — how to write the text agents read
+# Askaboard — how to write the text agents read
 
 > **For:** any agent (or person) who improves what external agents read when
-> they work in Learning Space: the brief, the server instructions, the tool
+> they work in Askaboard: the brief, the server instructions, the tool
 > descriptions, the plugin skill and the `AGENTS.md`
 > template. Written 2026-10-24, at the end of the session that produced the
 > first real brief; updated 2026-10-25 (brief v3, decision T11) and 2026-10-26 (brief v18 and the agent texts in Anthropic's style, I18–I22) and 2026-10-27 (how to change a text without losing its intent or voice; the T16 lessons, I25). The founder's own words from that session are in
@@ -32,12 +32,12 @@ difference, so the next writer starts from the second draft's approach.
 | Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
 | **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 42,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
 | Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. Our Codex plugin gets these and the server instructions whole. Codex cuts them at 1,000 bytes only for an Agent Plugin, so the plugin must stay a Codex plugin, with no `plugin.json` at the plugin root (I30). |
-| Plugin skill | [`learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md`](../../../learning-space-plugins/plugins/learning-space/skills/learning-space/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
+| Plugin skill | [`learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md`](../../../learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
 | Tool names in other places | The same names appear in `space/README.md` (tool table), `architecture.md` (MCP server), the plugin skill and README, and the lab's old-call mappers (`space/scripts/perf/replay.mjs`, `space/scripts/trace-report.mjs`, which keep old names on purpose). A rename changes all of them in one commit. | People and agents who read the docs | — |
-| Per-folder overrides | `.learning-space/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.learning-space/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
+| Per-folder overrides | `.askaboard/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.askaboard/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
 
-The managed block: `<!-- learning-space brief: start … sha=… -->` …
-`<!-- learning-space brief: end -->`. The app rewrites the block when a
+The managed block: `<!-- askaboard brief: start … sha=… -->` …
+`<!-- askaboard brief: end -->`. The app rewrites the block when a
 folder opens and the brief is newer, unless the learner edited the block
 (hash mismatch). So a change to `brief.md` reaches every set-up folder on
 its next open. Sources for the limits: the Claude Code MCP docs
@@ -73,7 +73,7 @@ I2 and P7 in [`decisions.md`](decisions.md) record them.
    it limits imagination. Situations described in prose are fine when they
    show a way of thinking ("when someone draws two circles and asks 'is this
    how fusion works?'…").
-6. **The role follows the person's intent.** Learning Space is a space to
+6. **The role follows the person's intent.** Askaboard is a space to
    learn with a smart model. A tutor who holds back answers is one role; an
    explainer, a source of material, a sparring partner, a judge of a
    drawing are others. The brief teaches the agent to read which one is
@@ -247,7 +247,7 @@ voice, and the founder brought the old text back (I25).
 ### Diagnose a behaviour problem
 
 1. **Look at what the agent read and did.** This means the run folder above,
-   or the founder's traces in `~/.learning-space/traces/` (`node space/scripts/trace-report.mjs`).
+   or the founder's traces in `~/.askaboard/traces/` (`node space/scripts/trace-report.mjs`).
 2. **Find the text that the agent read at the moment of the choice.** The
    model follows the text. In I20, both models chose a 3D program item from
    the get_guide topic list, which described program() by its power alone.
@@ -294,7 +294,7 @@ Follow the same steps to improve it.
    `instructions.md`, the tool descriptions in `mcp.ts`, the
    skill, the `AGENTS.md` template.
 3. **Look at real behaviour:** [`baseline.md`](baseline.md) and later bench
-   runs; the founder's own traces in `~/.learning-space/traces/` (read with
+   runs; the founder's own traces in `~/.askaboard/traces/` (read with
    `node space/scripts/trace-report.mjs`); research sections 9–13 in
    [`research.md`](research.md).
 4. **Check current facts with Haiku agents:** Anthropic's tool guidance (it
