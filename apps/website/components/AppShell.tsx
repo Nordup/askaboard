@@ -329,6 +329,40 @@ export function AppShell() {
     // under the shell (no ride); with reduced motion placeStage does not run.
     const chat = stage.querySelector<HTMLElement>('[data-agent-window]')
     let chatShown = NaN
+
+    // ---------- The chat window's overhang below the shell counts as the shell's content (lib/spacing.ts) ----------
+    // On a phone the chat window hangs under the shell's window, so the gap to the next section
+    // begins at the chat window's bottom. Its height depends on the request, and the request
+    // wraps differently at each width, so it is measured here: a hidden copy of the window holds
+    // each use case's request in turn, and the largest overhang (CSS px, with the window's turn)
+    // goes to --shell-overhang on the page, for the agent section's margin (Sections.module.css).
+    // The largest one, so the next section does not move when the use case changes. This is the
+    // value's only owner.
+    const page = section.parentElement
+    let overhang = NaN
+    const measureOverhang = (): void => {
+      if (!chat || !page) return
+      const probe = chat.cloneNode(true) as HTMLElement
+      probe.removeAttribute('style')
+      probe.removeAttribute('data-agent-window')
+      probe.setAttribute('aria-hidden', 'true')
+      probe.style.visibility = 'hidden'
+      probe.style.pointerEvents = 'none'
+      const ghost = probe.querySelector<HTMLElement>('[data-request-ghost]')
+      stage.appendChild(probe)
+      const frameBottom = frame.getBoundingClientRect().bottom
+      let most = 0
+      for (const useCase of USE_CASES) {
+        if (ghost) ghost.textContent = useCase.request
+        most = Math.max(most, probe.getBoundingClientRect().bottom - frameBottom)
+      }
+      probe.remove()
+      const next = Math.ceil(most)
+      if (next !== overhang) {
+        overhang = next
+        page.style.setProperty('--shell-overhang', `${next}px`)
+      }
+    }
     const placeChat = (y: number, winH: number): void => {
       if (!chat) return
       let ride = 0
@@ -464,10 +498,11 @@ export function AppShell() {
         if (entry.target === board) {
           boardW = entry.contentRect.width
           boardH = entry.contentRect.height
-        } else {
+        } else if (entry.target === frame) {
           section.style.setProperty('--z', String(Math.min(1, frame.clientWidth / PHONE_WINDOW_W)))
         }
       }
+      measureOverhang()
       fitCanvas()
       measureGlide()
       onScroll()
@@ -475,6 +510,9 @@ export function AppShell() {
     })
     sized.observe(board)
     sized.observe(frame)
+    // The request's font can arrive after the first layout and wrap the bubble differently.
+    if (chat) sized.observe(chat)
+    void document.fonts?.ready.then(() => live && measureOverhang())
 
     window.addEventListener('scroll', onScroll, { passive: true })
     document.addEventListener('visibilitychange', onVisibility)
@@ -490,6 +528,7 @@ export function AppShell() {
     return () => {
       live = false
       delete section.dataset.glide
+      page?.style.removeProperty('--shell-overhang')
       stage.style.translate = ''
       const chatEl = stage.querySelector<HTMLElement>('[data-agent-window]')
       if (chatEl) chatEl.style.transform = ''

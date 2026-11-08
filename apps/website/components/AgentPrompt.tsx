@@ -110,8 +110,8 @@ export function AgentPrompt({ index, onStart }: { index: number; onStart: (i: nu
       </div>
       <div className={styles.body}>
         <div className={styles.message}>
-          {/* The whole request, hidden: it holds the window's height while the bubble grows. */}
-          <span className={`${styles.bubble} ${styles.ghost}`} aria-hidden="true">
+          {/* The whole request, hidden: it holds the window's height while the bubble grows. AppShell.tsx measures the window with each request in it (data-request-ghost). */}
+          <span className={`${styles.bubble} ${styles.ghost}`} aria-hidden="true" data-request-ghost="">
             {text || '\u00a0'}
           </span>
           {useCase && (

@@ -11,7 +11,11 @@
  * A section's margin and height come from its content and the gaps in lib/spacing.ts (sectionBox):
  * the component sets --m-desk, --h-desk, --m-phone, --h-phone. Never set them by hand.
  * The agent section follows the app shell, whose window ends --glide-tail below its track after it
- * lets go (lib/shell-steps.ts GLIDE); with reduced motion it does not glide.
+ * lets go (lib/shell-steps.ts GLIDE); with reduced motion it does not glide. On a phone the chat
+ * window (AgentPrompt.tsx) hangs under the shell's window, so its overhang is the shell's content
+ * too: AppShell.tsx measures it with the longest request and sets --shell-overhang (CSS px) on the
+ * page. On a desktop the chat window sits on the shell's lower-left corner, and the approved
+ * desktop gap counts from the shell's window, so the overhang is not added there.
  */
 .agents,
 .download {
@@ -158,6 +162,10 @@
     --h: var(--h-phone);
   }
 
+  .agents {
+    margin-top: calc(var(--m) * var(--u) + var(--glide-tail) + var(--shell-overhang, 0px));
+  }
+
   .agentTitle {
     font-size: calc(32 * var(--u));
     line-height: calc(36 * var(--u));
@@ -187,5 +195,11 @@
 
   .cta .quiet {
     margin-top: calc(14 * var(--u));
+  }
+}
+
+@media (max-width: 719px) and (prefers-reduced-motion: reduce) {
+  .agents {
+    margin-top: calc(var(--m) * var(--u) + var(--shell-overhang, 0px));
   }
 }

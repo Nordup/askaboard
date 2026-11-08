@@ -8,6 +8,9 @@
  * blocks), in design units (--u). These GAPS are the only spacing values. A section's height and
  * offsets are derived from its content (sectionBox below); never set a section's height or margin
  * by hand. Move, add, resize or remove items inside a section freely: the gaps stay the same.
+ * Content that is sized only in the browser counts too: on a phone the app shell's chat window
+ * hangs under the shell, and AppShell.tsx measures its overhang (--shell-overhang) for the agent
+ * section's margin (Sections.module.css).
  */
 import { PHONE, SPRITES, type Place } from '@/components/hero/layout'
 
