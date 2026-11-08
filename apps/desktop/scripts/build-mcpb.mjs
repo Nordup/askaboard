@@ -30,6 +30,12 @@ if (existsSync(pluginArtifact)) {
   console.log(`copied ${pluginArtifact} -> ${out}`)
   process.exit(0)
 }
+// A standalone checkout already contains the real, versioned bundle. Keep it
+// instead of replacing it with the minimal fallback when the sibling is absent.
+if (existsSync(out)) {
+  console.log(`using committed extension ${out}`)
+  process.exit(0)
+}
 
 const manifest = {
   manifest_version: '0.3',

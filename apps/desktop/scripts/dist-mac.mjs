@@ -37,6 +37,7 @@ if (output('xcrun', ['notarytool', 'history', '--keychain-profile', profile]) ==
 // partial set of Apple environment variables take precedence in electron-builder.
 const builderEnv = { ...process.env, APPLE_KEYCHAIN_PROFILE: profile }
 for (const name of ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']) delete builderEnv[name]
+run('npm', ['run', 'build:mcpb'])
 run('npm', ['run', 'build'], { ASKABOARD_TELEMETRY_CHANNEL: 'stable' })
 const build = spawnSync('npx', ['electron-builder', '--mac', `--${arch}`, '-c.dmg.sign=true'], { cwd: root, stdio: 'inherit', env: builderEnv })
 if (build.error) console.error(build.error.message)
