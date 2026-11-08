@@ -459,6 +459,62 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     shelf.remove()
   }
 
+  /**
+   * The learner's ink never changes in the scene, so it is drawn once into an image of its own, which each frame
+   * places under the view. Drawn stroke by stroke in each frame, its few thousand pressure pieces cost about 10 ms of
+   * each frame, and on Firefox's GPU canvas the first such frame stalled for about 300 ms (founder, 2026-11-08).
+   * The image is drawn on the CPU (willReadFrequently), then turned into a bitmap that the GPU keeps. It is drawn
+   * again only for a zoom it would be too coarse for, or much too fine.
+   */
+  const learner = scene.learner ?? []
+  const pad = Math.max(0, ...learner.map((s) => s.width))
+  const bounds = learner.length
+    ? learner.reduce(
+        (b, s) => {
+          for (const [x, y] of s.points) {
+            b.x0 = Math.min(b.x0, x - pad)
+            b.y0 = Math.min(b.y0, y - pad)
+            b.x1 = Math.max(b.x1, x + pad)
+            b.y1 = Math.max(b.y1, y + pad)
+          }
+          return b
+        },
+        { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+      )
+    : null
+  /** The image: its pixels per board point, and what a frame draws (the bitmap once it is made). */
+  let baked: { scale: number; src: CanvasImageSource } | null = null
+  /** Pixels on the side of the image at most (a GPU texture's limit on most devices). */
+  const BAKE_MAX = 4096
+  const learnerInk = (c: CanvasRenderingContext2D, scale: number): void => {
+    if (!bounds) return
+    const bw = bounds.x1 - bounds.x0
+    const bh = bounds.y1 - bounds.y0
+    const want = Math.min(scale, BAKE_MAX / bw, BAKE_MAX / bh)
+    if (!baked || want > baked.scale * 1.05 || want < baked.scale / 2) {
+      const bake = document.createElement('canvas')
+      bake.width = Math.max(1, Math.ceil(bw * want))
+      bake.height = Math.max(1, Math.ceil(bh * want))
+      const b = bake.getContext('2d', { willReadFrequently: true })
+      if (!b) return
+      b.lineCap = 'round'
+      b.lineJoin = 'round'
+      b.setTransform(want, 0, 0, want, -bounds.x0 * want, -bounds.y0 * want)
+      for (const stroke of learner) drawStroke(b, { points: stroke.points, color: stroke.color, width: stroke.width, tool: stroke.tool }, 0, 1)
+      const made = { scale: want, src: bake as CanvasImageSource }
+      baked = made
+      if (typeof createImageBitmap === 'function')
+        void createImageBitmap(bake)
+          .then((bitmap) => {
+            if (baked === made) made.src = bitmap
+          })
+          .catch(() => undefined)
+    }
+    c.imageSmoothingEnabled = true
+    c.imageSmoothingQuality = 'high'
+    c.drawImage(baked.src, bounds.x0, bounds.y0, bw, bh)
+  }
+
   /** The ink at t, as live/player.ts objectLook shows it: each stroke revealed by its range of the draw value, under the object's matrix. */
   const drawInk = (el: HTMLCanvasElement, lw: number, lh: number, zoom: number, view: Matrix, t: number): void => {
     const px = zoom * (window.devicePixelRatio || 1)
@@ -478,7 +534,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     const sy = height / lh
     // The learner's own ink first: it was on the board before the scene.
     c.setTransform(sx * view[0], 0, 0, sy * view[3], sx * view[4], sy * view[5])
-    for (const stroke of scene.learner ?? []) drawStroke(c, { points: stroke.points, color: stroke.color, width: stroke.width, tool: stroke.tool }, 0, 1)
+    learnerInk(c, sx * view[0])
     for (const { o, ink, ranges: shares, color } of inks) {
       if (before(o, t)) continue
       const drawn = Math.max(0, Math.min(1, tl.value(o.id, 'draw', t)))
