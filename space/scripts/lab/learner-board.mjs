@@ -38,7 +38,7 @@ export async function learnerBoard(programFile) {
       nodes.push({ id: `s_l${seq}`, kind: 'ink', x: 0, y: 0, z: seq, author: 'learner', seq, tool: 'pen', color: object.style.color, width: Math.round(Math.max(0.5, object.style.width) * 100) / 100, points })
     }
   }
-  return `${JSON.stringify({ format: 'learning-space.board', version: 2, nextSeq: nodes.length + 1, nodes })}\n`
+  return `${JSON.stringify({ format: 'askaboard.board', version: 2, nextSeq: nodes.length + 1, nodes })}\n`
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop())) {

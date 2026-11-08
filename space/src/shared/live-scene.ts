@@ -276,7 +276,7 @@ export interface ScenePointerAction {
   follows?: { world: number | string; point: string }
 }
 
-/** Where a spoken line lives. clip: the WAV path relative to the learning folder (.learning-space/voice/<sha>.wav); from: the second in the WAV where the line starts. */
+/** Where a spoken line lives. clip: the WAV path relative to the learning folder (.askaboard/voice/<sha>.wav); from: the second in the WAV where the line starts. */
 export interface SceneVoice {
   clip: string
   from: number

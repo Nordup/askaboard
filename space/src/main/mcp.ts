@@ -103,7 +103,7 @@ export interface AgentServerHooks {
   webContents(): WebContents | null
   status(status: AgentServerStatus): void
   activity(activity: AgentActivity): void
-  /** The open learning folder's real path, for its `.learning-space/` overrides. */
+  /** The open learning folder's real path, for its `.askaboard/` overrides. */
   folderRoot(): string | null
   /** View > Read Lines Aloud as it stands now. */
   readLines(): boolean

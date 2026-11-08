@@ -14,9 +14,9 @@ import { resourcePath } from './resources'
  *   also the managed block in a learning folder's AGENTS.md, see
  *   brief-block.ts, so agents in a learning folder never need get_brief) and
  *   `resources/guide.md` (the reference, in topics; decision T11);
- * - per learning folder: `.learning-space/guide.md` (the reference's topic
+ * - per learning folder: `.askaboard/guide.md` (the reference's topic
  *   "folder", or the whole reference with `mode: replace`) and
- *   `.learning-space/instructions.md` (appended to the server instructions,
+ *   `.askaboard/instructions.md` (appended to the server instructions,
  *   or replacing them with `mode: replace`).
  *
  * In guide.md, every `## ` heading starts a topic. `<!-- topic: name -->`
@@ -30,14 +30,14 @@ import { resourcePath } from './resources'
  */
 
 /** The folder, inside a learning folder, that holds the agent-text overrides. */
-export const FOLDER_SETTINGS_DIR = '.learning-space'
+export const FOLDER_SETTINGS_DIR = '.askaboard'
 const MAX_OVERRIDE_BYTES = 64 * 1024
 const FOLDER_HEADING = 'Guidance for this learning folder'
 const FOLDER_PREFIX = "The following guidance comes from the learner's folder."
 const REPLACED_LINE = "Askaboard: the learner's folder replaced these instructions."
-/** The get_guide topic that holds the folder's .learning-space/guide.md (append mode). */
+/** The get_guide topic that holds the folder's .askaboard/guide.md (append mode). */
 const FOLDER_TOPIC = 'folder'
-const FOLDER_SUMMARY = "Guidance from this learning folder (its .learning-space/guide.md)."
+const FOLDER_SUMMARY = "Guidance from this learning folder (its .askaboard/guide.md)."
 
 type FolderFileName = 'guide.md' | 'instructions.md'
 
@@ -109,7 +109,7 @@ function parseFrontMatter(raw: string): { mode: 'append' | 'replace'; body: stri
 const cache = new Map<string, { mtimeMs: number; size: number; value: FolderText | null }>()
 
 /**
- * `.learning-space/<name>` from the learning folder, or null when it is
+ * `.askaboard/<name>` from the learning folder, or null when it is
  * missing, empty (comments only) or leaves the folder through a link.
  * `root` is the folder's real path.
  */

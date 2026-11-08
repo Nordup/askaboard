@@ -152,11 +152,11 @@ function agentsWithEmptyBrief() {
 }
 
 function setupFolder(folder) {
-  for (const dir of ['sessions', 'topics', 'materials', 'boards', '.learning-space']) mkdirSync(join(folder, dir), { recursive: true })
+  for (const dir of ['sessions', 'topics', 'materials', 'boards', '.askaboard']) mkdirSync(join(folder, dir), { recursive: true })
   for (const dir of ['sessions', 'topics', 'materials']) writeFileSync(join(folder, dir, '.gitkeep'), '')
-  for (const file of ['plan.md', 'learner.md', '.learning-space/guide.md']) copyFileSync(join(TEMPLATE, file), join(folder, file))
+  for (const file of ['plan.md', 'learner.md', '.askaboard/guide.md']) copyFileSync(join(TEMPLATE, file), join(folder, file))
   writeFileSync(join(folder, 'AGENTS.md'), agentsWithEmptyBrief())
-  writeFileSync(join(folder, 'boards/Board.board.json'), '{\n  "format": "learning-space.board",\n  "version": 2,\n  "nextSeq": 1,\n  "nodes": []\n}\n')
+  writeFileSync(join(folder, 'boards/Board.board.json'), '{\n  "format": "askaboard.board",\n  "version": 2,\n  "nextSeq": 1,\n  "nodes": []\n}\n')
 }
 
 function drive(...args) {

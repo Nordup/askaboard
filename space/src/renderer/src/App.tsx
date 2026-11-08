@@ -784,7 +784,7 @@ export function App() {
 
   // ---------- Learning-folder setup ----------
 
-  /** Ask the main process what the folder's guide files change. The watcher skips .learning-space. */
+  /** Ask the main process what the folder's guide files change. The watcher skips .askaboard. */
   const refreshGuideOverrides = useCallback(() => {
     space.getGuideOverrides().then(setGuideOverrides, (error: unknown) => console.error(errorMessage(error)))
   }, [])
@@ -823,7 +823,7 @@ export function App() {
       refreshGuideOverrides()
       if (!path) {
         setMenuSetup(true)
-        setToast({ text: 'No board guide yet. Set up the folder to create .learning-space/guide.md.', kind: 'info' })
+        setToast({ text: 'No board guide yet. Set up the folder to create .askaboard/guide.md.', kind: 'info' })
         return
       }
       setPreviewPath(path)

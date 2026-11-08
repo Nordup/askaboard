@@ -4,6 +4,7 @@ import { mkdir, open, readdir, readFile, realpath, rename, stat, unlink, writeFi
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { shell } from 'electron'
 import { downloadImage } from './asset-fetch'
+import { FOLDER_SETTINGS_DIR } from './guide'
 import { BOARD_SUFFIX, BOARDS_DIR, boardName, emptyBoard, isBoardPath, isLive, isOldLive, parseBoard, sanitizeBoardName, serializeBoard } from '@shared/board-format'
 import { MAX_ASSET_BYTES } from '@shared/limits'
 import type { BoardChange, BoardList, BoardListEntry, FileNode, FilePreview, FileTree } from '@shared/space-api'
@@ -41,7 +42,9 @@ const IMAGE_TYPES: Record<string, string> = {
 }
 
 /** A voice clip, from the folder's root. */
-const VOICE_CLIP = /^\.learning-space\/voice\/[^/]+\.wav$/i
+const VOICE_CLIP = /^\.askaboard\/voice\/[^/]+\.wav$/i
+/** The name of FOLDER_SETTINGS_DIR before the rename to Askaboard (D20). open() renames it; scene records written before still name clips in it. */
+const OLD_SETTINGS_DIR = '.learning-space'
 
 /** Types of the other files that worlds read. */
 const WORLD_TYPES: Record<string, string> = {
@@ -78,6 +81,25 @@ const hashText = (text: string): string => createHash('sha1').update(text).diges
 const fileIdentity = (info: { ino: number; mtimeMs: number; size: number }): string => `${info.ino}:${info.mtimeMs}:${info.size}`
 
 const toPosix = (path: string): string => path.split(sep).join('/')
+
+/**
+ * A folder from before the rename to Askaboard (D20) keeps its guide, instructions, scenes and voice clips
+ * in .learning-space/. Rename it to FOLDER_SETTINGS_DIR before anything reads the folder. When both exist,
+ * the old one stays as it is.
+ */
+async function renameOldSettingsDir(root: string): Promise<void> {
+  try {
+    await stat(join(root, FOLDER_SETTINGS_DIR))
+    return
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') return
+  }
+  try {
+    await rename(join(root, OLD_SETTINGS_DIR), join(root, FOLDER_SETTINGS_DIR))
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') console.warn(`[folder] could not rename ${OLD_SETTINGS_DIR}/ to ${FOLDER_SETTINGS_DIR}/:`, error)
+  }
+}
 
 export function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep)
@@ -151,6 +173,7 @@ export class FolderSession {
     if (!isAbsolute(path)) throw new Error(`Not an absolute path: ${path}`)
     const root = await realpath(path)
     if (!(await stat(root)).isDirectory()) throw new Error(`Not a folder: ${path}`)
+    await renameOldSettingsDir(root)
     return new FolderSession(root)
   }
 
@@ -605,7 +628,7 @@ export class FolderSession {
 
   /**
    * A file for a world's code (main/live-item-protocol.ts): a regular file in the
-   * folder, with no hidden name on its real path, so .learning-space/ stays apart.
+   * folder, with no hidden name on its real path, so .askaboard/ stays apart.
    * A missing file throws ENOENT, as a directory does; any other refused path throws too.
    */
   async worldFile(rel: string): Promise<{ path: string; size: number; tag: string; type: string }> {
@@ -627,7 +650,7 @@ export class FolderSession {
    * voice clips of said lines (main/voice.ts), which nothing else serves.
    */
   async readAsset(rel: string): Promise<{ data: Buffer; type: string }> {
-    const full = await this.resolvePath(rel)
+    const full = await this.resolvePath(rel.startsWith(`${OLD_SETTINGS_DIR}/`) ? FOLDER_SETTINGS_DIR + rel.slice(OLD_SETTINGS_DIR.length) : rel)
     const voice = VOICE_CLIP.test(toPosix(relative(this.root, full)))
     const type = voice ? 'audio/wav' : IMAGE_TYPES[extname(full).toLowerCase()]
     if (!type) throw new Error(`Not an image: ${rel}`)

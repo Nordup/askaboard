@@ -69,7 +69,7 @@ function setUp(name) {
   mkdirSync(join(inst.folder, 'boards/scenes'), { recursive: true })
   cpSync(join(src, 'scenes'), join(inst.folder, 'boards/scenes'), { recursive: true })
   if (existsSync(join(src, 'assets'))) cpSync(join(src, 'assets'), join(inst.folder, 'assets'), { recursive: true })
-  if (existsSync(join(src, 'voice'))) cpSync(join(src, 'voice'), join(inst.folder, '.learning-space/voice'), { recursive: true })
+  if (existsSync(join(src, 'voice'))) cpSync(join(src, 'voice'), join(inst.folder, '.askaboard/voice'), { recursive: true })
   copyFileSync(join(src, `${job.board}.board.json`), join(inst.folder, `boards/${job.board}.board.json`))
   const key = `${inst.folder}::boards/${job.board}.board.json`
   mkdirSync(inst.userData, { recursive: true })
@@ -263,7 +263,7 @@ function writeWav(file, rate, samples) {
  * quietest 10 ms of the natural pause between the lines, with 4 ms fades, and every word still starts at its own time.
  */
 function voiceTrack(folder, total, out) {
-  const dir = join(folder, '.learning-space/scenes')
+  const dir = join(folder, '.askaboard/scenes')
   const file = readdirSync(dir).find((f) => f.endsWith('.jsonl'))
   if (!file) return null
   const records = readFileSync(join(dir, file), 'utf8').trim().split('\n').map((l) => JSON.parse(l))

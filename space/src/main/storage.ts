@@ -18,7 +18,7 @@ import { CLIP_DIR } from './voice'
  *   traces                  date folders past their age: permanent
  *   Chromium's caches       capped at launch; a lost entry costs a download or a compile, nothing else
  *
- * It touches only the names it expects, in .learning-space/voice, .learning-space/scenes, boards/scenes (the
+ * It touches only the names it expects, in .askaboard/voice, .askaboard/scenes, boards/scenes (the
  * scene files of a removed board) and the traces folder. What cannot be read stops the step: a record that
  * cannot be read can name a file, and a board that cannot be read is not a board that is gone.
  */

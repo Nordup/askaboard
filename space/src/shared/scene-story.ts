@@ -9,7 +9,7 @@ import type { SceneStep, SceneVoice } from './live-scene'
  * board (renderer/live/run.ts): the player, the script panel, the agent's reads and the
  * record all read that one list. stepAt is the one rule for "the step at a time".
  *
- * A record file (.learning-space/scenes/<board id>.jsonl) holds one JSON line per event:
+ * A record file (.askaboard/scenes/<board id>.jsonl) holds one JSON line per event:
  * a scene line per accepted commit, a drop line when a scene leaves the stage without a new
  * version, a reset line on play_scene reset. Only the main process writes it (main/scene-store.ts).
  */

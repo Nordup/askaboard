@@ -11,8 +11,8 @@ import type { FolderSession } from './folder'
 
 /**
  * The scene records (spec: docs/learning-space/drafts/story-foundation-2026-10-27/spec.md,
- * sections 1-6): one append-only JSON Lines file per board, `.learning-space/scenes/<board id>.jsonl`,
- * and the text of every module that ran, once, in `.learning-space/scenes/code/<sha>.js`.
+ * sections 1-6): one append-only JSON Lines file per board, `.askaboard/scenes/<board id>.jsonl`,
+ * and the text of every module that ran, once, in `.askaboard/scenes/code/<sha>.js`.
  *
  * This is the only writer. mcp.ts calls it for each event: a `scene` line when the board accepted a
  * scene's commit (play_scene start, a replace, a cut, a scene that runs again in a restage), a `drop`

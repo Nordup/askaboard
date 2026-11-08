@@ -33,7 +33,7 @@ const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 /** Between lines in the joined text: plain prose, so the model pauses as it does between any two sentences. */
 const LINE_JOIN = ' '
 /** Clips, from the learning folder's root. renderer/live/voice.ts plays them, and folder.ts readAsset serves only this folder. */
-export const CLIP_DIR = '.learning-space/voice'
+export const CLIP_DIR = '.askaboard/voice'
 /** The whole request with its retry. */
 const REQUEST_LIMIT_MS = 45_000
 const RETRY_WAIT_MS = 1000

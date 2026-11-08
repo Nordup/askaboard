@@ -83,7 +83,7 @@ const strokes = JSON.parse(readFileSync(join(here, '..', 'strokes', 'two-plus-tw
 const items = strokes.map((points, i) => ({ id: `s_v1stroke${i}`, kind: 'stroke', seq: i + 1, tool: 'pen', color: '#ececef', width: 3.5, points }))
 const v1 = [
   '{',
-  '  "format": "learning-space.board",',
+  '  "format": "askaboard.board",',
   '  "version": 1,',
   `  "nextSeq": ${items.length + 1},`,
   '  "items": [',

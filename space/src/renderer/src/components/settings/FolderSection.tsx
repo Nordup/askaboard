@@ -45,7 +45,7 @@ export function FolderSection({ folder, homeDir, actions }: { folder: FolderSett
           Change folder…
         </button>
       </SettingRow>
-      <SettingRow name="Board guide" description="How agents draw on boards in this folder (.learning-space/guide.md)">
+      <SettingRow name="Board guide" description="How agents draw on boards in this folder (.askaboard/guide.md)">
         <button className="btn-sm" onClick={actions.onEditGuide}>
           Edit
         </button>

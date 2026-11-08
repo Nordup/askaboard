@@ -102,9 +102,9 @@ export interface SetupResult {
   created: string[]
 }
 
-/** A folder file that changes what agents read (.learning-space/guide.md or instructions.md). */
+/** A folder file that changes what agents read (.askaboard/guide.md or instructions.md). */
 export interface FolderOverride {
-  /** Relative path, for example ".learning-space/guide.md". */
+  /** Relative path, for example ".askaboard/guide.md". */
   path: string
   /** append: added after the built-in text. replace: used instead of it. too-large: ignored. */
   mode: 'append' | 'replace' | 'too-large'
@@ -749,7 +749,7 @@ export interface SpaceApi {
   removeGeminiKey(): Promise<void>
   /** A scene's voice failed and the scene plays silent: at most once a day per kind per app run. */
   onVoiceNotice(listener: (code: VoiceFailure) => void): Unsubscribe
-  /** The folder's board guide (.learning-space/guide.md), or null when it does not exist. */
+  /** The folder's board guide (.askaboard/guide.md), or null when it does not exist. */
   boardGuidePath(): Promise<string | null>
   /** What the folder's guide and instructions files change for agents now. */
   getGuideOverrides(): Promise<GuideOverrides>

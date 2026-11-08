@@ -2607,7 +2607,7 @@ button:focus-visible {
   text-decoration: underline;
 }
 
-/* ---------- Folder guide overrides (.learning-space/guide.md, instructions.md) ---------- */
+/* ---------- Folder guide overrides (.askaboard/guide.md, instructions.md) ---------- */
 
 .folder-overrides {
   display: flex;

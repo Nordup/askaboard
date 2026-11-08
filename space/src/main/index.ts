@@ -178,7 +178,7 @@ function showVoiceNotice(code: VoiceFailure): void {
   send(IPC.voiceNotice, code)
 }
 
-// The watcher skips hidden folders, so .learning-space changes reach the UI
+// The watcher skips hidden folders, so .askaboard changes reach the UI
 // when an agent reads the guide or connects (and when the folder opens).
 onOverridesRead((root) => {
   if (root && session?.root === root) send(IPC.guideOverrides, folderOverrides(root))

@@ -184,5 +184,5 @@ export function boardFile({ strokes, others }) {
       node({ id: `n_b${seq}`, kind: 'text', parent: id, x: 16, y: 16, text: `Frame ${i}`, style: { fontSize: '22px' } })
     }
   }
-  return { text: JSON.stringify({ format: 'learning-space.board', version: 2, nextSeq: seq + 1, nodes }), rect: { x: 0, y: 0, width, height }, strokes: drawn, items: nodes.length - drawn }
+  return { text: JSON.stringify({ format: 'askaboard.board', version: 2, nextSeq: seq + 1, nodes }), rect: { x: 0, y: 0, width, height }, strokes: drawn, items: nodes.length - drawn }
 }

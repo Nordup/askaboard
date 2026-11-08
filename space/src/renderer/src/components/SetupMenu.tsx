@@ -29,11 +29,11 @@ interface Line {
 }
 
 /**
- * The lines the menu lists. boards/ and .learning-space/ are left out: setup
+ * The lines the menu lists. boards/ and .askaboard/ are left out: setup
  * still creates them, but they add noise here.
  */
 function lines(items: SetupItem[]): Line[] {
-  const shown = items.filter((item) => item.path !== 'boards' && !item.path.startsWith('.learning-space'))
+  const shown = items.filter((item) => item.path !== 'boards' && !item.path.startsWith('.askaboard'))
   const result: Line[] = []
   const grouped = shown.filter((item) => item.kind === 'dir' && GROUPED_DIRS.includes(item.path))
   for (const item of shown) {

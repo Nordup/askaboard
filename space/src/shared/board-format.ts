@@ -17,7 +17,9 @@
 
 import type { NodeFollows } from './world-links'
 
-export const BOARD_FORMAT = 'learning-space.board'
+export const BOARD_FORMAT = 'askaboard.board'
+/** The format id of boards saved before the rename to Askaboard (D20). Read as BOARD_FORMAT; the next save writes BOARD_FORMAT. */
+const OLD_BOARD_FORMAT = 'learning-space.board'
 export const BOARD_VERSION = 2
 export const BOARD_SUFFIX = '.board.json'
 /**
@@ -301,7 +303,7 @@ export type BoardNode = KnownNode | ForeignNode
 
 export interface BoardDoc {
   /**
-   * The board's id (newItemId('b')): its scene records are .learning-space/scenes/<id>.jsonl
+   * The board's id (newItemId('b')): its scene records are .askaboard/scenes/<id>.jsonl
    * (main/scene-store.ts). Made when the first scene record is written; a board with no scenes has none.
    * Older builds keep it as an unknown key (extra), so it survives their saves.
    */
@@ -486,7 +488,7 @@ export function parseBoard(text: string): BoardDoc {
     throw new Error(`The board file is not valid JSON (${error instanceof Error ? error.message : String(error)}).`)
   }
   if (!isRecord(raw)) throw new Error('The board file does not contain a JSON object.')
-  if (raw.format !== undefined && raw.format !== BOARD_FORMAT) {
+  if (raw.format !== undefined && raw.format !== BOARD_FORMAT && raw.format !== OLD_BOARD_FORMAT) {
     throw new Error(`The file format is "${String(raw.format)}", not "${BOARD_FORMAT}".`)
   }
   if (finite(raw.version) && raw.version > BOARD_VERSION) {

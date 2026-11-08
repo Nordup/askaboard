@@ -9,7 +9,7 @@
  *   node scripts/lab/export-scene.mjs <record.jsonl> <scene.js> <out.json> [Board.board.json]
  *
  * Board.board.json (the run's board file): its learner ink goes in as `learner`, shown from the start (--learner-board).
- * record.jsonl: the board's scene record (<folder>/.learning-space/scenes/<board id>.jsonl); its first line is the scene.
+ * record.jsonl: the board's scene record (<folder>/.askaboard/scenes/<board id>.jsonl); its first line is the scene.
  * The website plays the JSON (apps/website/components/usecases/agent-scene.ts) with the voice clip the lines name.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
