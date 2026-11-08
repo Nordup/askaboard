@@ -1,23 +1,22 @@
 # Publishing a macOS release
 
-Status: 2026-11-07. This is the release plan and the local build recipe,
+Status: 2026-11-08. This is the release plan and the local build recipe,
 not a published release. The founder wants release automation later, when
-GitHub is ready. Do not create a workflow, publish a release, push, or deploy
-as part of this documentation step. Ask before pushing. The repository's
-website deployment policy in `AGENTS.md` keeps the website local-only until
-the founder explicitly revokes that rule.
+GitHub is ready. Ask before pushing. The founder lifted the website's
+local-only rule and authorized Vercel deployment on 2026-11-08.
 
 ## Where each part goes
 
 - **App and source:** this repository. The current Git remote is
-  `Nordup/math-tutor`; the final public repository name and URL wait for the
-  brand. The plugin remains in the separate `learning-space-plugins` repo.
+  `Nordup/askaboard` (renamed from `Nordup/math-tutor` on 2026-11-08,
+  still private). The plugin remains in the separate `learning-space-plugins` repo.
 - **Mac download:** planned for GitHub Releases on the public app repo. A
   release holds a versioned tag, release notes and the signed DMG as a
   release asset. Do not commit the DMG to Git or Git LFS.
 - **Website:** the planned host is Vercel. Its Download for Mac button should
   link directly to the GitHub release asset; the website does not serve the
-  226 MiB file itself. Deployment remains blocked by the rule above.
+  226 MiB file itself. The existing `whiteboardai` project serves the old
+  tutor site; the Askaboard website deployment is being set up.
 - **Voice and analytics:** the existing private backend on Hetzner stays
   separate. It is not the file download host.
 
@@ -43,7 +42,7 @@ remain available, but smaller downloads and automatic selection can wait.
   connections before changing the app identity. The public repo URL, release
   version and website domain remain open.
 - The release script creates **local artifacts only**. GitHub release upload,
-  publishing, website deployment, update delivery and CI are not set up.
+  publishing, Askaboard website deployment, update delivery and CI are not set up.
   Installing this build does not configure automatic app updates.
 
 ## Before the first public release
@@ -82,9 +81,7 @@ remain available, but smaller downloads and automatic selection can wait.
 
 The login keychain has a valid **Developer ID Application** identity for
 team `CDA73N3FRP`, expiring 2027-12-07. The notarytool profile is
-`learning-space-notary`. A password-protected `.p12` backup is in the
-founder's private storage. The founder was asked to
-store its password separately; that storage has not been verified. Never put
+`learning-space-notary`. Never put
 the private key, backup password, app-specific password or other secrets in
 the repository, logs or chat.
 A replacement Mac needs the identity and its private key imported into
@@ -136,8 +133,7 @@ that the DMG itself passes the disk-image check.
    a manually uploaded asset. `OWNER`, `REPO` and `ASSET-NAME` are
    placeholders here; do not ship this example URL. Check the link from a
    signed-out browser and confirm it downloads the correct version.
-5. Deploy the website only after the founder explicitly lifts its local-only
-   rule and authorizes the deployment. Verify the live download and plugin
+5. Deploy the website to Vercel. Verify the live download and plugin
    instructions after publication.
 
 Later, automate the approved flow after GitHub, release names and hosting are

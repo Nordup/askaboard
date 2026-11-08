@@ -26,10 +26,10 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://135-181-38-113.sslip.io` until the brand domain. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
-| `MathTutor/`, `MathTutorTests/`, `MathTutorUITests/` | SwiftUI iPad client | **Paused**, preserved |
+| (git history) | SwiftUI iPad client (`MathTutor/`, `Vendor/`, `project.yml`) | **Removed** from the tree 2026-11-08; restore from history if needed |
 | `design/`, `docs/design-system/` | Exports/transcriptions of the Paper design file (paused clients) | Generated — never the first thing you edit |
-| `apps/website/` | The Learning Space website (Next.js; D8, [`website-plan.md`](docs/learning-space/website-plan.md)) | Active, local-only (see Deployment policy) |
-| `landing-page/`, `landing/` | Marketing page of the paused tutor | Paused, local-only (see Deployment policy) |
+| `apps/website/` | The Learning Space website (Next.js; D8, [`website-plan.md`](docs/learning-space/website-plan.md)) | Active; Vercel deployment authorized |
+| `landing-page/`, `landing/` | Marketing page of the paused tutor | Paused |
 | `docs/` | Vision, TODO, research; `docs/learning-space/` for the active app; older specs under `docs/superpowers/` | |
 
 ## Run it
@@ -70,7 +70,7 @@ python3 scripts/web-dev.py --qa   # same, with dummy provider keys (no paid call
 - **Every menu and popover uses the shared menu system** in `space/src/renderer/src/styles/app.css` (comment block above `.menu`): the `--menu-*` custom properties set all spacing and type, and screens are built from the shared parts (`.menu__heading`, `.menu__title`/`.menu__lede`, `.menu__item`, `.menu__row`, `.menu__line`, `.menu__status`, `.menu__separator`, `.menu__footer`) and the one small button (`.btn-sm`, `.btn-text`). A menu component may set only its own position and width. A missing part is added to the shared system, not to one menu.
 - **Keep it quiet:** one primary action per view, short labels, details behind a link or a second view. Mock up new UI first and get the founder's approval before building it.
 
-## Tutor backend, web and iPad clients (paused)
+## Tutor backend and web client (paused)
 
 These rules apply only when someone works on the paused tutor stack.
 
@@ -82,12 +82,6 @@ These rules apply only when someone works on the paused tutor stack.
 - **Run exactly one backend process.** The `view_board` rendezvous is in-process; a `--reload` restart mid-turn makes the board POST 404 and the tutor says it can't see the board. Check `logs/server.log` for a restart before blaming the client.
 - The tutor's system prompt is backend code: `server/app/tutor/prompt.py`. Web checks: `cd web && npm run build`.
 
-### iPad client
-
-- The Xcode project is generated: after adding or renaming Swift files, run `xcodegen generate` and commit the regenerated `project.pbxproj`. No two Swift files may share a basename.
-- `ScreenLayout` derives every position from the real window size; the design boards' absolute numbers are one evaluation of that rule, not constants.
-- Device install, the compiled-in token and the tailnet backend URL are documented in `README.md` → "Install on a paired iPad".
-
 # Agent coordination
 
 How Claude sessions split work (Opus implements, Haiku reads and checks) is in `CLAUDE.md`.
@@ -96,4 +90,3 @@ How Claude sessions split work (Opus implements, Haiku reads and checks) is in `
 
 - Never create, save, publish, or deploy this project through ChatGPT Sites or OpenAI Sites.
 - Do not call Sites project, version, access, or deployment tools for this repository.
-- Landing-page work must remain local-only unless the user explicitly revokes this rule in a future request.

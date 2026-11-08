@@ -2,7 +2,7 @@
 
 Use the full-color sweep as the main mark. The source is [mark.svg](mark.svg).
 The [wordmark outlines](wordmark.svg) use Source Sans 3 Semibold. See the
-[font license](../../MathTutor/Resources/Fonts/LICENSE.txt). The live website
+[font license](SourceSans3-LICENSE.txt). The live website
 uses its own interface font for the header label.
 
 | Where | File | Format and size |

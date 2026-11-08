@@ -113,3 +113,6 @@ share-videos/
 # Browser-check logs and local website videos (not for git)
 .playwright-mcp/
 apps/website/public/video/
+
+# Old agent reports and diffs (local only; removed from git 2026-11-08)
+.superpowers/

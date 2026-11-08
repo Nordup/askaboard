@@ -71,11 +71,12 @@ The launch name and approved icon are in the [Askaboard brand kit](../../assets/
 | App packaging and signing (macOS, D7, D14) | `cd space && npm run dist:mac` built and checked a 226 MiB universal Developer ID signed, notarized DMG on 2026-11-07; it requires the signing identity and `learning-space-notary` Keychain profile. The separate arm64 DMG was installed and opened on this Mac without a security bypass. The Askaboard packaging icon is ready. App identity, the branded build and a fresh-Mac install remain open. |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Board controls for a mouse and a trackpad (2026-11-06/07, B69–B71, U10, U13, U18): a tool pill with keys as in Excalidraw, a style pill per tool or selection, shapes drawn in the agents' pen ink, rectangle and lasso selection, a right-click menu, paste from other apps, undo and zoom as bare buttons at the bottom right | Done on `main`: [`board-controls-plan.md`](board-controls-plan.md), values in [`design-system.md`](design-system.md) "Board controls", the ink recipe in [`agent-ink.md`](agent-ink.md). Checked on the M1 Air, built and dev; ChatGPT review fixed |
-| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Built locally, not deployed (the deployment rule in `AGENTS.md`). The page is one board: the hero, the app shell with the use cases, Connect your agent, download, footer. Use cases: GPS done, made by hand in the app's look; "check my work" and "Q3 sales" still show placeholder drawings |
+| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Built locally; Vercel deployment authorized 2026-11-08 and being set up. The page is one board: the hero, the app shell with the use cases, Connect your agent, download, footer. |
 | Deeper editing (shapes inside SVG, a full style inspector) | Much later |
 
-The web client (`web/`), the tutor backend (`server/`) and the iPad client
-(`MathTutor/`) are paused, not deleted.
+The web client (`web/`) and the tutor backend (`server/`) are paused, not
+deleted. The iPad client was removed from the tree on 2026-11-08; it stays in
+the git history.
 
 Numbered work: "fix 1/2", "improvement 1–4" and plan "item" numbers name
 work that [`plan.md`](plan.md) and [`baseline.md`](baseline.md) describe.

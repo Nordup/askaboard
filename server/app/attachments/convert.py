@@ -20,8 +20,9 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 
-import fitz  # PyMuPDF
 import pillow_heif
+import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_raw
 from PIL import Image, ImageOps
 
 from app.attachments.kinds import Kind, sniff
@@ -120,41 +121,42 @@ def _on_white(image: Image.Image) -> Image.Image:
 
 def _convert_pdf(data: bytes, filename: str) -> Converted:
     try:
-        document = fitz.open(stream=data, filetype="pdf")
-    except Exception:
-        raise Unconvertible(422, f"{filename} is a PDF I couldn’t open. It may be damaged.")
-
-    with document:
-        # An encrypted PDF opens, reports its page count, and only then raises
-        # from the first render — so without this the failure surfaces as a bare
-        # ValueError from inside the renderer rather than as a sentence. Being
-        # handed a password-protected worksheet is an ordinary thing.
-        if document.needs_pass:
+        document = pdfium.PdfDocument(data)
+    except pdfium.PdfiumError as error:
+        # PDFium refuses an encrypted PDF at open time, with its own error code,
+        # so a password-protected worksheet is told apart from a damaged file
+        # here. Being handed one is an ordinary thing.
+        if error.err_code == pdfium_raw.FPDF_ERR_PASSWORD:
             raise Unconvertible(
                 422,
                 f"{filename} is password-protected, so I can’t open it. Try saving "
                 "a copy without the password, or take a photo of it.",
             )
-        if document.page_count == 0:
+        raise Unconvertible(422, f"{filename} is a PDF I couldn’t open. It may be damaged.")
+    except Exception:
+        raise Unconvertible(422, f"{filename} is a PDF I couldn’t open. It may be damaged.")
+
+    try:
+        page_count = len(document)
+        if page_count == 0:
             raise Unconvertible(422, f"{filename} has no pages in it.")
-        if document.page_count > MAX_PDF_PAGES:
+        if page_count > MAX_PDF_PAGES:
             raise Unconvertible(
                 422,
-                f"{filename} has {document.page_count} pages. I can take up to "
+                f"{filename} has {page_count} pages. I can take up to "
                 f"{MAX_PDF_PAGES} — try sending just the pages you need.",
             )
-        page_count = document.page_count
         try:
-            # `csRGB` explicitly: `frombytes("RGB", ...)` below requires three
-            # bytes per pixel, and a page in a grayscale or CMYK colorspace
-            # would otherwise hand back a buffer of the wrong length.
-            pixmap = document[0].get_pixmap(dpi=72, colorspace=fitz.csRGB)
+            # scale 1 is 72 dpi. `convert("RGB")` because a grayscale or
+            # alpha bitmap would otherwise reach the JPEG writer as another mode.
+            first_page = document[0].render(scale=1).to_pil().convert("RGB")
         except Exception:
             raise Unconvertible(
                 422,
                 f"I couldn’t read the first page of {filename}. It may be damaged.",
             )
-        first_page = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+    finally:
+        document.close()
 
     return Converted(
         kind=Kind.PDF,

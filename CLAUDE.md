@@ -19,7 +19,6 @@
 - **Implementation briefs for `space/`** name: the files, the rules above, the design system (for UI), own ports / scratch `HOME` / `--user-data-dir` / scratch folders, a build in a scratch copy while the founder's app runs, "stop only exact PIDs", and the acceptance checks. `docs/learning-space/working-guide.md` has the check recipes.
 - **End of a working session:** run the `session-wrap-up` skill (`.claude/skills/session-wrap-up/SKILL.md`) to update the docs and remove stale lines.
 
-- Drive the iOS Simulator only with `mcp__Claude_Code_iOS_Simulator__control`. Never computer-use (it leaves a screen-recording indicator on the user's screen) — say so explicitly in any subagent brief that touches the simulator.
 - For the paused web client, use the built-in browser (`mcp__Claude_Browser__*`) against `scripts/web-dev.py`.
 - For the paused clients, the Paper MCP server is the design source; if it fails to connect, tell the user rather than editing `design/` by hand. Paper's agent interface (for reference when designing Learning Space tools) is captured in `docs/learning-space/reference/paper/` (local only).
 - Several Claude sessions can share this Mac. Before starting an `xcodebuild`, check `pgrep -f "Developer/usr/bin/xcodebuild"` and never kill someone else's build.

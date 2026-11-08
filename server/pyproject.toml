@@ -25,8 +25,8 @@ dependencies = [
     "pgvector>=0.3",
     "pillow>=11.0",
     "pillow-heif>=0.21",
-    "pymupdf>=1.25",
     "langsmith==0.11.2",
+    "pypdfium2>=5.15.1",
 ]
 
 [dependency-groups]

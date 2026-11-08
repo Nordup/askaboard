@@ -70,8 +70,6 @@ founder does not plan to use it again.
 - Third-party notices for the local voice: Settings downloads sherpa-onnx
   (Apache-2.0), the Kokoro model (Apache-2.0) and espeak-ng data (GPL-3.0).
   Show their licenses in Settings or the README before the public launch.
-- After the D8 rename, fix the clone link in `../learning-space-plugins/README.md`
-  (it names `github.com/Nordup/math-tutor`).
 - `space/resources/brief.md` line 3 says the person draws "with a pen or a
   tablet". The pen stays, but most launch users draw with a mouse or a
   trackpad (launch plan, "No pen"). Maybe name those too. This is agent text:
