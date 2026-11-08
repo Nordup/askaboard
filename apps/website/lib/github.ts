@@ -1,10 +1,9 @@
 import { REPO } from './site'
 
-/** The repo's star count, read once at build time. Null when the request fails (for example while the repo is private). */
+/** The repo's star count at build time: the first value on the page; StarCount.tsx then reads the live count in the browser. Null when the request fails (for example while the repo is private). */
 export async function getStars(): Promise<number | null> {
   try {
     const response = await fetch(`https://api.github.com/repos/${REPO}`, {
-      cache: 'force-cache',
       headers: { Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(4000)
     })

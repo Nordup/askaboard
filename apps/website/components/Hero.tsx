@@ -1,7 +1,8 @@
 import Image from 'next/image'
-import { formatStars, getStars } from '@/lib/github'
+import { getStars } from '@/lib/github'
 import { REPO_URL, SITE_NAME } from '@/lib/site'
 import { DownloadButton } from './DownloadButton'
+import { StarCount } from './StarCount'
 import styles from './Hero.module.css'
 
 /** The hero (decision D11): the top bar (the name on the left, Download and GitHub stars on the right) and the headline. The board round it is Board.tsx, over the whole page. */
@@ -22,13 +23,7 @@ export async function Hero() {
             <span className={styles.star} aria-hidden="true">
               ★
             </span>
-            {stars === null ? (
-              'GitHub'
-            ) : (
-              <>
-                <b className={styles.count}>{formatStars(stars)}</b> GitHub stars
-              </>
-            )}
+            <StarCount initial={stars} className={styles.count} />
           </a>
         </nav>
       </header>
