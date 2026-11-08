@@ -241,7 +241,7 @@ that does not answer in 2 s cannot hold the window. Decisions B26, B27 and B42.
 ## Live scenes (live drawing)
 
 How an agent's scene program becomes drawing on the board (decisions P11,
-P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
+P19, T12, T34; [`live-drawing-plan.md`](history/live-drawing-plan.md)):
 
 - **Scene files.** A program is inline code or a file in `boards/scenes/`
   of the learning folder, with `import` and `export` between files
@@ -329,7 +329,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   line, also from parallel async functions and functions of moving objects;
   results carry no warnings (decision B18). An error at a moment that
   write_scene did not evaluate comes in the next tool result (T31).
-- **Streaming** ([`streaming-scenes-plan.md`](streaming-scenes-plan.md),
+- **Streaming** ([`streaming-scenes-plan.md`](history/streaming-scenes-plan.md),
   T27-T32, T36, T37). The order of every run for the board (a draft, a start
   that runs again, a restage, a replay rebuild): the program body, `end()`,
   seeds, the description, the reply, then the sweep. A scene-mode run bakes
@@ -380,7 +380,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   one task per action. Cancel ends the worker; a crash of the stage process
   starts a new one, and the stage is rebuilt from its log. A run for the
   board replies after its seeds, and its sweep then streams samples in batches to the board
-  ([`streaming-scenes-plan.md`](streaming-scenes-plan.md)). Changing objects
+  ([`streaming-scenes-plan.md`](history/streaming-scenes-plan.md)). Changing objects
   are sampled only where what their recipes read changes (values, object
   tracks, the camera); a recipe that reads the time, takes random numbers
   or changes the scene while it is sampled is sampled at every time.
@@ -404,7 +404,7 @@ P19, T12, T34; [`live-drawing-plan.md`](live-drawing-plan.md)):
   line (host request `voiceLine`, answered by main, not by `host.ts`), and the
   audio length becomes the line length. The answers stay in the record, so a
   replay makes no call. `src/renderer/src/live/voice.ts` sets one audio element
-  from the player clock on each frame (T34, `voice-lines-plan.md`). The
+  from the player clock on each frame (T34, `history/voice-lines-plan.md`). The
   speaker (T39, T40): the local Kokoro program when the learner chose it in
   Settings, else the learner's Gemini key, else our voice server
   (`POST /v1/speech`; at its daily cap a `daily_cap` failure, and the board

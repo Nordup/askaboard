@@ -1,4 +1,4 @@
-// The first sketch from docs/live-drawing-plan.md ("The medium").
+// The first sketch from docs/history/live-drawing-plan.md ("The medium").
 // The API is not final: change this file to match the scene API as it is built.
 const r = 120
 const ball = circle(0, 0, r)                   // nothing is visible yet

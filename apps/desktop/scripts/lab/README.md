@@ -1,7 +1,7 @@
 # The live-drawing lab
 
 Experiments for the live-drawing expedition
-(`docs/live-drawing-plan.md`). Run everything from `apps/desktop/`.
+(`docs/history/live-drawing-plan.md`). Run everything from `apps/desktop/`.
 These are experiments, not tests.
 
 ## Start the lab app
@@ -40,7 +40,7 @@ scene reached each step, and the end), `final.png` and `meta.json`.
 node scripts/lab/council.mjs --client codex --task sphere            # gpt-6.1-sol, effort medium
 node scripts/lab/council.mjs --client claude --model opus --task fusion
 node scripts/lab/council.mjs --client codex --effort low --task "Explain eclipses."
-node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief ../../docs/drafts/brief-v18.md
+node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief ../../docs/history/drafts/brief-v18.md
 ```
 
 Flags: `--brief-only` (the task alone, as in a real session), `--no-code` and

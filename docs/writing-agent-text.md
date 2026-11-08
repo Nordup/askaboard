@@ -100,7 +100,7 @@ connector review rules, building agents, context engineering, prompting
 best practices) and the examples (the claude.ai system prompts, the
 anthropics/skills repo, Claude Code's own tool descriptions). Notes on tool
 design (naming, one tool with actions or several, results, errors):
-[`anthropic-tool-guidance.md`](anthropic-tool-guidance.md).
+[`anthropic-tool-guidance.md`](history/anthropic-tool-guidance.md).
 
 From "Writing effective tools for agents" (anthropic.com/engineering/
 writing-tools-for-agents, 2025-09-11), "Introducing advanced tool use"
@@ -181,7 +181,7 @@ voice, and the founder brought the old text back (I25).
   fact, and drop the mechanism (founder, 2026-10-31).
 - **Keep each fact in one place.** The guide holds the details, and a
   description names the guide topic.
-- **Write the draft in `drafts/<name>-<date>/`.** Do not edit the live files
+- **Write the draft in `history/drafts/<name>-<date>/`.** Do not edit the live files
   first.
 
 ### 3. Check the draft before you show it
@@ -210,7 +210,7 @@ voice, and the founder brought the old text back (I25).
     lab switch functions replaced (`codeItems = s => s`). Then diff those
     texts.
   - The I25 review used an HTML page with grey lines for unchanged text and
-    red and green words: `drafts/scene-tools-from-old-2026-10-27/compare.html`.
+    red and green words: `history/drafts/scene-tools-from-old-2026-10-27/compare.html`.
 - Do not guess why the founder dislikes a text. Ask, or wait for their notes.
 
 ### 5. Build and verify
@@ -263,14 +263,14 @@ voice, and the founder brought the old text back (I25).
 ### Where to look for how to write well
 
 - **This file:** the principles, the lessons below and the founder's words in the appendix.
-- **[`anthropic-tool-guidance.md`](anthropic-tool-guidance.md):** notes on tool design, by topic.
+- **[`anthropic-tool-guidance.md`](history/anthropic-tool-guidance.md):** notes on tool design, by topic.
 - **`reference/anthropic/` (local only; the index is its `README.md`).** The most useful parts:
   - `guidance/define-tools.md`: detailed descriptions; when to use the tool and when not; the good and poor `get_stock_price` example.
   - `guidance/writing-tools-for-agents.md`: "describe your tool to a new hire".
   - `guidance/connector-review-criteria.md`: "Describe what the tool does, and don't tell Claude how to behave".
   - `examples/claude-code-tool-descriptions.md`: Claude Code's own tools. Each has one opening sentence, a "Usage" list and pointers to the better tool.
   - `guidance/prompting-best-practices.md` and `examples/anthropics-skills/skills/skill-creator/SKILL.md`: explain the reason instead of MUST; ask for what to do, not what to avoid.
-- **The approved drafts, as models of the voice** (in `drafts/`):
+- **The approved drafts, as models of the voice** (in `history/drafts/`):
   - `tools-v2-draft.md` (I19)
   - `purposes-draft.md` (I20)
   - `explain-fully-draft.md` (I21)
@@ -283,8 +283,8 @@ voice, and the founder brought the old text back (I25).
 Follow the same steps to improve it.
 
 1. **Read the founder's ideas, in their words.** In this order:
-   [`idea.md`](idea.md), [`tutor-vision.md`](tutor-vision.md),
-   [`live-drawing-idea.md`](live-drawing-idea.md),
+   [`idea.md`](history/idea.md), [`tutor-vision.md`](history/tutor-vision.md),
+   [`live-drawing-idea.md`](history/live-drawing-idea.md),
    `docs/product-vision.md` (in git history),
    `docs/learn-ai-the-idea.md` (the origin, in git history), and the
    old tutor prompt in `server/app/tutor/prompt.py` (in git history) (`SYSTEM_PROMPT`, written
@@ -296,10 +296,10 @@ Follow the same steps to improve it.
 3. **Look at real behaviour:** [`baseline.md`](baseline.md) and later bench
    runs; the founder's own traces in `~/.askaboard/traces/` (read with
    `node apps/desktop/scripts/trace-report.mjs`); research sections 9–13 in
-   [`research.md`](research.md).
+   [`research.md`](history/research.md).
 4. **Check current facts with Haiku agents:** Anthropic's tool guidance (it
    may have a newer version), and the size limits above.
-5. **Write the draft in `docs/drafts/`** (see its README) and show it to the
+5. **Write the draft in `docs/history/drafts/`** (see its README) and show it to the
    founder before anything ships. Do not edit the live files first.
 6. **After approval, build it** (an Opus agent; the plumbing already exists:
    edit `brief.md` and the other files).

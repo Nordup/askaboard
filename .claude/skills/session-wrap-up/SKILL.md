@@ -42,20 +42,27 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 
 | File | Rule |
 | --- | --- |
-| `docs/README.md` | Update the status table and its date. Keep the reading order and glossary current. |
+| `docs/README.md` | Update the short status and its date. Put details in the linked doc, not here. Keep the reading order and glossary current. |
 | `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. |
-| `research.md` | Add findings with source and date. Mark facts that are no longer true. |
+| `launch-plan.md` / `work-map.md` | The roadmap and the open work. Mark finished items, and add new open items with the founder's words. |
 | `working-guide.md` | Add new pitfalls, check recipes and founder preferences. Remove recipes that no longer work. |
 | `architecture.md` | Change only when structure changed (a process, a module's job, a data flow, a file location). No line numbers. |
 | `design-system.md` | Add new shared parts, tokens and approved screens. Same commit as the CSS change. |
-| `plan.md` | Mark finished steps, move items between "Open follow-ups", "Later" and done. |
-| `idea.md` | Never rewrite the founder's words. Update only the status note at the top. |
-| `step-3-*.md` | Historical. Touch only the status note. |
+| `docs/history/` | Finished plans, logs, research and drafts. Do not rewrite them. Change only a status note or a link path. Never rewrite the founder's words (`history/idea.md` and the other idea files). |
 | `AGENTS.md` / `CLAUDE.md` | Only binding rules (what every agent must or must not do). Facts and history go to the docs above. |
 | `apps/desktop/README.md` | Run, connect, tool table, dev automation. Keep it under ~150 lines. |
 | Templates (`apps/desktop/resources/…`) | Fix tool names or behaviour that changed. They ship to users. |
 
-## 4. Remove outdated lines
+## 4. Move finished plans to history
+
+- A plan or a log moves to `docs/history/` when its work is done, when a new
+  plan replaces it, or when it is a dated record. Use `git mv` and keep the
+  file name.
+- Fix every link to a moved file, and every link from it: `git grep` the
+  file name in all tracked files, code comments included.
+- Keep a draft in `docs/history/drafts/` only when the founder wants to keep it.
+
+## 5. Remove outdated lines
 
 - Delete or correct every line the audit found. Do not add a correction below
   an outdated line.
@@ -63,7 +70,7 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 - Keep each file focused: if a section grows long and belongs elsewhere, move
   it.
 
-## 5. Check for design drift
+## 6. Check for design drift
 
 Run these searches (read-only) and fix or report findings:
 
@@ -74,13 +81,13 @@ Run these searches (read-only) and fix or report findings:
   system's comment block in `styles/app.css`.
 - New spacing values in CSS that do not use a token or a `--menu-*` property.
 
-## 6. Memory
+## 7. Memory
 
 Update the auto-memory only for facts the repo cannot hold (who the founder
 is, how they like to work, cross-project context). Point to the docs instead
 of copying them.
 
-## 7. Commit and report
+## 8. Commit and report
 
 1. Commit the docs on their own: `docs: session wrap-up <YYYY-MM-DD>` (end the
    message with the attribution line from the system reminder).

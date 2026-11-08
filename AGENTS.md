@@ -25,7 +25,7 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://api.askaboard.com`. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
 | `apps/website/` | The Askaboard website (Next.js; D8, [`website-plan.md`](docs/website-plan.md)) | Active; Vercel deployment authorized |
 | `assets/brand/` | Logo, icon and brand files | Active |
-| `docs/` | Askaboard docs: status, plans, decisions, research | Active |
+| `docs/` | Askaboard docs: status, plans, decisions, design and guides. Finished plans, logs, research and drafts are in `docs/history/` | Active |
 | (git history) | The paused built-in tutor (`web/`, `server/`, `design/`, `scripts/`, its docs), the SwiftUI iPad client and the tutor's landing page | **Removed** from the tree 2026-11-08 (D24); restore from history if needed |
 
 ## Run it

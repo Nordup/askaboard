@@ -26,7 +26,7 @@ and what went wrong before.
 - Wants to talk through **how** a fix will be built before it is built:
   propose the design, listen, and let the founder's picture decide.
 - For text that agents read, follow [`writing-agent-text.md`](writing-agent-text.md).
-- Agent text changes start as a draft in `docs/drafts/`, sent
+- Agent text changes start as a draft in `docs/history/drafts/`, sent
   to the founder, applied only after "approved", then measured in the lab.
   When asked to fix one passage, change only that passage, in the voice of
   the whole brief, and read the whole brief first.
@@ -61,7 +61,7 @@ and what went wrong before.
 ## The workflow that worked
 
 1. **Plan the step** with the founder; record decisions in
-   [`decisions.md`](decisions.md) and status in [`plan.md`](plan.md).
+   [`decisions.md`](decisions.md) and status in [`plan.md`](history/plan.md).
 2. **Research with Haiku agents** in parallel (one narrow question each,
    sources required, "NOT FOUND" instead of guesses).
 3. **Implement with one Opus agent** (medium effort) per area; two at once
@@ -170,7 +170,7 @@ whole set every time, and one run per model is usually enough.
 Use `--brief-only` to measure what a real session sees (the brief through
 `AGENTS.md`, no council purpose text); without it the prompt starts with
 `council/purpose.md`, which says the purpose out loud. Compare with the
-earlier runs of the same task in `live-drawing-log.md`.
+earlier runs of the same task in `history/live-drawing-log.md`.
 
 Use `--no-code` (also on `lab.mjs start`) to measure a run without worlds:
 the app starts with `LS_LAB_NO_CODE=1`, scenes have no `world()`, and the

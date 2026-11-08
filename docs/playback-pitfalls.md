@@ -87,9 +87,9 @@ you add a new fix here, check if a change can remove the seam instead.
    for ink; keep it as a rule for every new kind.
 
 Rejected on 2026-10-27, and still rejected: frames computed at display time
-([`drafts/on-demand-frames-2026-10-27.md`](drafts/on-demand-frames-2026-10-27.md)). Scenes stream
+([`drafts/on-demand-frames-2026-10-27.md`](history/drafts/on-demand-frames-2026-10-27.md)). Scenes stream
 another way: one forward sweep in a fixed order, independent of the playhead. Only a preview
-computes moments on demand (T32, [`streaming-scenes-plan.md`](streaming-scenes-plan.md)).
+computes moments on demand (T32, [`streaming-scenes-plan.md`](history/streaming-scenes-plan.md)).
 
 ## Where the drawing pipeline lives
 
@@ -99,4 +99,4 @@ direct port, B13) → board (decode, one compile per draft, B12) → player
 items in their own workers, B10). Decisions T18, B10–B14 in
 [`decisions.md`](decisions.md); the overview in
 [`architecture.md`](architecture.md); the speed work in
-[`perf-plan.md`](perf-plan.md).
+[`perf-plan.md`](history/perf-plan.md).

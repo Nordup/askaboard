@@ -44,7 +44,7 @@ export interface ReadContext {
   sceneNames: Array<{ id: string; name: string | null }>
 }
 
-/** The part forms (docs/drafts/board-tools-redesign-2026-10-27.md, section 10). */
+/** The part forms (docs/history/drafts/board-tools-redesign-2026-10-27.md, section 10). */
 export type PartArg =
   | string
   | { region: BoardRect }
