@@ -27,8 +27,6 @@ const CHAT_START = 10
 const CHAT_KNEE = 180
 /** A switch is one crossfade (ms): the old scene fades out while the new one fades in from its start. */
 const CROSSFADE = 320
-/** The scene shown while the next request is typed: it holds its frame at this opacity (founder, 2026-11-07). */
-const DIM = 0.4
 /** A finished scene holds its last frame this long (s), then plays again (founder, 2026-11-07). */
 const REPLAY_GAP = 3
 
@@ -104,7 +102,7 @@ export function AppShell() {
       host: HTMLDivElement
       index: number
       startAt: number
-      /** The scene time this layer holds (it is not the one playing: dimmed for the next request, or fading out); null while it plays. */
+      /** The scene time this layer holds (it is not the one playing: it fades out); null while it plays. */
       frozen: number | null
       /** The opacity this layer had when the crossfade began, and the one it ends at. */
       from: number
@@ -234,23 +232,14 @@ export function AppShell() {
     }
 
     /**
-     * Switch to use case `i` once its request is typed: it starts from t = 0 on the layer that
+     * Switch to use case `i` as its request starts to type: it starts from t = 0 on the layer that
      * shows less now, and fades in while the other fades out from the frame it holds. Both scroll
-     * directions are the same. Back to the scene that was dimmed for the request (the visitor
-     * scrolled back before the next one showed): it goes on from its held frame, at full again.
+     * directions are the same.
      */
     const show = (i: number): void => {
       target = i
       setIndex(i)
       if (hold && front.index === i) return
-      if (front.index === i && front.frozen !== null) {
-        const now = performance.now()
-        paint(now)
-        front.startAt = now - front.frozen * 1000
-        front.frozen = null
-        fadeTo(now, 1, 0)
-        return
-      }
       swap(i)
     }
 
@@ -291,16 +280,6 @@ export function AppShell() {
       front = into
       back = out
       fadeTo(now, 1, 0)
-    }
-
-    /** The scene shown waits for the next request: it holds its frame, its voice stops, and it dims to DIM. */
-    const dim = (): void => {
-      if (front.index < 0) return
-      const now = performance.now()
-      paint(now)
-      freeze(front, now)
-      freeze(back, now)
-      fadeTo(now, DIM, 0)
     }
 
     // ---------- The window glides into its sticky place and out of it (the founder: no hard stop) ----------
@@ -429,13 +408,11 @@ export function AppShell() {
 
     // ---------- The loop runs only while the window is on screen ----------
     let asked = -1
-    /** The person asks for use case i in the agent window; the board switches when it is typed (showRef). */
+    /** The person asks for use case i in the agent window; the board switches as the request starts to type (showRef). */
     const ask = (i: number): void => {
       target = i
       asked = i
       setAsked(i)
-      // The board dims with the chat window (it is never empty); the new scene plays once the request is typed.
-      dim()
     }
     showRef.current = (i: number): void => {
       if (i === target) show(i)
@@ -534,7 +511,7 @@ export function AppShell() {
     <section className={styles.section} ref={sectionRef} aria-label={`${SITE_NAME} at work`} style={{ '--pad-desk': SHELL_PAD.desk, '--pad-phone': SHELL_PAD.phone } as CSSProperties}>
       <div className={styles.track} ref={trackRef} data-shell-track="">
         <div className={styles.stage} ref={stageRef}>
-          <AgentPrompt index={asked} onDone={(i) => showRef.current(i)} />
+          <AgentPrompt index={asked} onStart={(i) => showRef.current(i)} />
           <div className={styles.frame} ref={frameRef} data-shell-frame="">
             <div className={styles.window}>
               <div className={styles.inner} ref={innerRef}>

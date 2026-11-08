@@ -44,9 +44,8 @@
  *   is ahead of that clock (0: none), and the shell moves the scene's time back by that much from
  *   then on. So the scene's time stays in one place (the shell's) and the clock can only hold it.
  *   With reduced motion or a held frame the shell does not call it.
- * - When the scene stops playing (the shell holds its frame, dimmed, while the next request is
- *   typed, or fades it out), the shell calls hush(): its sound stops then, not when it is no
- *   longer drawn. A held scene may go on later from the same frame (lag is called again then).
+ * - When the scene stops playing (the shell holds its frame and fades it out in a switch), the
+ *   shell calls hush(): its sound stops then, not when it is no longer drawn.
  *
  * Add a use case: write the module, then add an entry to USE_CASES below. The page loads the
  * modules with import() only when the section comes near the viewport.

@@ -6,25 +6,24 @@ import board from './Board.module.css'
 import styles from './AgentPrompt.module.css'
 import { USE_CASES } from './usecases'
 
-/** Milliseconds per typed character, and the pause after the reply line before the board starts. */
+/** Milliseconds per typed character. */
 const TYPE_MS = 55
-const WORK_MS = 650
 
 /**
  * The chat app's window in front of the app shell's lower-left corner: each use case starts the
  * way it really happens. The person types the request in their own chat app (Claude, ChatGPT: the
  * app's mark and name in the title bar; the request types into their message bubble), the app
- * answers with "Drawing it on the board…", and only then the board in the shell starts drawing
- * (`onDone`). Learning Space has no input box of its own, so the question is
+ * answers with "Drawing it on the board…". The board in the shell starts drawing at once, while the
+ * request types (`onStart`; founder, 2026-11-08: no wait for the typing). Learning Space has no input box of its own, so the question is
  * never inside the shell. The window has the hero windows' quiet look, wakes on hover and drags.
  * `index` is the use case asked now (-1: none yet).
  */
-export function AgentPrompt({ index, onDone }: { index: number; onDone: (i: number) => void }) {
+export function AgentPrompt({ index, onStart }: { index: number; onStart: (i: number) => void }) {
   const useCase = index >= 0 ? USE_CASES[index] : null
   const [typed, setTyped] = useState(0)
   const [working, setWorking] = useState(false)
-  const done = useRef(onDone)
-  done.current = onDone
+  const start = useRef(onStart)
+  start.current = onStart
   /** The use cases whose request was typed out once: asked again, the request shows whole and the board plays at once. */
   const typedOnce = useRef(new Set<number>())
 
@@ -33,14 +32,13 @@ export function AgentPrompt({ index, onDone }: { index: number; onDone: (i: numb
     setWorking(false)
     if (index < 0) return
     const text = USE_CASES[index].request
+    start.current(index)
     if (typedOnce.current.has(index) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       setTyped(text.length)
       setWorking(true)
-      done.current(index)
       return
     }
     let frame = 0
-    let timer = 0
     const t0 = performance.now()
     const step = (now: number): void => {
       const n = Math.min(text.length, Math.floor((now - t0) / TYPE_MS))
@@ -52,12 +50,10 @@ export function AgentPrompt({ index, onDone }: { index: number; onDone: (i: numb
       // Marked only when the typing ends, so StrictMode's second effect run still types it.
       typedOnce.current.add(index)
       setWorking(true)
-      timer = window.setTimeout(() => done.current(index), WORK_MS)
     }
     frame = requestAnimationFrame(step)
     return () => {
       cancelAnimationFrame(frame)
-      clearTimeout(timer)
     }
   }, [index])
 
