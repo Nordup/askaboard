@@ -17,7 +17,7 @@ import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
 
 /** Our ingest ignores the key (it adds its own); PostHog's wire format has the field. */
 const API_KEY = ''
-const DEFAULT_HOST = 'https://135-181-38-113.sslip.io'
+const DEFAULT_HOST = 'https://api.askaboard.com'
 
 // Retry delays shorter than this still wait for the next background check.
 const FLUSH_INTERVAL_MS = 10_000

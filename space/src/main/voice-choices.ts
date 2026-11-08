@@ -4,7 +4,7 @@
  */
 
 /** Our voice server (decision P25): POST /v1/speech. ASKABOARD_VOICE_HOST changes it. */
-const DEFAULT_VOICE_HOST = 'https://135-181-38-113.sslip.io'
+const DEFAULT_VOICE_HOST = 'https://api.askaboard.com'
 export const voiceHost = (): string => (process.env.ASKABOARD_VOICE_HOST?.trim() || DEFAULT_VOICE_HOST).replace(/\/+$/, '')
 
 export const VOICES = ['Charon', 'Kore', 'Aoede', 'Leda', 'Puck', 'Orus'] as const

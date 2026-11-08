@@ -85,5 +85,5 @@ export interface UseCase {
 export const USE_CASES: readonly UseCase[] = [
   { id: 'sky', board: 'Blue sky', request: 'Why is the sky blue?', app: 'Claude', logo: 'claude', load: () => import('./blue-sky') },
   { id: 'check', board: 'Ladder', request: 'I cannot solve it. Can you help me? Explain everything.', app: 'Claude', logo: 'claude', load: () => import('./ladder') },
-  { id: 'sheet', board: 'Q3 sales', request: 'Help me understand Q3-sales.xlsx', app: 'Claude', logo: 'claude', load: () => import('./q3-sales') }
+  { id: 'sheet', board: 'Q3 sales', request: "Q3-sales.xlsx has 2,000+ rows and I'm lost. Can you explain it simply?", app: 'Claude', logo: 'claude', load: () => import('./q3-sales') }
 ]

@@ -156,7 +156,7 @@ export const SPRITES: SpriteDef[] = [
     [
       ['sky', 'blue', 'left', [['why is', 26, -4, -2], ['the sky', 28, 3, 2], ['blue?', 34, -3, 0]], ['why is the sky', 'blue?']],
       ['check', 'green', 'right', [['I cannot', 24, 5, 0], ['solve it,', 26, -3, -2], ['help me?', 26, 2, 0]], ['I cannot solve it,', 'help me?']],
-      ['sheet', 'yellow', 'left', [['help me', 26, -5, -2], ['understand', 19, 2, 0], ['Q3-sales.xlsx', 16, -3, 2]], ['help me understand', 'Q3-sales.xlsx']]
+      ['sheet', 'yellow', 'left', [['2,000+ rows', 19, -5, -2], ["I'm lost", 26, 2, 0], ['explain simply?', 16, -3, 2]], ["2,000+ rows, I'm lost,", 'explain simply?']]
     ] as const
   ).flatMap(([id, color, side, words, lines], index): SpriteDef[] => {
     const other = side === 'left' ? 'right' : 'left'

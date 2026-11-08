@@ -23,7 +23,7 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | --- | --- | --- |
 | `space/` | Askaboard: Electron canvas app with no AI inside (except the voice, decision P1); agents connect over MCP | **Main product.** Docs in `docs/learning-space/` |
 | `../learning-space-plugins` | Public plugin repo (`github.com/Nordup/askaboard-plugins`): Claude Code, ChatGPT and Codex, Cursor plugins; Claude Desktop extension. Keep it a Codex plugin: no `plugin.json` or `mcp.json` at the plugin root (decision I30) | Active, separate repo |
-| `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://135-181-38-113.sslip.io` until the brand domain. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
+| `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://api.askaboard.com`. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
 | (git history) | SwiftUI iPad client (`MathTutor/`, `Vendor/`, `project.yml`) | **Removed** from the tree 2026-11-08; restore from history if needed |
