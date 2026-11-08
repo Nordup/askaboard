@@ -95,8 +95,9 @@ built.
 
 ## Feedback
 
-Questions, ideas and bugs are welcome. Open an
-[issue](https://github.com/Nordup/askaboard/issues) or email
+Questions, ideas and bugs are welcome. Ask a question or share an idea
+in [Discussions](https://github.com/Nordup/askaboard/discussions), report a
+bug in [Issues](https://github.com/Nordup/askaboard/issues), or email
 [nordup.ondr@gmail.com](mailto:nordup.ondr@gmail.com).
 
 ## License

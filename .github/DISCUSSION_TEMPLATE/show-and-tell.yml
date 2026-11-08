@@ -1,0 +1,30 @@
+title: ""
+labels: []
+body:
+  - type: input
+    id: topic
+    attributes:
+      label: Topic
+      description: What did you learn on this board?
+      placeholder: "Why the derivative of sin is cos"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      multiple: true
+      options:
+        - Claude Code
+        - Claude Desktop
+        - Codex
+        - ChatGPT
+        - Cursor
+        - Other
+  - type: textarea
+    id: board
+    attributes:
+      label: The board
+      description: Add a screenshot or a short recording of the board. Tell what helped you and what did not.
+    validations:
+      required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/Nordup/askaboard/discussions/categories/q-a
+    about: Help with install, agents, voice or the board.
+  - name: Suggest an idea
+    url: https://github.com/Nordup/askaboard/discussions/categories/ideas
+    about: Ideas for new features. Use Issues for bugs only.

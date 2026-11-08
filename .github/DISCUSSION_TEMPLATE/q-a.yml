@@ -1,0 +1,42 @@
+title: ""
+labels: []
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What did you try, and what happened?
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: Askaboard version
+      description: Askaboard menu → About Askaboard.
+      placeholder: "0.1.0"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.1"
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac
+      options:
+        - Apple Silicon (M1 or later)
+        - Intel
+        - I do not know
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      description: The app that you connect to Askaboard.
+      multiple: true
+      options:
+        - Claude Code
+        - Claude Desktop
+        - Codex
+        - ChatGPT
+        - Cursor
+        - Other
