@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
-  <title id="title">Minimal robot visor and antenna logo</title>
-  <path d="M347 190 389 133" fill="none" stroke="#0C0E17" stroke-width="22" stroke-linecap="round"/>
-  <circle cx="397" cy="121" r="28" fill="#6051DC"/>
-  <rect x="76" y="184" width="360" height="152" rx="76" fill="#0C0E17"/>
-  <circle cx="190" cy="260" r="18" fill="#FFFFFF"/>
-  <circle cx="322" cy="260" r="18" fill="#FFFFFF"/>
-</svg>

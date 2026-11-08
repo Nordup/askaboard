@@ -1,4 +1,5 @@
 import styles from './DownloadButton.module.css'
+import { DOWNLOAD_URL } from '@/lib/site'
 
 /** The Apple logo of the download button. */
 function AppleLogo() {
@@ -12,7 +13,7 @@ function AppleLogo() {
 /** "Download for Mac": the one button of the hero and of the download section. Sizes are design units (--u). */
 export function DownloadButton({ className }: { className?: string }) {
   return (
-    <a href="#download" className={className ? `${styles.download} ${className}` : styles.download}>
+    <a href={DOWNLOAD_URL} className={className ? `${styles.download} ${className}` : styles.download}>
       <AppleLogo />
       Download for Mac
     </a>
