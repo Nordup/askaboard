@@ -39,6 +39,8 @@
 .mark {
   width: clamp(30px, calc(36 * var(--u)), 36px);
   height: auto;
+  /* The sweep's high right end, next to the name, makes a centred mark look high: set it down a little. */
+  transform: translateY(0.07em);
 }
 
 .links {
