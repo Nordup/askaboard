@@ -24,7 +24,7 @@ const shim = '${HOME}/.askaboard/bin/askaboard'
 
 // The plugin repo owns the real artifact (with icon and long description).
 // When it is checked out next to this repo, ship that file instead.
-const pluginArtifact = resolve(root, '../../learning-space-plugins/claude-extensions/askaboard/dist/askaboard.mcpb')
+const pluginArtifact = resolve(root, '../../../learning-space-plugins/claude-extensions/askaboard/dist/askaboard.mcpb')
 if (existsSync(pluginArtifact)) {
   copyFileSync(pluginArtifact, out)
   console.log(`copied ${pluginArtifact} -> ${out}`)

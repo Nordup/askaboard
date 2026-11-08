@@ -1,5 +1,5 @@
 // The contract between the page (WorldSurface) and the world worker, over one
-// MessagePort. See docs/learning-space/one-world-architecture.md.
+// MessagePort. See docs/one-world-architecture.md.
 // Board values are board points. Pixels are device pixels of the surface.
 
 import type { WorldTune } from './world-tune'

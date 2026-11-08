@@ -1,6 +1,6 @@
 /*
  * The app shell under the hero (decision D12): the app's window in its own look, copied from
- * space/src/renderer/src/styles/tokens.css and app.css (.sidebar, .board-row, .topbar, .pill,
+ * apps/desktop/src/renderer/src/styles/tokens.css and app.css (.sidebar, .board-row, .topbar, .pill,
  * .status-dot, .board-controls, .pill-bar, .tool). Nothing in it works.
  *
  * Scroll: the track is as tall as the stage plus one scroll step per use case; the stage sticks in

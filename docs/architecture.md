@@ -2,7 +2,7 @@
 
 Read this once to know how the app fits together and where to look. It
 describes stable structure, not details: for exact behaviour, read the file
-it points to. All paths are under `space/` unless stated otherwise.
+it points to. All paths are under `apps/desktop/` unless stated otherwise.
 
 ## The big picture
 

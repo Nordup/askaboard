@@ -1,5 +1,5 @@
 /**
- * The app's reading panel (ScriptPanel.tsx in space/), for a use case that plays its scene as the
+ * The app's reading panel (ScriptPanel.tsx in apps/desktop/), for a use case that plays its scene as the
  * app does: the scene's name, a step bar with one segment per step, the step lines read past a
  * light, and the step count with the playing buttons. Nothing in it works; update(t) sets it from
  * the scene time, so a frame depends only on t.

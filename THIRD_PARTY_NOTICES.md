@@ -26,8 +26,8 @@ domain.
 
 ## Code adapted from other projects
 
-The usage-data code (`space/src/main/analytics.ts` and
-`space/src/main/analytics-id.ts`) follows the telemetry design of
+The usage-data code (`apps/desktop/src/main/analytics.ts` and
+`apps/desktop/src/main/analytics-id.ts`) follows the telemetry design of
 [T3 Code](https://github.com/pingdotgg/t3code). MIT License,
 © 2026 T3 Tools Inc.
 

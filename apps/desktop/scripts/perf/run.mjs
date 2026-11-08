@@ -14,7 +14,7 @@
  * agent is done and the last scene has played, the app stops (exact PIDs).
  * --dev (the default) runs electron-vite dev on the current source; --built runs out/.
  *
- * Run folder: space/.lab/perf/runs/<stamp>-<task>-<client>-<model>[-<effort>]/ with
+ * Run folder: apps/desktop/.lab/perf/runs/<stamp>-<task>-<client>-<model>[-<effort>]/ with
  * prompt.md, the agent's output, reply.md, calls.json, trace/ (the app trace with
  * its scene events), the agent's transcript (transcript-claude.jsonl or
  * rollout-codex.jsonl), metrics.json, timeline.md and (unless --no-video)

@@ -1,6 +1,6 @@
 # Perf: measure one change
 
-Change one thing, measure it, and compare. The scripts write to `space/.lab/perf/`
+Change one thing, measure it, and compare. The scripts write to `apps/desktop/.lab/perf/`
 (local only): one folder per run in `runs/`, one JSON line per run in
 `history.jsonl`, and the latest table in `report.md`.
 
@@ -10,7 +10,7 @@ Change one thing, measure it, and compare. The scripts write to `space/.lab/perf
 
 On Linux (decision D6) the run takes CPU per process from `/proc`, the GPU load from the AMD `gpu_busy_percent` of the card that the app's GPU process uses, and the machine name from DMI. It has no footprint, no `sample` stacks (`--profile`) and no `seen`: those values are empty. A Linux run is not comparable with the M1 standard.
 
-Run `npm run build` first. From `space/`:
+Run `npm run build` first. From `apps/desktop/`:
 
 ```sh
 node scripts/perf/render.mjs --label before                     # all default scenes, about 8 minutes
@@ -147,7 +147,7 @@ Known differences:
 - Headless: `claude -p` and `codex exec`, one prompt, no person who answers, watches or draws. No voice.
 - A fresh session, a fresh app and an empty folder per run: no history, memory or earlier boards; caches start cold (the prompt cache too).
 - A clean install: Claude loads only project and local settings (`--setting-sources project,local`) and only the Askaboard server (`--strict-mcp-config`); Codex uses its own `CODEX_HOME` with only the lab server. The founder's plugins, skills, other MCP servers and global instructions are not there.
-- The agents reach the app over direct HTTP (`127.0.0.1:<port>/mcp`) from their config, not through an installed plugin. The relay's own time is not measured. A plugin bug does not show here: the Agent Plugin cut of all tool text was invisible in the lab (I30). To check through the plugin, see "A real plugin" in `docs/learning-space/working-guide.md`.
+- The agents reach the app over direct HTTP (`127.0.0.1:<port>/mcp`) from their config, not through an installed plugin. The relay's own time is not measured. A plugin bug does not show here: the Agent Plugin cut of all tool text was invisible in the lab (I30). To check through the plugin, see "A real plugin" in `docs/working-guide.md`.
 - Claude: the desktop app asks before some actions by default; the lab never asks. Codex: `default_tools_approval_mode = "approve"` for the Askaboard server (the desktop app asks once, then remembers).
 - Codex: `service_tier = "default"`. The `[features]` lines of earlier lab configs (`js_repl = false`, `multi_agent_v2 = true`) are gone: in Codex 0.164 `js_repl` is a removed feature and `multi_agent_v2` is on by default.
 - The app window is covered or in the background, with the switches that keep it rendering; the screencast of a video run adds CPU load.
@@ -166,7 +166,7 @@ Known differences:
 The agent turns (`claudeTurn`, `codexTurn`, `prepareCodexHome`) and the app
 start and stop are shared with `scripts/lab/council.mjs` through `scripts/lab/common.mjs`.
 
-## Commands (from `space/`)
+## Commands (from `apps/desktop/`)
 
 ```sh
 node scripts/perf/run.mjs --client claude --model opus --effort medium --task orbit --repeat 3 --label before
@@ -219,7 +219,7 @@ All times are seconds from the agent's start (replay: from the first call).
 | Field | Meaning |
 | --- | --- |
 | `kind`, `task`, `client`, `model`, `effort`, `label`, `timestamp`, `mode` | What ran: `model` or `replay`; `dev` or `built`. |
-| `code` | `commit` (HEAD), `dirty`, `diff_hash`: a hash of `git diff HEAD` and the untracked files in `space/src` and `space/resources`. The same hash means the same code. |
+| `code` | `commit` (HEAD), `dirty`, `diff_hash`: a hash of `git diff HEAD` and the untracked files in `apps/desktop/src` and `apps/desktop/resources`. The same hash means the same code. |
 | `time.wall` | The agent process from start to exit (replay: until the last call returned). |
 | `time.first_call`, `first_scene`, `first_play` | The start of the first tool call, the first scene program (`write_scene`; `run_scene` before 2026-10-26, a preview too), the first play (`play_scene` start; `run_scene` without preview). Metrics from before 2026-10-26 call `first_scene` `first_run_scene`. |
 | `time.first_visible` | The first board pixel change at or after the first scene program, from the screencast (null with `--no-video`). In a replay it is app time only. `last_visible`: the last change. |

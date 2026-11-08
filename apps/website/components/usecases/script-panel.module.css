@@ -1,5 +1,5 @@
 /*
- * The app's reading panel over the board (space/src/renderer/src/styles/app.css, "Script panel";
+ * The app's reading panel over the board (apps/desktop/src/renderer/src/styles/app.css, "Script panel";
  * its values from styles/tokens.css): a copy for the use cases, which play a scene as the app
  * does. script-panel.ts sets the step bar's fills, the reading view's offset and the status.
  * Sizes are the window's own CSS px.

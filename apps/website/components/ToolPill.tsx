@@ -3,7 +3,7 @@ import { Icon, LOCK_KEY, TOOLS, toolKeys, type ToolId } from './hero/tools'
 import styles from './ToolPill.module.css'
 
 /**
- * The app's tool pill (space/src/renderer/src/components/BoardControls.tsx, app.css .pill-bar and
+ * The app's tool pill (apps/desktop/src/renderer/src/components/BoardControls.tsx, app.css .pill-bar and
  * .tool): the lock, then the tools in their groups. One copy for the hero (it works, at a bigger
  * scale) and the app shell (a picture: no handlers, no focus). The scale is --p, one app px in
  * CSS px; the caller's class sets it and the place.

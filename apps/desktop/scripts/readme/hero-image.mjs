@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Makes the README hero image, assets/askaboard/readme/hero.png, with the app's own board.
+ * Makes the README hero image, assets/brand/readme/hero.png, with the app's own board.
  *
- *   cd space && node scripts/readme/hero-image.mjs
+ *   cd apps/desktop && node scripts/readme/hero-image.mjs
  *
  * Why: the README shows the real app, not a mock-up. The picture is the website hero rebuilt on a
  * real board (hero-scene.js, the board's own ink and items), in the real app window, with a Claude
@@ -19,7 +19,7 @@
  *    and writes one 2560 x 1440 rectangle (compose.cjs, offscreen Electron).
  * 7. Stops exactly the processes it started and removes the scratch folder.
  * 8. Cuts the share cards from the same picture: apps/website/public/askaboard-social.png (1200 x 630)
- *    and assets/askaboard/exports/web/github-social.png (1280 x 640).
+ *    and assets/brand/exports/web/github-social.png (1280 x 640).
  * macOS only (screencapture, swift).
  */
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
@@ -33,12 +33,12 @@ import { connectAgent } from './agent.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SPACE = join(HERE, '..', '..')
-const OUT = join(SPACE, '..', 'assets', 'askaboard', 'readme', 'hero.png')
+const OUT = join(SPACE, '..', '..', 'assets', 'brand', 'readme', 'hero.png')
 const HERO_WIDTH = 2560
 /** The share cards made from OUT: the crop's top edge in OUT's pixels, and the card's size. */
 const SOCIAL = [
-  { out: join(SPACE, '..', 'apps', 'website', 'public', 'askaboard-social.png'), width: 1200, height: 630, top: 92 },
-  { out: join(SPACE, '..', 'assets', 'askaboard', 'exports', 'web', 'github-social.png'), width: 1280, height: 640, top: 152 }
+  { out: join(SPACE, '..', 'website', 'public', 'askaboard-social.png'), width: 1200, height: 630, top: 92 },
+  { out: join(SPACE, '..', '..', 'assets', 'brand', 'exports', 'web', 'github-social.png'), width: 1280, height: 640, top: 152 }
 ]
 const ELECTRON = createRequire(join(SPACE, 'package.json'))('electron')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

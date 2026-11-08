@@ -22,7 +22,7 @@ Terms:
 
 ## The pipeline, step by step
 
-All references are to `space/src/`.
+All references are to `apps/desktop/src/`.
 
 1. **The outline.** The scene library builds the path as absolute SVG
    segments (`shared/pen-shapes.ts`; the stage gets these functions through

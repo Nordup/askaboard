@@ -1,6 +1,6 @@
 /**
  * Files of the learning folder for a world's code, and a world's console. See
- * docs/learning-space/one-world-architecture.md, section 6.
+ * docs/one-world-architecture.md, section 6.
  *
  * The worker's script is a data: URL, so a relative URL has no base. Here a path
  * with no scheme becomes a URL of main/live-item-protocol.ts, in fetch, in

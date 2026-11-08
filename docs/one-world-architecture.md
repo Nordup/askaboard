@@ -6,7 +6,7 @@
 > is built. Terms:
 > a **world** is a live node with mode `world`. The **surface** is the one GPU
 > canvas that draws all worlds. The contract between the page and the worker is
-> `space/src/shared/world-protocol.ts`.
+> `apps/desktop/src/shared/world-protocol.ts`.
 
 ## 1. The layers
 
@@ -52,7 +52,7 @@ flowchart LR
   RT --> W2
 ```
 
-The `world/` paths are under `space/src/renderer/src/live-pixels/`.
+The `world/` paths are under `apps/desktop/src/renderer/src/live-pixels/`.
 
 | Module | Job |
 | --- | --- |

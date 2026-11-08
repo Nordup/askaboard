@@ -1,4 +1,4 @@
-// The README hero image's board (space/scripts/readme/hero-image.mjs plays it): the website hero
+// The README hero image's board (apps/desktop/scripts/readme/hero-image.mjs plays it): the website hero
 // (apps/website/components/hero: scene.ts drawings, layout.ts places) rebuilt with the board's own
 // ink and items, in its still state. Board points = the hero's design units, origin at the centre.
 // The places differ from the site's: the site's windows are left out (the drawings stay loose at the

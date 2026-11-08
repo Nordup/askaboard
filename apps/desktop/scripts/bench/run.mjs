@@ -121,7 +121,7 @@ function validate() {
     })
   }
   if (!['claude', 'codex'].includes(opts.client)) throw new Error('--client is claude or codex')
-  if (!opts.dev && !existsSync(join(SPACE, 'out/main/index.js'))) throw new Error('No built app in out/. Run `npm run build` in space/ first, or pass --dev.')
+  if (!opts.dev && !existsSync(join(SPACE, 'out/main/index.js'))) throw new Error('No built app in out/. Run `npm run build` in apps/desktop/ first, or pass --dev.')
 }
 
 // ---------- The app instance ----------

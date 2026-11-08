@@ -3,7 +3,7 @@ import { ago, boardTexts, digestBoard, matchWords, plural, q, savedCorners, sear
 import type { FolderSession } from './folder'
 
 /**
- * The view of the learning folder for list_boards, open_board and move_board (docs/learning-space/drafts/board-tools-redesign-2026-10-27.md, 4b):
+ * The view of the learning folder for list_boards, open_board and move_board (docs/drafts/board-tools-redesign-2026-10-27.md, 4b):
  * one summary per board and the text each board holds, for list_boards and its search.
  *
  * Nothing is indexed ahead of time. Each call walks the folder and stats

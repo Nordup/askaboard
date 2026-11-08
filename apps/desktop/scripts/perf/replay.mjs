@@ -45,7 +45,7 @@
  * whose args the trace cut, a tool the app does not have, a call that fails now
  * or whose ok differs from the recording are listed in metrics.json → replay.
  *
- * Run folder: space/.lab/perf/runs/<stamp>-replay-<source>/ with calls.json
+ * Run folder: apps/desktop/.lab/perf/runs/<stamp>-replay-<source>/ with calls.json
  * (per call: app ms, round-trip ms, result chars, ok), trace/ and metrics.json;
  * one line per repeat in .lab/perf/history.jsonl (kind "replay").
  */

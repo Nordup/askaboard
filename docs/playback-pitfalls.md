@@ -14,7 +14,7 @@
   came off its bob by up to 10 points in motion; the founder saw it by eye.
 - **Measure an invariant over time.** Pause the scene at many times and
   read the scene state with the dev hook `__spaceDev.scene.snap()` (the
-  overrides and ink of now; `space/src/renderer/src/App.tsx`). Example: the
+  overrides and ink of now; `apps/desktop/src/renderer/src/App.tsx`). Example: the
   distance between a pen line's end and the shape it is attached to must stay
   near 0 at all times. A small script does it: replay the run, pause at many
   times through the dev hook, call `snap()`, and compute the distance (the
@@ -29,11 +29,11 @@
 
 | # | Class | What you see | Where | Status |
 | --- | --- | --- | --- | --- |
-| 1 | **Point count changes between samples.** The stage puts ink points on a grid along the length (`count = max(2, ceil(total/1.5))`, `space/src/shared/ink-points.ts`). A length on a grid step, even by rounding, flips the count between samples. | A pen line lags a shape that moves with it (string and bob), up to one sample step. | Blending in `space/src/renderer/src/live/player.ts` (dyn interpolation). | Fixed 2026-10-27 (42b16e8): strokes with different counts blend by share of length. Ink still holds when the number of strokes changes. |
-| 2 | **Gaps between kept samples.** The stage drops a sample equal to the one before (`space/src/stage/live-prelude.js`, the sweep). If the gap grows past `BLEND_GAP`, the player holds instead of blending. | An object stops for one step at a turning point, while another moves. | `live-prelude.js` sampling; `player.ts` `BLEND_GAP`. | Fixed 2026-10-27 (42b16e8): the last sample of each run of equal samples is kept. |
-| 3 | **Ink and shapes painted in different frames.** Shapes are DOM/SVG updates; ink is painted on a canvas. | A pen line about one display frame behind a shape (about 6 px at speed). | `space/src/renderer/src/board/Board.tsx` (`requestPaint`), the cached ink layers of B11 and the tiles of B28 (`board/paint.ts`, `board/ink-tiles.ts`). | Fixed 2026-10-27 (4db961e): a playback frame paints its ink at once. Watch it if the ink layers change again. |
+| 1 | **Point count changes between samples.** The stage puts ink points on a grid along the length (`count = max(2, ceil(total/1.5))`, `apps/desktop/src/shared/ink-points.ts`). A length on a grid step, even by rounding, flips the count between samples. | A pen line lags a shape that moves with it (string and bob), up to one sample step. | Blending in `apps/desktop/src/renderer/src/live/player.ts` (dyn interpolation). | Fixed 2026-10-27 (42b16e8): strokes with different counts blend by share of length. Ink still holds when the number of strokes changes. |
+| 2 | **Gaps between kept samples.** The stage drops a sample equal to the one before (`apps/desktop/src/stage/live-prelude.js`, the sweep). If the gap grows past `BLEND_GAP`, the player holds instead of blending. | An object stops for one step at a turning point, while another moves. | `live-prelude.js` sampling; `player.ts` `BLEND_GAP`. | Fixed 2026-10-27 (42b16e8): the last sample of each run of equal samples is kept. |
+| 3 | **Ink and shapes painted in different frames.** Shapes are DOM/SVG updates; ink is painted on a canvas. | A pen line about one display frame behind a shape (about 6 px at speed). | `apps/desktop/src/renderer/src/board/Board.tsx` (`requestPaint`), the cached ink layers of B11 and the tiles of B28 (`board/paint.ts`, `board/ink-tiles.ts`). | Fixed 2026-10-27 (4db961e): a playback frame paints its ink at once. Watch it if the ink layers change again. |
 | 4 | **A shape's path changes structure between samples** (different commands or count). | The shape holds for one step instead of blending. | `player.ts` shape blending. | Open (rare). Same idea as class 1 would fix it. |
-| 5 | **World params one frame late.** Params of a world that does not step go from the board's paint through the registry to the worker. | A world lags the scene by one frame. | `space/src/renderer/src/live-pixels/` (`registry.ts`), `live/params.ts`. | Open. |
+| 5 | **World params one frame late.** Params of a world that does not step go from the board's paint through the registry to the worker. | A world lags the scene by one frame. | `apps/desktop/src/renderer/src/live-pixels/` (`registry.ts`), `live/params.ts`. | Open. |
 | 6 | **Preview and playback time grids differ.** Previews snap to a 60 Hz tick grid (B10); a pause can stop 2–4 ms before the reported time. | A preview and a paused frame of a stateful world differ slightly. | `live-pixels/clock.ts`, `live-pixels/world/worker/realm.ts`. | Known limit (B10). |
 | 7 | **The script panel covers the board's top-right corner (and the tool palette its bottom).** Agents do not know it is there and place material under it. | Labels and parts of drawings hidden in all four check runs of 2026-10-27. | The view in `list_items` and the view checks; `components/ScriptPanel.tsx`. | Fixed 2026-10-27: `list_items` and `board.view` list as `covered` the panel's full-height area (also before the first scene; the bar only while minimised; `ScriptPanel.tsx` `scriptPanelArea()`) and the bottom tool palette (`ToolPalette.tsx` `toolPaletteArea()`), via `agent/covered.ts`. `space()` and the auto side of `label()` keep clear of it, and `preview_scene` images hatch it. Material at explicit coordinates is the agent's choice. |
 | 8 | **Recipes with side effects.** The sweep evaluates an object's recipe at every sample, moment by moment (T27), and seeds and previews add calls. A recipe that changes state sees that order; a rebuild skips sampling. | A scene that depends on counting its own calls can differ after a rebuild. | `live-prelude.js` sampling and rebuild. | Accepted: agents are not limited; the order is fixed. |
@@ -45,11 +45,11 @@
 > measured here. Read it before you add another fix to the playback path.
 
 The stage evaluates the agent's program 30 times per second
-(`SAMPLE_FPS`, `space/src/stage/live-prelude.js`), and only where something
+(`SAMPLE_FPS`, `apps/desktop/src/stage/live-prelude.js`), and only where something
 animates. Since T30 this runs after `write_scene` returns: a play can start while the sweep
 runs, and the clock holds if it reaches what is ready (T28). A seek ahead of what is ready waits at its own time (T37). It drops a sample that equals the one before. The player runs at
 the display rate (60–120 Hz) and blends two samples (`blendD`,
-`blendLines`, `BLEND_GAP` in `space/src/renderer/src/live/player.ts`).
+`blendLines`, `BLEND_GAP` in `apps/desktop/src/renderer/src/live/player.ts`).
 
 Classes 1–6 all sit on this seam:
 

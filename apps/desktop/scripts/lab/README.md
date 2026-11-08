@@ -1,7 +1,7 @@
 # The live-drawing lab
 
 Experiments for the live-drawing expedition
-(`docs/learning-space/live-drawing-plan.md`). Run everything from `space/`.
+(`docs/live-drawing-plan.md`). Run everything from `apps/desktop/`.
 These are experiments, not tests.
 
 ## Start the lab app
@@ -40,7 +40,7 @@ scene reached each step, and the end), `final.png` and `meta.json`.
 node scripts/lab/council.mjs --client codex --task sphere            # gpt-6.1-sol, effort medium
 node scripts/lab/council.mjs --client claude --model opus --task fusion
 node scripts/lab/council.mjs --client codex --effort low --task "Explain eclipses."
-node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief ../docs/learning-space/drafts/brief-v18.md
+node scripts/lab/council.mjs --client claude --task stddev --brief-only --brief ../../docs/drafts/brief-v18.md
 ```
 
 Flags: `--brief-only` (the task alone, as in a real session), `--no-code` and
@@ -106,12 +106,12 @@ the exact PIDs it started.
 
 ## The gallery
 
-Runs go to `space/.lab/runs/<YYYYMMDD-HHMMSS>-<slug>/` (not in git).
-`play.mjs` and `council.mjs` rebuild `space/.lab/index.html`;
+Runs go to `apps/desktop/.lab/runs/<YYYYMMDD-HHMMSS>-<slug>/` (not in git).
+`play.mjs` and `council.mjs` rebuild `apps/desktop/.lab/index.html`;
 `node scripts/lab/gallery.mjs` does it by hand. Browsers can block video and
 images on `file://` pages: serve the folder instead, for example
-`python3 -m http.server 8765 --bind 127.0.0.1 -d space/.lab`. To share it,
-zip `space/.lab/`.
+`python3 -m http.server 8765 --bind 127.0.0.1 -d apps/desktop/.lab`. To share it,
+zip `apps/desktop/.lab/`.
 
 Needs ffmpeg (`/opt/homebrew/bin/ffmpeg` on the Mac, else `ffmpeg` on PATH)
 and Python 3 with Pillow (for the filmstrip labels: the Homebrew ffmpeg has no

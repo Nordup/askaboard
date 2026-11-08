@@ -17,7 +17,7 @@
  *   {"until": "time", "scene": "$1", "t": 2.5}    wait until that scene reaches t s
  * --gap S adds a sleep of S s after each run step that has no sleep after it (default 0).
  *
- * The run folder (space/.lab/runs/) gets plan.json, the programs, calls.json
+ * The run folder (apps/desktop/.lab/runs/) gets plan.json, the programs, calls.json
  * (every call with its wall times and result), video-real.mp4, video.mp4, filmstrip.png (a frame at
  * each call), final.png, frames.json (when the board changed) and meta.json
  * with the numbers: time from the first call to the first visible change,

@@ -2,7 +2,7 @@
  * The outlines of the pen shapes: how the scene library (stage/live-prelude.js circle, ellipse, rect,
  * arrow; stage/worker.ts hands these functions over) builds a shape's path, and how the learner's
  * shapes (renderer board/shapes.ts) and the ink glyphs (components/InkGlyph.tsx) build theirs. One
- * source, so all of them draw the same outline (docs/learning-space/agent-ink.md). DOM-free.
+ * source, so all of them draw the same outline (docs/agent-ink.md). DOM-free.
  */
 
 import type { PathSegment } from './path-geometry'

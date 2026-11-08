@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Write space/.lab/index.html: one card per run in space/.lab/runs/, newest
+ * Write apps/desktop/.lab/index.html: one card per run in apps/desktop/.lab/runs/, newest
  * first, with the video, the filmstrip, the program, the agent's feedback
  * (when the run had an interview) and the numbers. Paths are relative, so
  * the .lab folder can be opened or zipped.

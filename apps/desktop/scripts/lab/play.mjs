@@ -12,10 +12,10 @@
  * window.__spaceDev.scene; pause steps are resumed with play_scene resume
  * after --pause-hold s, default 2; --seconds N is a
  * minimum after the call returns), and writes a run folder in
- * space/.lab/runs/: program.js, result.json, video.mp4 (the watch video),
+ * apps/desktop/.lab/runs/: program.js, result.json, video.mp4 (the watch video),
  * video-real.mp4 (real speed, from the scene's start), filmstrip.png (the
  * frame on screen when the scene reached each step, or 8 frames), final.png
- * and meta.json. Then it rebuilds space/.lab/index.html (the gallery).
+ * and meta.json. Then it rebuilds apps/desktop/.lab/index.html (the gallery).
  * Exit code 1 when the tool returns an error (the run folder is still written).
  */
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'

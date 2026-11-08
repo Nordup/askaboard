@@ -18,7 +18,7 @@ import { archiveTranscript, runTimeline, sceneEnds, sceneEvents } from './timeli
 export const PERF = join(SPACE, '.lab/perf')
 export const PERF_RUNS = join(PERF, 'runs')
 export const HISTORY = join(PERF, 'history.jsonl')
-const REPO = resolve(SPACE, '..')
+const REPO = resolve(SPACE, '../..')
 
 /** A run's history line: metrics.json without its long lists (they stay in metrics.json and timeline.md). */
 function historyLine(metrics) {
@@ -49,10 +49,10 @@ export function replaceHistory(metrics) {
 }
 const basenameOf = (p) => String(p ?? '').split('/').filter(Boolean).pop()
 
-/** Which code was measured: HEAD, and a short hash of the uncommitted changes in space/src and space/resources. */
+/** Which code was measured: HEAD, and a short hash of the uncommitted changes in apps/desktop/src and apps/desktop/resources. */
 export function codeIdentity() {
   const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024 })
-  const paths = ['space/src', 'space/resources']
+  const paths = ['apps/desktop/src', 'apps/desktop/resources']
   const commit = git('rev-parse', '--short=12', 'HEAD').trim()
   const diff = git('diff', 'HEAD', '--', ...paths)
   const untracked = git('ls-files', '--others', '--exclude-standard', '--', ...paths).split('\n').filter(Boolean).sort()

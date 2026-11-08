@@ -1,5 +1,5 @@
 /**
- * The visitor's pen on the hero. It is the app's mouse pen (space/src/renderer/src/board/mouse-ink.ts,
+ * The visitor's pen on the hero. It is the app's mouse pen (apps/desktop/src/renderer/src/board/mouse-ink.ts,
  * reproduced here): the pressure of a mouse or finger stroke comes from its speed, the ends taper,
  * and the points are painted with the board's own drawStroke (lib/board/paint.ts).
  * Coordinates are screen pixels while the pen is down; the caller maps the finished points.

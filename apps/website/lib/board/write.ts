@@ -1,5 +1,5 @@
 // @ts-nocheck -- copied JavaScript, kept as written.
-// Copied from space/src/stage/live-prelude.js (handwriting: shapeText, letters, compose, handGlyphs, write; boundsOfPoints).
+// Copied from apps/desktop/src/stage/live-prelude.js (handwriting: shapeText, letters, compose, handGlyphs, write; boundsOfPoints).
 // Changed only to run outside the stage: the shims below stand for the prelude's own helpers, glyphsFor skips letters
 // the font lacks (no board fallback), and write() returns its ink (lines, width, speed, jitter) instead of a scene object.
 import { HAND_FONT } from './hand-font'

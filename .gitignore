@@ -7,45 +7,20 @@ build/
 # macOS
 .DS_Store
 
-# Backend service local secrets
-server/.env
-server/blobs/
-server/.venv/
-server/.pytest_cache/
-server/**/__pycache__/
-server/logs/
-server/server.log
-
-# Web client local artifacts
-web/node_modules/
-web/dist/
-/.env.web
-/.playwright-cli/
-/output/playwright/
-/server/blobs-web/
-/server/logs-web/
-web/.env*
-!web/.env.example
-web/*.tsbuildinfo
-scripts/__pycache__/
-
-# Learning Space desktop app
-space/node_modules/
-space/out/
-space/dist/
-space/release/
+# Askaboard desktop app
+apps/desktop/node_modules/
+apps/desktop/out/
+apps/desktop/dist/
+apps/desktop/release/
 # electron-builder resources (entitlements); the build output rule above ignores build/.
-!space/build/
+!apps/desktop/build/
 
 # Third-party reference material (Paper agent interface), local only
-docs/learning-space/reference/
+docs/reference/
 
-# Live-drawing lab runs (space/scripts/lab)
-space/.lab/
+# Live-drawing lab runs (apps/desktop/scripts/lab)
+apps/desktop/.lab/
 .claude/worktrees/
-
-# Scene videos for sharing (local only)
-share-videos/
 
 # Videos stay local (lab recordings, comparisons): never in git
 *.mp4
@@ -55,9 +30,8 @@ share-videos/
 
 # Images stay local unless they are product or design assets (founder, 2026-10-29):
 # screenshots from checks, labs, tests, debugging and design iterations never go into git.
-# An approved design screenshot that should stay goes to docs/learning-space/design-images/.
+# An approved design screenshot that should stay goes to docs/design-images/.
 # The exceptions name image files only, so they never bring back an ignored folder.
-# Images already in git (the paused web client) stay tracked.
 *.png
 *.jpg
 *.jpeg
@@ -69,32 +43,22 @@ share-videos/
 !assets/**/*.jpeg
 !assets/**/*.gif
 !assets/**/*.webp
-!design/**/*.png
-!design/**/*.jpg
-!design/**/*.jpeg
-!design/**/*.gif
-!design/**/*.webp
-!docs/images/**/*.png
-!docs/images/**/*.jpg
-!docs/images/**/*.jpeg
-!docs/images/**/*.gif
-!docs/images/**/*.webp
-!docs/learning-space/design-images/**/*.png
-!docs/learning-space/design-images/**/*.jpg
-!docs/learning-space/design-images/**/*.jpeg
-!docs/learning-space/design-images/**/*.gif
-!docs/learning-space/design-images/**/*.webp
+!docs/design-images/**/*.png
+!docs/design-images/**/*.jpg
+!docs/design-images/**/*.jpeg
+!docs/design-images/**/*.gif
+!docs/design-images/**/*.webp
 # The website's product images (the app screenshot under the hero): product assets.
 !apps/website/public/**/*.png
 !apps/website/public/**/*.jpg
 !apps/website/public/**/*.jpeg
 !apps/website/public/**/*.gif
 !apps/website/public/**/*.webp
-!space/resources/**/*.png
-!space/resources/**/*.jpg
-!space/resources/**/*.jpeg
-!space/resources/**/*.gif
-!space/resources/**/*.webp
+!apps/desktop/resources/**/*.png
+!apps/desktop/resources/**/*.jpg
+!apps/desktop/resources/**/*.jpeg
+!apps/desktop/resources/**/*.gif
+!apps/desktop/resources/**/*.webp
 
 # Browser-check logs and local website videos (not for git)
 .playwright-mcp/

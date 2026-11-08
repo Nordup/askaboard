@@ -1,5 +1,5 @@
 /*
- * The app's tool pill (space/src/renderer/src/styles/app.css .board-controls__tools, .pill-bar,
+ * The app's tool pill (apps/desktop/src/renderer/src/styles/app.css .board-controls__tools, .pill-bar,
  * .pill-bar__divider, .tool, .tool > .lucide). --p is one app px in CSS px: 1px in the shell,
  * bigger under the hero (Board.module.css).
  */

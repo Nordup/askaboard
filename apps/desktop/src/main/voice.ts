@@ -11,7 +11,7 @@ import { PACES, SAMPLE_DIR, SAMPLE_TEXT, sampleFile, speechRequest, voiceHost, t
 import type { VoiceFailure } from '@shared/space-api'
 
 /**
- * The voice of say() lines (docs/learning-space/voice-lines-plan.md): the only
+ * The voice of say() lines (docs/voice-lines-plan.md): the only
  * caller of the speech API. The app holds no AI; it reads lines aloud with the
  * learner's own key, which stays in this process, and with no key through our
  * voice server (decision T39), which sends the same request with its own key. With

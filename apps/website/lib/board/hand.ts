@@ -1,4 +1,4 @@
-// Copied from space/src/renderer/src/board/hand.ts (humanize, strokeSeed; only the imports changed).
+// Copied from apps/desktop/src/renderer/src/board/hand.ts (humanize, strokeSeed; only the imports changed).
 import { INK_STEP } from './ink-points'
 
 export type Point = [number, number]

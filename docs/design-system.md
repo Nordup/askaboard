@@ -2,7 +2,7 @@
 
 The founder likes how the app looks. This file keeps it that way. Every
 agent that changes the UI reads it first and follows it. The binding rule is
-also in [`../../AGENTS.md`](../../AGENTS.md) ("Askaboard UI").
+also in [`../AGENTS.md`](../AGENTS.md) ("Askaboard UI").
 
 ## Principles
 
@@ -32,10 +32,10 @@ also in [`../../AGENTS.md`](../../AGENTS.md) ("Askaboard UI").
 
 | What | File |
 | --- | --- |
-| All design tokens (colours, type, spacing, radii, shadows, layout sizes) | `space/src/renderer/src/styles/tokens.css` |
-| All app UI styles, including the shared menu system and buttons | `space/src/renderer/src/styles/app.css` |
-| Canvas and selection styles | `space/src/renderer/src/board/board.css` |
-| Agent material on the board (theme tokens `--ls-*` that agents use in their HTML) | `space/src/renderer/src/board/content.css` |
+| All design tokens (colours, type, spacing, radii, shadows, layout sizes) | `apps/desktop/src/renderer/src/styles/tokens.css` |
+| All app UI styles, including the shared menu system and buttons | `apps/desktop/src/renderer/src/styles/app.css` |
+| Canvas and selection styles | `apps/desktop/src/renderer/src/board/board.css` |
+| Agent material on the board (theme tokens `--ls-*` that agents use in their HTML) | `apps/desktop/src/renderer/src/board/content.css` |
 
 **Never hard-code** a colour, font size, spacing value or radius in a
 component or in a new CSS rule. Use a token. If no token fits, add one to
@@ -48,7 +48,7 @@ reference (every token, part and approved screen).
 
 ### Find things
 
-All paths are under `space/src/renderer/src/`.
+All paths are under `apps/desktop/src/renderer/src/`.
 
 - **Tokens** (`styles/tokens.css`, one `:root`, dark only), in this order:
   surfaces, lines, text, accent, status, canvas tools, snapshot marks, ink,
@@ -133,10 +133,10 @@ All paths are under `space/src/renderer/src/`.
 
 ### Check it
 
-- Run the dev renderer and drive it with `space/scripts/drive.mjs`
+- Run the dev renderer and drive it with `apps/desktop/scripts/drive.mjs`
   (`screenshot`, `element-rect`, `hover`, `click`, `key`, `menu <id>`,
   `menu-state <id>`, `select <css> [label]`, `window-size`). See
-  `space/README.md` "Dev automation" and [`working-guide.md`](working-guide.md).
+  `apps/desktop/README.md` "Dev automation" and [`working-guide.md`](working-guide.md).
 - Measure what you promised (gaps, heights, equal x) with `element-rect`,
   and compare a screenshot with the mockup.
 - Search for drift: hard-coded colours (`#…`, `rgb(`) and radii outside
@@ -477,7 +477,7 @@ style (a bar: solid, dashed, dotted)) and `.zoom-label` (min 42 px, mono
 
 ### Add a tool or a style option
 
-1. A tool is one row in `TOOLS` (`space/src/renderer/src/tools.ts`): id,
+1. A tool is one row in `TOOLS` (`apps/desktop/src/renderer/src/tools.ts`): id,
    label, letter and number key, lucide icon (`iconScale` if it looks larger
    or smaller than the others), its style fields and its group. The tool
    pill, the keys, the tooltips and the key sheet read this table.

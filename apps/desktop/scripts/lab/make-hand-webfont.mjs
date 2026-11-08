@@ -6,7 +6,7 @@
  * Heavy'): the same strokes with a wider line, for screens of low pixel density
  * (board/content.css picks it). Its metrics are the regular cut's: every advance,
  * the ascent and the descent, so text lays out the same in both cuts. Run it from
- * space/ after hand-font.ts changes:
+ * apps/desktop/ after hand-font.ts changes:
  *
  *   node scripts/lab/make-hand-webfont.mjs
  *

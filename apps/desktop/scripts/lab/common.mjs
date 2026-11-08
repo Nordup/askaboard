@@ -176,8 +176,8 @@ export async function startInstance({ name, mcpPort, debugPort, built = false, f
   }
   for (const port of [mcpPort, debugPort]) await stopOrphan(port, inst)
   for (const port of [mcpPort, debugPort]) if (await portInUse(port)) throw new Error(`Port ${port} is in use by another process. Pick free ports with --mcp-port / --debug-port.`)
-  if (!built && !existsSync(join(SPACE, 'node_modules/.bin/electron-vite'))) throw new Error('No node_modules in space/. Run npm install there.')
-  if (built && !existsSync(join(SPACE, 'out/main/index.js'))) throw new Error('No built app in out/. Run `npm run build` in space/ first.')
+  if (!built && !existsSync(join(SPACE, 'node_modules/.bin/electron-vite'))) throw new Error('No node_modules in apps/desktop/. Run npm install there.')
+  if (built && !existsSync(join(SPACE, 'out/main/index.js'))) throw new Error('No built app in out/. Run `npm run build` in apps/desktop/ first.')
   if (fresh && existsSync(inst.dir)) rmSync(inst.dir, { recursive: true, force: true })
   for (const path of [inst.home, inst.userData, inst.traces]) mkdirSync(path, { recursive: true })
   if (!existsSync(join(inst.folder, 'AGENTS.md'))) setupFolder(inst.folder)

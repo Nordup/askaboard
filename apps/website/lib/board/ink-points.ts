@@ -1,4 +1,4 @@
-// Copied from space/src/shared/ink-points.ts (as is).
+// Copied from apps/desktop/src/shared/ink-points.ts (as is).
 /**
  * The points of pen ink along a path: the sampling grid, the split into
  * strokes and the simplification that the board uses for ink with pen: true.

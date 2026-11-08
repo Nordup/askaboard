@@ -406,7 +406,7 @@ const rectSchema = z.object({
   width: boxSize(MAX_REGION_SIZE),
   height: boxSize(MAX_REGION_SIZE)
 })
-/** One address for list_items and get_screenshot (docs/learning-space/drafts/board-tools-redesign-2026-10-27.md, section 10). */
+/** One address for list_items and get_screenshot (docs/drafts/board-tools-redesign-2026-10-27.md, section 10). */
 const partForms = [
   z.string().min(1),
   z.object({ region: rectSchema }).strict(),
@@ -2187,7 +2187,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
   }
 
   /**
-   * The voice of a program before its draft runs (docs/learning-space/voice-lines-plan.md). The lines pass takes the stage lock and lets it go, so
+   * The voice of a program before its draft runs (docs/voice-lines-plan.md). The lines pass takes the stage lock and lets it go, so
    * the wait for the speech API holds no play control. A program that fails here fails again in its draft, which reports it.
    */
   private async sceneVoice(source: SceneSource, name: string, seed: number, signal: AbortSignal): Promise<{ answers?: Map<string, string>; report: SceneVoiceReport }> {

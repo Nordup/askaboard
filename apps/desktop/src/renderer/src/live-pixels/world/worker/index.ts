@@ -13,7 +13,7 @@ import { VIEW } from './view'
 
 /**
  * The world worker: one realm, one WebGLRenderer, all worlds of a board. See
- * docs/learning-space/one-world-architecture.md. The contract with the page is
+ * docs/one-world-architecture.md. The contract with the page is
  * shared/world-protocol.ts.
  *
  * The script is a data: URL, and it runs in the sandboxed

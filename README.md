@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/askaboard/readme/hero.png" alt="An Askaboard board: Ask anything. Learn anything. A shared canvas for learning with your AI.">
+  <img src="assets/brand/readme/hero.png" alt="An Askaboard board: Ask anything. Learn anything. A shared canvas for learning with your AI.">
 </p>
 
 <p align="center">
@@ -60,11 +60,11 @@ to the agent you connect.
   file names or folder paths. Each event has a hashed id, never a raw one.
   To turn usage data off, set `ASKABOARD_TELEMETRY_ENABLED=false` in the
   app's environment. The full list of events is in
-  [`space/README.md`](space/README.md#usage-data).
+  [`apps/desktop/README.md`](apps/desktop/README.md#usage-data).
 
 ## Run from source
 
-Askaboard is an Electron app in [`space/`](space/). It also runs on Linux
+Askaboard is an Electron app in [`apps/desktop/`](apps/desktop/). It also runs on Linux
 from source.
 
 ```sh
@@ -75,22 +75,22 @@ npm run dev
 ```
 
 `npm run build` type-checks and bundles the app. See
-[`space/README.md`](space/README.md) for what the app does and how it is
+[`apps/desktop/README.md`](apps/desktop/README.md) for what the app does and how it is
 built.
 
 ## For agents and contributors
 
 - [`AGENTS.md`](AGENTS.md) is the start for an AI agent that works in this
   repo: where things live, how to run them, and the rules.
-- [`docs/learning-space/`](docs/learning-space/README.md) has the design
+- [`docs/`](docs/README.md) has the design
   docs, the plans and every product decision with its reason.
 
 | Folder | What it is |
 | --- | --- |
-| [`space/`](space/) | The app |
+| [`apps/desktop/`](apps/desktop/) | The app |
 | [`apps/website/`](apps/website/) | The website |
 | [`docs/`](docs/) | Design docs, plans, decisions and research |
-| [`assets/askaboard/`](assets/askaboard/README.md) | Logo, icon and brand files |
+| [`assets/brand/`](assets/brand/README.md) | Logo, icon and brand files |
 | `web/`, `server/` | An earlier tutor app, paused |
 
 ## Feedback

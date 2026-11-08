@@ -10,7 +10,7 @@ import * as worker from './worker'
 
 /**
  * The world surface: one GPU canvas that draws every world of a board, between
- * the page content and the ink. See docs/learning-space/one-world-architecture.md.
+ * the page content and the ink. See docs/one-world-architecture.md.
  *
  * The worker runs in a hidden sandboxed frame (main/live-item-protocol.ts), with
  * the protocol of shared/world-protocol.ts over one port. It renders to no

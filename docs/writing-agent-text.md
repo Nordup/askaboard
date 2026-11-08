@@ -27,13 +27,13 @@ difference, so the next writer starts from the second draft's approach.
 
 | Text | File | Who reads it, when | Limit |
 | --- | --- | --- | --- |
-| **The brief** (the space and your part; what the person wants; their work; explaining by drawing; what can go on the board; talking; checking facts; the learning folder) | `space/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
-| The folder's own conventions | `AGENTS.md` outside the managed block (template: `space/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
-| Server instructions (short orientation) | `space/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
-| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `space/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 42,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
-| Tool and parameter descriptions | `space/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. Our Codex plugin gets these and the server instructions whole. Codex cuts them at 1,000 bytes only for an Agent Plugin, so the plugin must stay a Codex plugin, with no `plugin.json` at the plugin root (I30). |
-| Plugin skill | [`learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md`](../../../learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
-| Tool names in other places | The same names appear in `space/README.md` (tool table), `architecture.md` (MCP server), the plugin skill and README, and the lab's old-call mappers (`space/scripts/perf/replay.mjs`, `space/scripts/trace-report.mjs`, which keep old names on purpose). A rename changes all of them in one commit. | People and agents who read the docs | — |
+| **The brief** (the space and your part; what the person wants; their work; explaining by drawing; what can go on the board; talking; checking facts; the learning folder) | `apps/desktop/resources/brief.md` (the one source) | Agents in a learning folder: always, through the managed block in `AGENTS.md`. Other agents: `get_brief` (no parameters). | Codex loads `AGENTS.md` up to 32 KiB (`project_doc_max_bytes = 32768`, Codex CLI 0.149), and the folder part shares that space. |
+| The folder's own conventions | `AGENTS.md` outside the managed block (template: `apps/desktop/resources/learning-folder/AGENTS.md`) | Agents in the folder | Same file as above |
+| Server instructions (short orientation) | `apps/desktop/resources/instructions.md` | Every agent at connect | Claude Code cuts at 4,096 characters (2.1.296+; 2,048 before). Codex asks that the first 512 characters stand alone. |
+| **The board reference** (decision T11): the board model, the HTML subset and styles, math, SVG, images, colour tokens, placement, ink, the view | `apps/desktop/resources/guide.md`; each `## ` section is a topic (`<!-- topic: … -->`) with a one-line `<!-- summary: … -->` that `get_guide`'s description lists | Every agent: `get_guide` with one topic, when a write needs it; without a topic, all of it (about 42,000 characters) | Topics from about 400 characters to about 15,000 (`scene`) |
+| Tool and parameter descriptions | `apps/desktop/src/main/mcp.ts` | Every agent, on every request | 4,096 characters per tool description in Claude Code when loaded up front (16,384 when deferred). Parameter descriptions are not cut. Our Codex plugin gets these and the server instructions whole. Codex cuts them at 1,000 bytes only for an Agent Plugin, so the plugin must stay a Codex plugin, with no `plugin.json` at the plugin root (I30). |
+| Plugin skill | [`learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md`](../../learning-space-plugins/plugins/askaboard/skills/askaboard/SKILL.md) | Agents with the plugin, when it applies | Under 500 lines recommended |
+| Tool names in other places | The same names appear in `apps/desktop/README.md` (tool table), `architecture.md` (MCP server), the plugin skill and README, and the lab's old-call mappers (`apps/desktop/scripts/perf/replay.mjs`, `apps/desktop/scripts/trace-report.mjs`, which keep old names on purpose). A rename changes all of them in one commit. | People and agents who read the docs | — |
 | Per-folder overrides | `.askaboard/guide.md` (`get_guide` topic `folder`, or the whole reference with `mode: replace`), `.askaboard/instructions.md` (added to the server instructions) | As above, appended or replacing | — |
 
 The managed block: `<!-- askaboard brief: start … sha=… -->` …
@@ -138,7 +138,7 @@ voice, and the founder brought the old text back (I25).
 - **Read the decisions that touch the text.** These are the I-decisions in
   [`decisions.md`](decisions.md), and T16, T17 and I25 for the scene tools.
   Each one says what the text must do and why.
-- **Find the approved version.** Run `git log --oneline -- space/resources/brief.md space/src/main/mcp.ts`.
+- **Find the approved version.** Run `git log --oneline -- apps/desktop/resources/brief.md apps/desktop/src/main/mcp.ts`.
   The commit messages name the decision and say "approved". Compare the live
   text with the text at that commit.
 - **Find where each intent lives.** One intent often lives in more than one
@@ -190,7 +190,7 @@ voice, and the founder brought the old text back (I25).
   in Claude Code. Measure the description with the lab switches on and off.
   play_scene is at about 3,930 characters, so it has very little room.
 - **Lab switches.** Text about worlds goes in `codeItems(…)`, and text
-  about HTML in `htmlMaterial(…)` (`space/src/main/lab-switch.ts`). In the
+  about HTML in `htmlMaterial(…)` (`apps/desktop/src/main/lab-switch.ts`). In the
   markdown files, the markers are `<!-- code-items -->` and `<!-- html -->`.
   Read the text in each mode.
 - **Contradictions.** Read the whole brief, the instructions, the three tool
@@ -228,7 +228,7 @@ voice, and the founder brought the old text back (I25).
 - One run per model is enough unless the founder asks for more (2026-10-27).
   Use the big models: Claude `opus` and Codex `gpt-6.1-sol`, both at effort
   medium.
-- Commands (from `space/`):
+- Commands (from `apps/desktop/`):
   `node scripts/perf/run.mjs --client claude --model opus --effort medium --task <task> --label <change>`
   and the same with `--client codex --model gpt-6.1-sol`. Compare with
   `node scripts/perf/report.mjs --task <task> --runs`.
@@ -236,7 +236,7 @@ voice, and the founder brought the old text back (I25).
   - `orbit`: small.
   - `em-wave`: pulls toward a 3D world.
   - `stddev` (council, `scripts/lab/council.mjs`): pulls toward formulas and text.
-- **What to read in each run folder** (`space/.lab/perf/runs/…`):
+- **What to read in each run folder** (`apps/desktop/.lab/perf/runs/…`):
   - `calls.json`: the call order, the get_guide topics, and the errors.
   - The code of each write_scene call: `world(` or `html(`, or ink and shapes only.
   - A preview before each play.
@@ -247,12 +247,12 @@ voice, and the founder brought the old text back (I25).
 ### Diagnose a behaviour problem
 
 1. **Look at what the agent read and did.** This means the run folder above,
-   or the founder's traces in `~/.askaboard/traces/` (`node space/scripts/trace-report.mjs`).
+   or the founder's traces in `~/.askaboard/traces/` (`node apps/desktop/scripts/trace-report.mjs`).
 2. **Find the text that the agent read at the moment of the choice.** The
    model follows the text. In I20, both models chose a 3D program item from
    the get_guide topic list, which described program() by its power alone.
 3. **Find out whether the text changed.** Run
-   `git log -p -S "<phrase>" -- space/resources space/src/main/mcp.ts`, and
+   `git log -p -S "<phrase>" -- apps/desktop/resources apps/desktop/src/main/mcp.ts`, and
    compare with the approved commit.
 4. **Check what the client loads.** Codex reads the brief from `AGENTS.md`
    only in a learning folder; elsewhere it must call `get_brief`. Without the
@@ -285,26 +285,26 @@ Follow the same steps to improve it.
 1. **Read the founder's ideas, in their words.** In this order:
    [`idea.md`](idea.md), [`tutor-vision.md`](tutor-vision.md),
    [`live-drawing-idea.md`](live-drawing-idea.md),
-   [`../product-vision.md`](../product-vision.md),
-   [`../learn-ai-the-idea.md`](../learn-ai-the-idea.md) (the origin), and the
-   old tutor prompt in `server/app/tutor/prompt.py` (`SYSTEM_PROMPT`, written
+   `docs/product-vision.md` (in git history),
+   `docs/learn-ai-the-idea.md` (the origin, in git history), and the
+   old tutor prompt in `server/app/tutor/prompt.py` (in git history) (`SYSTEM_PROMPT`, written
    by the founder in the first person: intent, kinds of objectives, the
    board). Also this file's appendix.
-2. **Read what the agent reads now:** `space/resources/brief.md`,
+2. **Read what the agent reads now:** `apps/desktop/resources/brief.md`,
    `instructions.md`, the tool descriptions in `mcp.ts`, the
    skill, the `AGENTS.md` template.
 3. **Look at real behaviour:** [`baseline.md`](baseline.md) and later bench
    runs; the founder's own traces in `~/.askaboard/traces/` (read with
-   `node space/scripts/trace-report.mjs`); research sections 9–13 in
+   `node apps/desktop/scripts/trace-report.mjs`); research sections 9–13 in
    [`research.md`](research.md).
 4. **Check current facts with Haiku agents:** Anthropic's tool guidance (it
    may have a newer version), and the size limits above.
-5. **Write the draft in `docs/learning-space/drafts/`** (see its README) and show it to the
+5. **Write the draft in `docs/drafts/`** (see its README) and show it to the
    founder before anything ships. Do not edit the live files first.
 6. **After approval, build it** (an Opus agent; the plumbing already exists:
    edit `brief.md` and the other files).
 7. **Measure:** run the bench twice
-   (`node space/scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus`,
+   (`node apps/desktop/scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus`,
    see [`baseline.md`](baseline.md)), compare with the earlier runs, and let
    the founder try a real session by voice. Record the results in
    `baseline.md`.
@@ -386,7 +386,7 @@ that Anthropic writes for its own models: the claude.ai system prompt and the
   seasons are pictures by nature, so most briefs look alike there.
   `stddev` ("I can compute it but I don't get it") pulls toward formulas and
   text, and it separated the briefs better. Test a draft before it replaces
-  the live brief: `node space/scripts/lab/council.mjs --client claude --model
+  the live brief: `node apps/desktop/scripts/lab/council.mjs --client claude --model
   opus --task stddev --brief-only --brief <draft>` (add `--no-code
   --no-html` to hide those kinds). The bench (`scripts/bench/run.mjs`) has
   no brief option and measures only the live brief.

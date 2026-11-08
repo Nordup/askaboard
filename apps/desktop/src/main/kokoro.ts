@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { agentHomeDir } from './agent-home'
 
 /**
- * The local voice (decision D9; docs/learning-space/decisions.md T40): Kokoro on the learner's Mac.
+ * The local voice (decision D9; docs/decisions.md T40): Kokoro on the learner's Mac.
  *
  * The app is MIT, and espeak-ng (which Kokoro uses for words outside its word list, numbers among
  * them) is GPL-3.0. So nothing of it is in the app: on Install the app downloads sherpa-onnx's

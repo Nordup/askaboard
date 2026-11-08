@@ -787,7 +787,7 @@ export class SceneStage {
   }
 
   /**
-   * The lines pass (decision in docs/learning-space/voice-lines-plan.md): the texts of the program's say() lines, from a run on the stage
+   * The lines pass (decision in docs/voice-lines-plan.md): the texts of the program's say() lines, from a run on the stage
    * where its draft will run, with no sampling and no draft. Every line has the reading pace here. A program that fails throws
    * as in run(). The stage is rebuilt after it.
    */

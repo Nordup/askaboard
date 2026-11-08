@@ -11,7 +11,7 @@ lives in one local folder that the learner owns.
 
 It is the third form of this project (iPad app → web client → Learning
 Space) and, since 2026-10-24, **the main product** (decision P8). App code
-in [`../../space/`](../../space/); work happens on `main`.
+in [`../apps/desktop/`](../apps/desktop/); work happens on `main`.
 
 ## Now: the launch (2026-11-06 → 2026-11-07)
 
@@ -21,7 +21,7 @@ with a voice server, analytics and a new website (P23, D7).
 Where another doc disagrees, the launch plan wins.
 For the build, signing, GitHub release and website download steps, see
 [`release-guide.md`](release-guide.md).
-The launch name and approved icon are in the [Askaboard brand kit](../../assets/askaboard/README.md) (D18).
+The launch name and approved icon are in the [Askaboard brand kit](../assets/brand/README.md) (D18).
 
 ## Status (2026-11-08)
 
@@ -35,15 +35,15 @@ The launch name and approved icon are in the [Askaboard brand kit](../../assets/
 | Public plugin repo, stdio relay, plugin-first Connect popover | Done. The Codex plugin connects over HTTP and must stay a Codex plugin (I30) |
 | One shared design system for menus | Done. How to build new UI in it (where things are, recipes, how to change the look, how to check): [`design-system.md`](design-system.md), "How to build UI here" |
 | The app reads `say()` lines aloud (Gemini TTS; T34, [`voice-lines-plan.md`](voice-lines-plan.md)). Since T39 the voice goes through our voice server by default | Done. The founder approved the agent texts and the sound. All seven Attention scenes are voiced with Charon. A scene written before the voice stays silent until one new `write_scene` |
-| The app cleans up after itself (T35, `space/src/main/storage.ts`): clips, code copies, records of gone boards, traces, caches. A board moved to the Trash takes its data with it | Done. The running app gets it at its next start. Finder's Put Back is not confirmed. On Linux the board and its data go to the freedesktop Trash with `.trashinfo` files (checked 2026-11-02); a restore from Files is not confirmed |
+| The app cleans up after itself (T35, `apps/desktop/src/main/storage.ts`): clips, code copies, records of gone boards, traces, caches. A board moved to the Trash takes its data with it | Done. The running app gets it at its next start. Finder's Put Back is not confirmed. On Linux the board and its data go to the freedesktop Trash with `.trashinfo` files (checked 2026-11-02); a restore from Files is not confirmed |
 | Measurement: session trace, trace report, bench (S1–S4; P1–P3 on a busy board; V1 "drew while talking"; Claude or the Codex/GPT client; `--no-news-hook`) | Done: [`baseline.md`](baseline.md) |
-| Fix 1: the brief (`space/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
+| Fix 1: the brief (`apps/desktop/resources/brief.md`, managed block in `AGENTS.md`), new tool descriptions | Done and measured |
 | Board news: the agent app gets one line about what the learner drew since its last look, delivered once (decision I4) | Done and measured: in V1 the agent looked at the sketch in 4 of 4 runs (0 of 2 before) |
 | `get_brief` and `get_guide`, one job each (decision T11) | Done and measured |
-| The brief (`space/resources/brief.md`) | **v18** in Anthropic's style (decisions I16–I18, I21, I22), with every medium an equal choice (I31): find out what the person wants, read their work, explain by drawing one step at a time (with a calibration list of the defaults to avoid), what ink, worlds and HTML are each for, explain fully then check, preview before the person sees a scene. Drafts and their history: `drafts/brief-v*.md`, [`live-drawing-log.md`](live-drawing-log.md) |
+| The brief (`apps/desktop/resources/brief.md`) | **v18** in Anthropic's style (decisions I16–I18, I21, I22), with every medium an equal choice (I31): find out what the person wants, read their work, explain by drawing one step at a time (with a calibration list of the defaults to avoid), what ink, worlds and HTML are each for, explain fully then check, preview before the person sees a scene. Drafts and their history: `drafts/brief-v*.md`, [`live-drawing-log.md`](live-drawing-log.md) |
 | Tool descriptions, server instructions, plugin skill and the board reference (`guide.md`) in Anthropic's tool style (decision I19) | Done (2026-10-26). The three scene tools keep the approved I19/I22 wording, with only the changes the new tools need (I25, 2026-10-27; founder review R1 done). How to change an agent text later: [`writing-agent-text.md`](writing-agent-text.md), "Change an agent text without losing its intent or its voice" |
 | Live drawing: one drawing medium in code ([`live-drawing-plan.md`](live-drawing-plan.md), decisions P11–P13) | Stages 1–4 done: scenes are the one way to write: `write_scene`, `preview_scene` and `play_scene` (T16; 12 tools); values, labels, named groups, preview, camera, pointer, the stage and beats, worlds (three.js, any library), `html()`, `image()`, edits, a floating script panel (the app reads the lines aloud, T34). Measured (2026-10-26, everything on): both GPT and Claude draw the EM wave in ink, step by step, with handwritten labels; GPT previews; Claude explains fully, then asks; practice sheets still use HTML |
-| Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`space/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
+| Lab switches for experiments: `council.mjs --no-code`, `--no-html`, `--brief <draft>` (`apps/desktop/src/main/lab-switch.ts`) | Done; see [`working-guide.md`](working-guide.md), "Choosing lab tests" |
 | Feature freeze (2026-10-26) | On: the founder tests everything by hand (worlds and the other media) and fixes what gets in the way. The perf work ended with the board tools (T21). One board model and one copy of each piece of scene logic: done (2026-10-27). G6 is done (B16–B22); G1 is parked (I28, row below); all open work, in batches: [`work-map.md`](work-map.md) |
 | First real test (2026-10-26) | Done: one hour on neurons by voice; the synapse mechanism clicked for the founder for the first time. The founder calls the app an MVP, but not yet for friends ([`first-test-2026-10-26.md`](first-test-2026-10-26.md)). Gaps G1–G6: [`first-test-gaps.md`](first-test-gaps.md) |
 | Scene speed (2026-10-26/27): the stage in V8 in a sandboxed process (T18), one contract for running code (B10), playback cost (B11), one compile per draft (B12), typed frames over a direct port (B13), stage-made ink points (B14), pen ink on its shape (B15) | Done and measured ([`perf-plan.md`](perf-plan.md)): EM wave write_scene 7.6–15.1 s → 0.5–0.9 s, preview about 0.1 s, start under 0.1 s, playback frame work 5.7 → 2.6 ms. Known playback limits: [`playback-pitfalls.md`](playback-pitfalls.md). Agents see what the script panel and the tool palette cover (T19) |
@@ -60,18 +60,18 @@ The launch name and approved icon are in the [Askaboard brand kit](../../assets/
 | Rendering, performance and data safety (2026-11-01) | Done on `main`. Worlds use the toon look, the only look since 2026-11-02, on `WebGLRenderer` (P20, P22, A9), and four outside reviews are fixed (B26-B53, A6-A8). Measured on the M1 Air against `d6b153c`: a pan of the big board takes the renderer from 105% to 24% CPU, a page paint from 3.4 ms to 0.3 ms, the GPU from 65% to 16%, and the worst frame from 96 ms to 20 ms. World speed and start-up did not change in this round, and memory on boards is 20 to 60 MB higher because of the ink tiles. Not checked on an Intel GPU or an iPad. |
 | Text and ink without a pen (2026-11-03, B56–B61): all words on the board in the agent's hand (typed text, `text()`, `html()`), mouse ink with width from speed, text rotate and scale, keys to end a text edit, old-board sizes follow the new font, the board's 100% is the old 85% | Committed on `main` (`04a6408`); checked with simulated input. The founder's own hand is the real test: [`no-pen-notes-task.md`](no-pen-notes-task.md) |
 | Screen size and zoom on Linux (2026-11-03, B63–B65) | Committed on `main`. View > Interface Size is a per-machine page zoom; Automatic is 120% when the OS scale is below 1.5 (the founder's 1080p monitors) and 100% on a 2x screen. Below 1.5 dppx the board uses a heavier cut of the hand with the same metrics. A Ctrl/⌘ mouse-wheel notch zooms 15% with an 80 ms glide; a pinch keeps its exact mapping. Research: [`research.md`](research.md) §22. Checked with CDP input, built and dev. Not checked: a real hardware wheel, the Mac, a window move between screens of different scales. |
-| Linux (2026-11-02/03, decision D6) | The app runs on Linux from source, one code base with macOS: [`../../space/README.md`](../../space/README.md), "On Linux". Checked on Manjaro (GNOME, Wayland, AMD GPU) with Claude Code and Codex sessions that drew scenes. A covered Wayland window gets no display frames, so scene events (end, pause steps, the queue, the voice) now run on a timer (B62). Check instances run under XWayland. Not checked: a pen tablet, KDE, X11 sessions. The plugins 0.1.4 list Linux in the `.mcpb` manifest and are pushed. |
+| Linux (2026-11-02/03, decision D6) | The app runs on Linux from source, one code base with macOS: [`../apps/desktop/README.md`](../apps/desktop/README.md), "On Linux". Checked on Manjaro (GNOME, Wayland, AMD GPU) with Claude Code and Codex sessions that drew scenes. A covered Wayland window gets no display frames, so scene events (end, pause steps, the queue, the voice) now run on a timer (B62). Check instances run under XWayland. Not checked: a pen tablet, KDE, X11 sessions. The plugins 0.1.4 list Linux in the `.mcpb` manifest and are pushed. |
 | Perception (the old fix 2) | Mostly answered by board news; the rest deferred |
 | Plain chat apps (ChatGPT web, Claude chat) with folder file tools | Later |
 | Launch backend (2026-11-06, P25): `../learning-space-backend`, private GitHub repo `Nordup/askaboard-backend`, live at `https://api.askaboard.com` | Done and deployed. `POST /v1/speech` has a $0.50 daily cap per user; `POST /batch/` forwards usage data to PostHog US. The old sslip.io host remains for existing builds. |
-| Usage data (P24, a copy of T3 Code; `space/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../../space/README.md`](../../space/README.md), "Usage data". Dashboard "Learning Space launch" (id 2313367; rebuilt the same day after a mistaken delete) with a weekly email. All events so far are `dev`, which the dashboard hides |
+| Usage data (P24, a copy of T3 Code; `apps/desktop/src/main/analytics.ts`) | Done: events from a built app reach PostHog. The events and the opt-out are in [`../apps/desktop/README.md`](../apps/desktop/README.md), "Usage data". Dashboard "Learning Space launch" (id 2313367; rebuilt the same day after a mistaken delete) with a weekly email. All events so far are `dev`, which the dashboard hides |
 | Voice for everyone (T39), a local Kokoro voice (T40), a Settings dialog (U8, U12), MIT license (D9) | Done and checked end to end on the built app: the server voice plays, Kokoro installs from Settings in about 45 to 60 s, the cap toast opens Settings. Settings was redesigned 2026-11-06/07 (row below) |
 | Left panel: boards by edit time, ⌘B, ⌘K search (U6, U7) | Done |
 | App chrome and Settings (2026-11-06/07): a quiet title row (U9), board history Back/Forward ⌘[ ⌘] (U11), one Settings dialog with one settings owner in main (U12), the app's own dropdown, opaque panels, overlay scrollbars and bundled voice samples (U14), Settings spacing rules, one small control, the key sheet (U15), soft shadows, see-through popups, a rounder radius scale by element size, bigger key caps and switch (U16, U17) | Done and pushed (`1de0461`). Checked in dev mode with `drive.mjs` and one outside review of U12. Not checked: the built `.dmg` with the bundled voice samples, the sound of the samples, Linux. |
-| App packaging and signing (macOS, D7, D14) | `cd space && npm run dist:mac` built and checked a 226 MiB universal Developer ID signed, notarized DMG on 2026-11-07; it requires the signing identity and `learning-space-notary` Keychain profile. The separate arm64 DMG was installed and opened on this Mac without a security bypass. The Askaboard packaging icon is ready. The app identity is set (D20): Askaboard 0.1.0, bundle ID `com.askaboard.app`, agent home `~/.askaboard/`, plugin `askaboard@askaboard` 0.1.4. The branded build and a fresh-Mac install remain open. |
+| App packaging and signing (macOS, D7, D14) | `cd apps/desktop && npm run dist:mac` built and checked a 226 MiB universal Developer ID signed, notarized DMG on 2026-11-07; it requires the signing identity and `learning-space-notary` Keychain profile. The separate arm64 DMG was installed and opened on this Mac without a security bypass. The Askaboard packaging icon is ready. The app identity is set (D20): Askaboard 0.1.0, bundle ID `com.askaboard.app`, agent home `~/.askaboard/`, plugin `askaboard@askaboard` 0.1.4. The branded build `Askaboard-0.1.0-universal.dmg` (229 MiB) is published as [`v0.1.0`](https://github.com/Nordup/askaboard/releases/tag/v0.1.0) (2026-11-08). A fresh-Mac install remains open. |
 | Interactive embeds | Answered by worlds (decision P19) |
 | Board controls for a mouse and a trackpad (2026-11-06/07, B69–B71, U10, U13, U18): a tool pill with keys as in Excalidraw, a style pill per tool or selection, shapes drawn in the agents' pen ink, rectangle and lasso selection, a right-click menu, paste from other apps, undo and zoom as bare buttons at the bottom right | Done on `main`: [`board-controls-plan.md`](board-controls-plan.md), values in [`design-system.md`](design-system.md) "Board controls", the ink recipe in [`agent-ink.md`](agent-ink.md). Checked on the M1 Air, built and dev; ChatGPT review fixed |
-| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Live at `https://askaboard.com` on Vercel; Git pushes trigger builds. The download button awaits the GitHub release. |
+| Website (`apps/website/`, D8, D11, D12; [`website-plan.md`](website-plan.md)) | Live at `https://askaboard.com` on Vercel; Git pushes trigger builds. The Download button links to the latest release's `Askaboard.dmg`. |
 | Deeper editing (shapes inside SVG, a full style inspector) | Much later |
 
 The web client (`web/`) and the tutor backend (`server/`) are paused, not
@@ -178,11 +178,11 @@ the live-frame idea was rejected).
 
 | Place | What |
 | --- | --- |
-| `space/` | The Electron app. Its README covers running and dev automation. |
+| `apps/desktop/` | The Electron app. Its README covers running and dev automation. |
 | `github.com/Nordup/askaboard-plugins` (checkout `../learning-space-plugins`) | Plugins for Claude Code, ChatGPT and Codex, Cursor; the Claude Desktop extension. |
-| `space/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
-| `space/resources/brief.md`, `guide.md`, `instructions.md`; tool descriptions in `space/src/main/mcp.ts` | The brief (`get_brief`), the board reference in topics (`get_guide`, decision T11), the server instructions and the tool descriptions. |
-| `docs/learning-space/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
+| `apps/desktop/resources/learning-folder/` | The template copied into a learning folder at setup (`AGENTS.md`, `plan.md`, `learner.md`). |
+| `apps/desktop/resources/brief.md`, `guide.md`, `instructions.md`; tool descriptions in `apps/desktop/src/main/mcp.ts` | The brief (`get_brief`), the board reference in topics (`get_guide`, decision T11), the server instructions and the tool descriptions. |
+| `docs/reference/paper/` | Paper's agent interface, captured live. Local only (git-ignored). |
 | `~/Projects/learning/learning-space` | The founder's own learning folder. Never use it for checks. |
 
 ## Glossary
@@ -207,10 +207,10 @@ the live-frame idea was rejected).
 | Relay | The command `~/.askaboard/bin/askaboard mcp` that connects stdio clients to the app. |
 | Agent pill | The status control in the top bar; it opens the agents list and the connect view. |
 | Plugin | The package in the plugin repo that installs the connection (and a small skill) into an agent client. |
-| Brief | `space/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read: in a learning folder's `AGENTS.md`, or with `get_brief` for agents without it. |
+| Brief | `apps/desktop/resources/brief.md`: what the space is for and how agents think about their part. The main text agents read: in a learning folder's `AGENTS.md`, or with `get_brief` for agents without it. |
 | Managed block | The part of a folder's `AGENTS.md` between the "askaboard brief" markers. The app keeps it equal to the brief unless the learner edits it. |
 | Trace | The JSONL record of one agent session's MCP calls, in `~/.askaboard/traces/`. |
-| Bench | `space/scripts/bench/run.mjs`: fixed scenarios (S1–S4, P1–P3, V1, …) run by a headless agent (Claude or Codex), to measure a change. |
+| Bench | `apps/desktop/scripts/bench/run.mjs`: fixed scenarios (S1–S4, P1–P3, V1, …) run by a headless agent (Claude or Codex), to measure a change. |
 | Look ratio | Learner ink area ÷ the area of the agent's screenshot of it; 1.0 is a perfect crop. |
 | Board news | One factual line that tells an agent app what the learner changed on a board since its last look (drew, erased, added, moved, resized, edited, deleted; a summary by area when there are many). Each change is delivered once (decision I4). |
 | Last look | The point up to which an agent app knows the board's changes (the agent texts' word; the code calls it the change cursor). Results show it as c and a number, such as c336. `list_items` of the view or the board, `get_screenshot`, `get_changes` and `open_board` move it. Board news reports only the changes after it. |
@@ -224,5 +224,5 @@ the live-frame idea was rejected).
 | Scene pill | The pill in the top bar: the playing scene, else the board's last scene, else a selected item's scene and step. Its menu lists the board's scenes. |
 | Scene file | A scene program as a JavaScript file in `boards/scenes/`, with `import` and `export` (decision B16). |
 | Scene record | The append-only history of a board's scenes in `.askaboard/scenes/<board id>.jsonl`; agents read items by scene and step from it after a restart (`"synapse#2"`). |
-| Lab | `space/scripts/lab/`: an own app instance, scene recordings (MP4, filmstrip), beats, model councils and a gallery. |
+| Lab | `apps/desktop/scripts/lab/`: an own app instance, scene recordings (MP4, filmstrip), beats, model councils and a gallery. |
 | Council | A lab run in which a model works on a task with the scene tools and is then interviewed; its answers are customer proposals, not specs (decision W8). |

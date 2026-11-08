@@ -1,10 +1,10 @@
 /**
  * An agent's own scene, played on the shell's board as the app plays it. The founder (2026-11-07): the use case is
  * what an agent drew in the lab for the request, its program file untouched, with its voice and its lines at the same
- * times. space/scripts/lab/export-scene.mjs runs that file through the app's own scene library (live-prelude.js) and
+ * times. apps/desktop/scripts/lab/export-scene.mjs runs that file through the app's own scene library (live-prelude.js) and
  * writes the scene description: each object (an SVG path with its style), its timeline (draw, fill, opacity, scale
  * tracks), the voiced lines and the steps. This file plays the description:
- * - the timeline's values as space/src/renderer/src/live/timeline.ts gives them (base, value, matrix);
+ * - the timeline's values as apps/desktop/src/renderer/src/live/timeline.ts gives them (base, value, matrix);
  * - each shape as the app's SVG node (live/compile.ts): stroke in its colour, round caps and joins, its fill, its dash
  *   pattern and hatching;
  * - a stroke drawn on by its dash (board/playback.ts revealDash), the fill at its share, the opacity;

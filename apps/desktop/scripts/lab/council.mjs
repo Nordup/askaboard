@@ -41,7 +41,7 @@
  * makes the videos in the background (log: media.log in the run folder), so the
  * next run can start. --wait-media waits for the videos before exiting.
  *
- * The run folder (space/.lab/runs/) gets video.mp4 (the watch video: stretches
+ * The run folder (apps/desktop/.lab/runs/) gets video.mp4 (the watch video: stretches
  * with no visible change longer than 1.5 s play in 0.6 s, labelled with the real
  * wait and what happened, from the trace; a real-time clock in the corner),
  * video-real.mp4 (real time), filmstrip.png (a frame after each board write),

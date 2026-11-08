@@ -1,4 +1,4 @@
-// Copied from space/src/renderer/src/board/paint.ts (tracePath, writePiece, piecesOf, strokePieces, the stroke shape
+// Copied from apps/desktop/src/renderer/src/board/paint.ts (tracePath, writePiece, piecesOf, strokePieces, the stroke shape
 // cache, drawStroke), geometry.ts (pressureWidth), playback.ts (cumulative, revealPoints) and live/compile.ts (LIFT,
 // ranges). Changed only the imports and the types: a stroke is { points, color, width, tool }.
 import type { InkPoint } from './hand'

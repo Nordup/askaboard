@@ -7,17 +7,17 @@ the board with the learner. Its one AI part is the voice, which reads scene line
 aloud: our voice server by default (T39), the learner's own Gemini key, or a
 local Kokoro model that the learner installs from Settings (T40).
 
-**Status (2026-11-07):** the main product of this repository (since 2026-10-24). The app chrome and Settings were redesigned on 2026-11-06/07 (U9–U17; how to build UI in that style: `design-system.md`, "How to build UI here"). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/learning-space/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../docs/learning-space/work-map.md).
+**Status (2026-11-07):** the main product of this repository (since 2026-10-24). The app chrome and Settings were redesigned on 2026-11-06/07 (U9–U17; how to build UI in that style: `design-system.md`, "How to build UI here"). All words on the board are in the hand, and text items rotate and scale (B56–B61). Scenes stream to the board (`docs/streaming-scenes-plan.md`), the voice explainer is parked (I28), an unknown scene option is an error (B24), the app reads scene lines aloud (T34), and it cleans up its own storage (T35). Steps 0–5, fix 1, board news (decision I4), `get_brief` and `get_guide` (decision T11), live drawing stages 1–4 (scenes as the one way to write, the script panel), brief v18 and the agent texts in Anthropic's style (decisions I18–I22) are done. The scene tools are `write_scene`, `preview_scene` and `play_scene` (T16), with the old approved wording (I25). The board reads give summaries first (T20), and the board tools are `list_boards`, `open_board` and `move_board` (T21). Every tool refuses unknown parameters. Scenes can be files in `boards/scenes/` with imports (B16 step 1); each board keeps a scene record, so agents read items by scene and step after a restart (B16 step 2). After a restart the stage is rebuilt from that record, so earlier scenes can be replayed, previewed and replaced, and a new scene finds their objects (B16 step 3). A scene input works, draws nothing, or is an error; results carry no warnings (B18). `play_scene` does not wait (T23). Open work: [`work-map.md`](../../docs/work-map.md).
 
-- [`../docs/learning-space/README.md`](../docs/learning-space/README.md): start here.
-- [`architecture.md`](../docs/learning-space/architecture.md): processes, data flow and where the code lives.
-- [`design-system.md`](../docs/learning-space/design-system.md): UI tokens and rules.
-- [`working-guide.md`](../docs/learning-space/working-guide.md): how to build and check the app.
+- [`../../docs/README.md`](../../docs/README.md): start here.
+- [`architecture.md`](../../docs/architecture.md): processes, data flow and where the code lives.
+- [`design-system.md`](../../docs/design-system.md): UI tokens and rules.
+- [`working-guide.md`](../../docs/working-guide.md): how to build and check the app.
 
 ## Run
 
 ```sh
-cd space
+cd apps/desktop
 npm install      # postinstall downloads the Electron binary
 npm run dev      # build the relay, then start the dev app window
 npm run build    # type-check, bundle to out/, build the relay
@@ -25,7 +25,7 @@ npm start        # run the built app from out/
 ```
 
 Do not run test suites. Check a change with `npm run build`. The rules are in
-[`../AGENTS.md`](../AGENTS.md).
+[`../../AGENTS.md`](../../AGENTS.md).
 
 ### On Linux
 
@@ -140,7 +140,7 @@ every tool twice. The popover shows this problem and offers **Fix**.
   `resources/guide.md` (the board reference in topics, `get_guide`; decision
   T11), `resources/instructions.md` (server instructions) and the tool and
   parameter descriptions in `src/main/mcp.ts`. Before you change any of them, read
-  [`writing-agent-text.md`](../docs/learning-space/writing-agent-text.md).
+  [`writing-agent-text.md`](../../docs/writing-agent-text.md).
 
 | Tool | Main parameters | What it does |
 | --- | --- | --- |
@@ -226,7 +226,7 @@ These environment variables work with `npm run dev`:
 | `SPACE_FAKE_FULL_SCREEN=1` | With `SPACE_REMOTE_DEBUG`: the renderer lays out as in full screen (no window buttons; the title row starts at 12 px), with no real full screen, so a check never moves the window to a new macOS desktop Space. |
 | `SPACE_REMOTE_DEBUG` and the splash | Dev builds: over the debug port, `window.__splash.show({ seed, t, fps, pointer })` restarts the splash artwork with that seed, held at time `t` (seconds), or running from 0 with `t: null`; `fps` sets the calm frame cap and `pointer: false` ignores the pointer (for a measurement); `window.__splashFrameMs` holds the last frames' cost in ms and `window.__splashGlContexts` counts live WebGL contexts. |
 
-The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `space/.lab/index.html`.
+The live drawing lab (`scripts/lab/`, its own README) starts its own app instance, plays scene programs and records them (MP4 and filmstrip), sends beats, runs model councils, and builds a gallery at `apps/desktop/.lab/index.html`.
 
 To check the Connect buttons without your real agent config, set `HOME`,
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to scratch folders.
@@ -277,7 +277,7 @@ The port comes from `--port`, else `$SPACE_REMOTE_DEBUG`, else 9339.
   P1–P3 (a busy board) and V1 ("drew while talking"). `--client codex` runs
   GPT through Codex instead of Claude; `--no-news-hook` turns off the board
   news hook; `--dev` uses the dev renderer. See
-  [`baseline.md`](../docs/learning-space/baseline.md).
+  [`baseline.md`](../../docs/baseline.md).
 
 ```sh
 SPACE_REMOTE_DEBUG=9339 SPACE_FOLDER=~/learn/demo npm run dev

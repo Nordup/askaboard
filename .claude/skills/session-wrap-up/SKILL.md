@@ -6,7 +6,7 @@ when_to_use: When the founder says "wrap up", "update the docs", "document what 
 
 # Session wrap-up
 
-Goal: the next agent can read `docs/learning-space/README.md` and know the
+Goal: the next agent can read `docs/README.md` and know the
 current state, the reasons, and what to do next. Nothing in the docs
 contradicts the code or another doc.
 
@@ -16,7 +16,7 @@ Delegate reading to Haiku subagents; write the docs yourself.
 ## 1. Gather what changed
 
 1. Find the last wrap-up: the date in the "Status (…)" line of
-   `docs/learning-space/README.md`.
+   `docs/README.md`.
 2. `git log --oneline --since=<that date>` on the current branch, and the same
    in `../learning-space-plugins` if it exists.
 3. List, from the conversation and the log:
@@ -30,19 +30,19 @@ Delegate reading to Haiku subagents; write the docs yourself.
 
 Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 
-> Read-only audit of `docs/learning-space/*.md`, `AGENTS.md`, `CLAUDE.md`,
-> `docs/README.md`, `space/README.md`, `space/resources/learning-folder/AGENTS.md`,
-> `space/resources/guide.md`, `space/resources/instructions.md`, `space/src/main/mcp.ts` (tool descriptions), and
+> Read-only audit of `docs/*.md`, `AGENTS.md`, `CLAUDE.md`,
+> `docs/README.md`, `apps/desktop/README.md`, `apps/desktop/resources/learning-folder/AGENTS.md`,
+> `apps/desktop/resources/guide.md`, `apps/desktop/resources/instructions.md`, `apps/desktop/src/main/mcp.ts` (tool descriptions), and
 > `../learning-space-plugins/README.md`. CURRENT STATE: <the list from step 1>.
 > Report outdated or contradictory lines with file:line and what is true now,
 > and missing sections a newcomer would need. Check tool names against
-> `space/src/main/mcp.ts` and file paths against the tree. Max 80 lines.
+> `apps/desktop/src/main/mcp.ts` and file paths against the tree. Max 80 lines.
 
 ## 3. Update each document by its rule
 
 | File | Rule |
 | --- | --- |
-| `docs/learning-space/README.md` | Update the status table and its date. Keep the reading order and glossary current. |
+| `docs/README.md` | Update the status table and its date. Keep the reading order and glossary current. |
 | `decisions.md` | Add new decisions to the right table. Never delete one: mark the old one **Replaced** and point to the new one. |
 | `research.md` | Add findings with source and date. Mark facts that are no longer true. |
 | `working-guide.md` | Add new pitfalls, check recipes and founder preferences. Remove recipes that no longer work. |
@@ -52,8 +52,8 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 | `idea.md` | Never rewrite the founder's words. Update only the status note at the top. |
 | `step-3-*.md` | Historical. Touch only the status note. |
 | `AGENTS.md` / `CLAUDE.md` | Only binding rules (what every agent must or must not do). Facts and history go to the docs above. |
-| `space/README.md` | Run, connect, tool table, dev automation. Keep it under ~150 lines. |
-| Templates (`space/resources/…`) | Fix tool names or behaviour that changed. They ship to users. |
+| `apps/desktop/README.md` | Run, connect, tool table, dev automation. Keep it under ~150 lines. |
+| Templates (`apps/desktop/resources/…`) | Fix tool names or behaviour that changed. They ship to users. |
 
 ## 4. Remove outdated lines
 
@@ -68,7 +68,7 @@ Start one `Explore` subagent with `model: "haiku"` and this brief, filled in:
 Run these searches (read-only) and fix or report findings:
 
 - Hard-coded colours outside the token files:
-  `grep -rnE "#[0-9a-fA-F]{3,8}\b|rgba?\(" space/src/renderer/src --include="*.tsx" --include="*.css" | grep -v -e tokens.css -e content.css`
+  `grep -rnE "#[0-9a-fA-F]{3,8}\b|rgba?\(" apps/desktop/src/renderer/src --include="*.tsx" --include="*.css" | grep -v -e tokens.css -e content.css`
 - Menus or popovers that do not use the shared parts: new `className` values
   containing `menu`, `popover`, `pop`, `button` that are not in the menu
   system's comment block in `styles/app.css`.

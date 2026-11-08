@@ -1,4 +1,4 @@
-// Copied from space/src/renderer/src/live/colors.ts (NAMED, the board's colour names).
+// Copied from apps/desktop/src/renderer/src/live/colors.ts (NAMED, the board's colour names).
 /** The board's colour tokens (content.css) and the ink palette names. */
 export const NAMED: Record<string, { css: string; hex: string }> = {
   accent: { css: 'var(--ls-accent)', hex: '#6e8bff' },

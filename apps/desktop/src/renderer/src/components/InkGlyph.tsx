@@ -6,7 +6,7 @@ import { pressureWidth } from '../board/geometry'
 import { penInk, strokeSeed } from '../board/hand'
 
 /**
- * A small drawing in the agents' pen ink, for the app's own controls (docs/learning-space/agent-ink.md,
+ * A small drawing in the agents' pen ink, for the app's own controls (docs/agent-ink.md,
  * "Ink glyphs"). Its path is drawn as an agent's pen shape is: flattenPath, then hand.ts penInk (the
  * sampling, the wobble and the pressure taper) with a fixed seed, so the glyph never changes. It
  * paints as the board paints pressure ink (board/paint.ts writePiece): one curve piece per sample,

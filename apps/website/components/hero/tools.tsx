@@ -1,5 +1,5 @@
 /**
- * The hero's tool pill: a copy of the app's tool pill (space/src/renderer/src/tools.ts TOOLS,
+ * The hero's tool pill: a copy of the app's tool pill (apps/desktop/src/renderer/src/tools.ts TOOLS,
  * components/BoardControls.tsx). The icons are the app's lucide icons (lucide-react 1.61),
  * inlined as their SVG nodes so the site needs no icon package. The app shell
  * (components/AppShell.tsx) takes its other icons from here too: one copy of each.

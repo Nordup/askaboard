@@ -1,8 +1,8 @@
 # Askaboard — how to work on it
 
 Practical knowledge for agents that build and check Askaboard. The
-binding rules are in [`../../AGENTS.md`](../../AGENTS.md) and
-[`../../CLAUDE.md`](../../CLAUDE.md); this file explains how to follow them
+binding rules are in [`../AGENTS.md`](../AGENTS.md) and
+[`../CLAUDE.md`](../CLAUDE.md); this file explains how to follow them
 and what went wrong before.
 
 ## The founder
@@ -26,7 +26,7 @@ and what went wrong before.
 - Wants to talk through **how** a fix will be built before it is built:
   propose the design, listen, and let the founder's picture decide.
 - For text that agents read, follow [`writing-agent-text.md`](writing-agent-text.md).
-- Agent text changes start as a draft in `docs/learning-space/drafts/`, sent
+- Agent text changes start as a draft in `docs/drafts/`, sent
   to the founder, applied only after "approved", then measured in the lab.
   When asked to fix one passage, change only that passage, in the voice of
   the whole brief, and read the whole brief first.
@@ -82,7 +82,7 @@ and what went wrong before.
 
 | Need | How |
 | --- | --- |
-| Own app instance | Start the Electron binary directly: `HOME=<scratch home> SPACE_FOLDER=<scratch folder> SPACE_MCP_PORT=<47822…> SPACE_REMOTE_DEBUG=<93xx> ./node_modules/.bin/electron --user-data-dir=<scratch> .` (from `space/`). The founder's app uses port 47821. Without a scratch `HOME`, the instance writes its port into the founder's `~/.askaboard/relay.json` (and `tools.json`, `bin/`), and the founder's agents then connect to it (happened twice on 2026-10-29). On Linux, in a shell that an agent app started, put `env -u ELECTRON_RUN_AS_NODE` first (see the pitfall below). |
+| Own app instance | Start the Electron binary directly: `HOME=<scratch home> SPACE_FOLDER=<scratch folder> SPACE_MCP_PORT=<47822…> SPACE_REMOTE_DEBUG=<93xx> ./node_modules/.bin/electron --user-data-dir=<scratch> .` (from `apps/desktop/`). The founder's app uses port 47821. Without a scratch `HOME`, the instance writes its port into the founder's `~/.askaboard/relay.json` (and `tools.json`, `bin/`), and the founder's agents then connect to it (happened twice on 2026-10-29). On Linux, in a shell that an agent app started, put `env -u ELECTRON_RUN_AS_NODE` first (see the pitfall below). |
 | Dev-mode check | Run `electron-vite dev` with the same env vars and a `--user-data-dir` too. React StrictMode only exists there. On macOS a scratch `HOME` does not move Electron's user data: without `--user-data-dir` the run writes into the founder's `~/Library/Application Support/Askaboard/state.json` (happened 2026-11-03). |
 | Drive input | `node scripts/drive.mjs --port <debug port> …` draws pen strokes with pressure, presses keys, clicks, drags, wheels, takes screenshots, prints state. Works while the window is behind other windows. |
 | A real agent client | `claude -p "<prompt>" --model haiku --mcp-config <json> --strict-mcp-config --allowedTools "mcp__askaboard__*"`. Put the prompt **before** `--allowedTools` (the flag swallows following words). |
@@ -94,7 +94,7 @@ and what went wrong before.
 | Measure agent behaviour | `node scripts/bench/run.mjs --scenarios S1,S2,S3,S4 --model opus --out <dir>` (after `npm run build`; ports 47870/9470; `--dev` for the dev renderer). One trace: `node scripts/trace-report.mjs <file or folder>`. The set-up writes with scenes (one scene per seeded item, shown at once); check a set-up change without an agent by importing `scripts/bench/busy.mjs` and `scenarios.mjs` (never `run.mjs`) and seeding a lab app. |
 | Measure one change (perf) | `node scripts/perf/run.mjs --client claude --model haiku --effort high --task orbit --label <state>` (fresh app on 47880/9480; `--video` for the first visible change), `node scripts/perf/replay.mjs --from <run folder>` (no model; 47881/9481), `node scripts/perf/report.mjs --baseline <state>`. Behaviour changes: opus / gpt-6.1-sol at effort medium; behind-the-scenes changes: replay, or haiku / gpt-6-luna at effort high. See `scripts/perf/README.md`. |
 | Measure rendering | `node scripts/perf/render.mjs --scenes toon,many --label <state>` (after `npm run build`; ports 47882/9482; `--dev` for the dev renderer, `--tune '<json>'` for one switch). The window opens at its normal place with no focus, so the founder keeps the keyboard and can bring it forward. Run it in the standard condition (P20), and do not ask for a quiet machine. See `scripts/perf/README.md`. |
-| Compare two builds of rendering | Measure both on the same day, in turns (old, new, new, old). A history line of an earlier day is not fair: on 2026-11-01 the same code gave 10 to 15 percent less after the machine load changed. For the old build: `git worktree add --detach <scratch>/old <commit>`, link `space/node_modules`, `npm run build` there, and `git worktree remove --force` after it. Read `--capped` for what a person sees. Uncapped `fps` counts page frames, so it can fall when the app does less: the board pan gave 92 fps against 115 with a quarter of the CPU. For a board change, read renderer CPU, paint time, GPU util and the worst frame. |
+| Compare two builds of rendering | Measure both on the same day, in turns (old, new, new, old). A history line of an earlier day is not fair: on 2026-11-01 the same code gave 10 to 15 percent less after the machine load changed. For the old build: `git worktree add --detach <scratch>/old <commit>`, link `apps/desktop/node_modules`, `npm run build` there, and `git worktree remove --force` after it. Read `--capped` for what a person sees. Uncapped `fps` counts page frames, so it can fall when the app does less: the board pan gave 92 fps against 115 with a quarter of the CPU. For a board change, read renderer CPU, paint time, GPU util and the worst frame. |
 | A real plugin (Codex) | The lab connects from config, so it misses plugin bugs (I30). Copy `../learning-space-plugins` without `.git` to a scratch folder and set the lab port in `plugins/askaboard/mcp*.json`. In a scratch `CODEX_HOME` add `[marketplaces.learning-space]` with `source_type = "local"` and that folder, and `[plugins."learning-space@learning-space"]` with `enabled = true`, then run `codex plugin add learning-space@learning-space`. Put a `codex` wrapper first on `PATH`: it swaps the `[mcp_servers.learning-space]` block that `council.mjs` writes for those lines and runs the app's Codex with `-c features.code_mode_host=true` (macOS: `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`; Linux: the `codex` command, `~/.local/bin/codex` on the founder's Linux machine; the plugin path is not checked there). Run `council.mjs --codex-home <home>`. The rollout in `<home>/sessions/` shows what the model received. Keep the scratch files out of the repo. |
 | Measure perception | `node scripts/bench/run.mjs --scenarios P1,P2,P3 --model opus --out <dir>`: a busy board, a prior look, then new learner work and a new connection (about 5 minutes per run). |
 | Board news hook in the bench | On by default: the agent gets the plugins' `UserPromptSubmit` hook against the run's own app (Claude: `--settings`; Codex: `-c hooks.UserPromptSubmit=…` with `--dangerously-bypass-hook-trust`). `--no-news-hook` measures without it. `metrics.json` → `news_in_prompt` (Codex) holds the line that reached the prompt. Board news is delivered once per agent app and board: after the hook sent it, the tool results of that turn do not repeat it. |
@@ -122,12 +122,12 @@ The founder's own setting is Opus at medium effort; pass `--effort medium`
 
 **The learner's work before the agent** (D17). When the request needs the
 learner's own work on the board (an exercise they tried, a drawing), write it
-as a scene program in `space/scripts/lab/council/learners/` with `write()` and
+as a scene program in `apps/desktop/scripts/lab/council/learners/` with `write()` and
 `stroke()` and pass `--learner-board <program.js>`. `learner-board.mjs` runs it
 through the app's own scene library and hand and writes the strokes into the
 board file as the learner's ink, so the app opens with it. Do not draw your own
 strokes or send pen input. Give the pen colours as CSS values (`#5fd38d`
-green, `#6e8bff` blue; `space/src/renderer/src/tools.ts` `INK_COLORS`): what
+green, `#6e8bff` blue; `apps/desktop/src/renderer/src/tools.ts` `INK_COLORS`): what
 someone gave the learner (the exercise) in one colour, the learner's own work
 in another. Place it in the learner's view (about -607..607 × -427..427 board
 points in the lab window) so the agent's work can balance it, and leave room
@@ -152,7 +152,7 @@ Videos stay out of git (`*.mp4` and similar are ignored). So do images:
 screenshots anywhere (for example a draft's folder); they stay local.
 
 
-The council tasks are in `space/scripts/lab/council/tasks.json`; each has a
+The council tasks are in `apps/desktop/scripts/lab/council/tasks.json`; each has a
 `covers` list. The founder's rule (2026-10-25): **keep the same tests so runs
 can be compared, and run only the tests that show what changed** — not the
 whole set every time, and one run per model is usually enough.
@@ -316,15 +316,15 @@ combine; `meta.json` records `no_html` and `brief`.
 - Scratch work lives in the session scratchpad, never in the founder's
   learning folder (`~/Projects/learning/learning-space`).
 - The plugin repo is a sibling checkout: `../learning-space-plugins`.
-  `space/scripts/build-mcpb.mjs` copies its `.mcpb` when it is present.
+  `apps/desktop/scripts/build-mcpb.mjs` copies its `.mcpb` when it is present.
 
 ## Package a macOS release
 
 The full build and publishing checklist is in [`release-guide.md`](release-guide.md).
 
 On a Mac with the Developer ID Application identity and the
-`learning-space-notary` keychain profile, run `cd space && npm run dist:mac`.
-It builds a universal Apple Silicon and Intel DMG in `space/release/` with
+`learning-space-notary` keychain profile, run `cd apps/desktop && npm run dist:mac`.
+It builds a universal Apple Silicon and Intel DMG in `apps/desktop/release/` with
 stable analytics, signs and notarizes the app and the DMG, staples the DMG,
 and checks Gatekeeper. It stops when credentials or a check fail. To build
 one architecture instead, pass `-- --arm64` or `-- --x64`. Set

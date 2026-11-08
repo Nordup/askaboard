@@ -7,7 +7,7 @@ import type { Point } from './types'
  * profile with a taper at both ends. Live scenes draw their pen ink with it
  * (the stage makes the points of pen shapes, shared/ink-points.ts), and the
  * learner's shapes and the ink glyphs draw with the same pen (penInk), so all
- * have one hand. The recipe step by step: docs/learning-space/agent-ink.md.
+ * have one hand. The recipe step by step: docs/agent-ink.md.
  */
 
 /**

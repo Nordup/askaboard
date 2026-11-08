@@ -1,6 +1,6 @@
-/* The page is a board: the colours, the dot grid and the hand font come from the app (space/src/renderer/src/styles/tokens.css, board/board.css, board/content.css). */
+/* The page is a board: the colours, the dot grid and the hand font come from the app (apps/desktop/src/renderer/src/styles/tokens.css, board/board.css, board/content.css). */
 :root {
-  /* Surfaces, lines and text: the app's tokens (space/src/renderer/src/styles/tokens.css). */
+  /* Surfaces, lines and text: the app's tokens (apps/desktop/src/renderer/src/styles/tokens.css). */
   --bg-app: #111113;
   --bg-canvas: #161618;
   --bg-elevated: #1c1c1f;

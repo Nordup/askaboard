@@ -1,7 +1,7 @@
 /**
  * The strokes of a shape (decision B71). A rectangle, an ellipse, an arrow or a line stays an
  * editable item (ShapeNode) and the ink painter draws it: this module turns its fields into ink
- * strokes made exactly as an agent's pen shape is (docs/learning-space/agent-ink.md): the outline of
+ * strokes made exactly as an agent's pen shape is (docs/agent-ink.md): the outline of
  * shared/pen-shapes.ts, flattened by flattenPath, sampled and humanized by hand.ts penInk with the
  * shape's own seed, so the line has the pen's wobble and its pressure taper at both ends. A fill is
  * one polygon under the strokes, on the outline without the wobble. The strokes are made from the

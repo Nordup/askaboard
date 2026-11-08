@@ -132,7 +132,7 @@ await save(join(mac, 'AskaboardTemplate.svg'), template)
 await save(join(mac, 'AskaboardTemplate.png'), await png(template, 16))
 await save(join(mac, 'AskaboardTemplate@2x.png'), await png(template, 32, { density: 144 }))
 const appPng = await png(appIcon, 1024)
-await save(join(root, 'space/resources/icon.png'), appPng)
+await save(join(root, 'apps/desktop/resources/icon.png'), appPng)
 await exportIconset(appIcon)
 
 const favicon = dockTile(32, 1, 7, 25)
