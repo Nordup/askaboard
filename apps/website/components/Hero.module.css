@@ -70,6 +70,8 @@
 .count {
   font-weight: 650;
   color: var(--text);
+  /* Equal digit widths: the live count (StarCount.tsx) can replace the build-time one without moving the bar. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- The headline ---------- */
