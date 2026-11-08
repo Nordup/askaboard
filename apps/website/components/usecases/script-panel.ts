@@ -60,27 +60,54 @@ export function scriptPanel(name: string, steps: readonly Step[]) {
   const firstPara = lines.map((_, k) => lines.slice(0, k).reduce((n, l) => n + l.length, 0))
   const status = el.querySelector<HTMLElement>(`.${styles.status}`)!
 
+  // A frame writes only what changed, and reads the layout only when it can have changed: a forced layout in each
+  // frame was most of the panel's cost.
+  const shown = new Map<string, string>()
+  const put = (key: string, value: string, write: (value: string) => void): void => {
+    if (shown.get(key) === value) return
+    shown.set(key, value)
+    write(value)
+  }
+  /** The reading view's layout (px): measured again when the panel resizes or goes into a page, or turns phone or back. */
+  let laid: { firsts: number[]; last: number; viewH: number; textH: number } | null = null
+  let laidPhone = false
+  if (typeof ResizeObserver !== 'undefined') {
+    const resized = new ResizeObserver(() => (laid = null))
+    resized.observe(view)
+    resized.observe(text)
+  }
+  const measure = (): NonNullable<typeof laid> => {
+    const line = parseFloat(getComputedStyle(paras[0]).lineHeight) || 24
+    const firsts = firstPara.map((p) => paras[p].offsetTop + line / 2)
+    const lastPara = paras[paras.length - 1]
+    const last = Math.max(firsts[0], lastPara.offsetTop + lastPara.offsetHeight - line / 2)
+    return { firsts, last, viewH: view.clientHeight, textH: text.offsetHeight }
+  }
+
   return {
     el,
     /** The panel at scene time t. `phone`: under the picture; `below`: its gap to the board's bottom (px). */
     update(t: number, phone: boolean, below: number): void {
-      el.classList.toggle(styles.phone, phone)
-      el.style.setProperty('--below', `${below}px`)
-      el.style.opacity = String(ease(clamp01(t / 0.4)))
+      if (phone !== laidPhone) {
+        laidPhone = phone
+        laid = null
+      }
+      put('phone', String(phone), () => el.classList.toggle(styles.phone, phone))
+      put('below', `${below}px`, (v) => el.style.setProperty('--below', v))
+      put('opacity', String(ease(clamp01(t / 0.4))), (v) => (el.style.opacity = v))
       let i = 0
       steps.forEach((s, k) => t >= s.start && (i = k))
-      fills.forEach((f, k) => (f.style.width = `${Math.round(clamp01((t - steps[k].start) / (steps[k].end - steps[k].start)) * 1000) / 10}%`))
+      // A transform, not a width: the bar's fills move in each frame, and a width is a layout.
+      fills.forEach((f, k) => put(`fill${k}`, `scaleX(${Math.round(clamp01((t - steps[k].start) / (steps[k].end - steps[k].start)) * 1000) / 1000})`, (v) => (f.style.transform = v)))
       const label = `Step ${i + 1} of ${steps.length}`
       if (status.textContent !== label) status.textContent = label
-      // The reading view (layout read each frame: the panel's width changes with the window).
-      const line = parseFloat(getComputedStyle(paras[0]).lineHeight) || 24
-      const firsts = firstPara.map((p) => paras[p].offsetTop + line / 2)
-      const lastPara = paras[paras.length - 1]
-      const last = Math.max(firsts[0], lastPara.offsetTop + lastPara.offsetHeight - line / 2)
-      const point = readingPoint(firsts, last, steps, t)
-      const scroll = Math.max(0, Math.min(point - view.clientHeight / 2, text.offsetHeight - view.clientHeight))
-      text.style.transform = `translateY(${-scroll}px)`
-      view.style.setProperty('--reading-at', `${point - scroll}px`)
+      // The reading view. Out of a page (the shell's offscreen draw) there is no layout to read.
+      if (!el.isConnected) return
+      laid ??= measure()
+      const point = readingPoint(laid.firsts, laid.last, steps, t)
+      const scroll = Math.max(0, Math.min(point - laid.viewH / 2, laid.textH - laid.viewH))
+      put('scroll', `translateY(${-scroll}px)`, (v) => (text.style.transform = v))
+      put('at', `${point - scroll}px`, (v) => view.style.setProperty('--reading-at', v))
     }
   }
 }

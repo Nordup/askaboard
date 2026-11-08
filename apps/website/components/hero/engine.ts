@@ -236,15 +236,21 @@ export function mountBoard(o: {
    * grid, so the browser shows the canvas's pixels one to one and does not resample (soften) it.
    */
   const placeItem = (item: Item): void => {
-    const x = item.dx * u
-    const y = item.dy * u
-    item.el.style.translate = `${x}px ${y}px`
-    if (!item.canvas || !item.place || item.place.r !== 0) return
-    const box = item.canvas.getBoundingClientRect()
-    if (!box.width) return
+    moveItem(item)
+    snapItem(item, gridBox(item))
+  }
+  // Its two halves, so layout() writes every item first and reads the boxes once: a read after each item's write was
+  // a layout for each item.
+  const moveItem = (item: Item): void => {
+    item.el.style.translate = `${item.dx * u}px ${item.dy * u}px`
+  }
+  /** The canvas's box, read after moveItem, for an item that is not turned. */
+  const gridBox = (item: Item): DOMRect | null => (item.canvas && item.place && item.place.r === 0 ? item.canvas.getBoundingClientRect() : null)
+  const snapItem = (item: Item, box: DOMRect | null): void => {
+    if (!box?.width) return
     const fx = box.left - snap(box.left)
     const fy = box.top - snap(box.top)
-    if (fx || fy) item.el.style.translate = `${x - fx}px ${y - fy}px`
+    if (fx || fy) item.el.style.translate = `${item.dx * u - fx}px ${item.dy * u - fy}px`
   }
 
   const sizeCanvas = (item: Item): void => {
@@ -275,6 +281,13 @@ export function mountBoard(o: {
     const track = shell?.track.getBoundingClientRect()
     const frame = shell?.frame.getBoundingClientRect()
     const sizes = shell ? shellSizes(shell) : null
+    // The anchors' boxes, read before the items' writes below (they do not move the page's elements).
+    const anchors = new Map<string, DOMRect | null>()
+    for (const item of items) {
+      const name = item.def?.anchor
+      if (name && !anchors.has(name)) anchors.set(name, host.querySelector<HTMLElement>(`[data-anchor="${name}"]`)?.getBoundingClientRect() ?? null)
+    }
+    const placed: Item[] = []
     /** Put an item whose place is an offset from (x, y) page px there; its CSS place follows. */
     const placeFrom = (item: Item, place: Place, x: number, y: number): void => {
       const at: Place = { ...place, x: (x - origin[0]) / u + place.x, y: (y - origin[1]) / u + place.y }
@@ -313,20 +326,22 @@ export function mountBoard(o: {
       }
       if (item.def?.anchor && item.place) {
         // An anchored item: its place is an offset from the top centre of its page element (layout.ts `anchor`).
-        const anchor = host.querySelector<HTMLElement>(`[data-anchor="${item.def.anchor}"]`)
-        if (!anchor) {
+        const box = anchors.get(item.def.anchor)
+        if (!box) {
           item.place = null
           item.el.style.display = 'none'
           continue
         }
-        const box = anchor.getBoundingClientRect()
         placeFrom(item, item.place, box.left - hostBox.left + box.width / 2, box.top - hostBox.top)
       }
       if (!item.place) continue
       sizeCanvas(item)
-      placeItem(item)
+      moveItem(item)
+      placed.push(item)
       if (item.mark) paintMark(item)
     }
+    const boxes = placed.map(gridBox)
+    placed.forEach((item, i) => snapItem(item, boxes[i]))
     showPan()
     sizeDraft()
     paintAll = true

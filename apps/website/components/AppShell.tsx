@@ -27,6 +27,8 @@ const CHAT_START = 10
 const CHAT_KNEE = 180
 /** A switch is one crossfade (ms): the old scene fades out while the new one fades in from its start. */
 const CROSSFADE = 320
+/** The scene shown while the next request is typed: it holds its frame at this opacity (founder, 2026-11-07). */
+const DIM = 0.4
 /** A finished scene holds its last frame this long (s), then plays again (founder, 2026-11-07). */
 const REPLAY_GAP = 3
 
@@ -85,8 +87,8 @@ export function AppShell() {
     const hold = heldScene()
 
     /**
-     * One animation instance per use case, made when its module loads and drawn once offscreen
-     * (its ink is built and baked then, not in the frame of a switch). An animation depends only
+     * One animation instance per use case, made when its module loads and drawn once offscreen in
+     * idle time (its ink is built and baked then, not in the frame of a switch). An animation depends only
      * on t, so the same instance plays again from t = 0 at each switch.
      */
     const anims: (Animation | null)[] = USE_CASES.map(() => null)
@@ -102,17 +104,25 @@ export function AppShell() {
       host: HTMLDivElement
       index: number
       startAt: number
-      /** The opacity this layer had when the crossfade began. */
+      /** The scene time this layer holds (it is not the one playing: dimmed for the next request, or fading out); null while it plays. */
+      frozen: number | null
+      /** The opacity this layer had when the crossfade began, and the one it ends at. */
       from: number
+      to: number
       opacity: number
+      /** What the canvas holds now ('' when empty) and the opacity last written: a frame that changes neither writes nothing. */
+      drawn: string
+      shown: string
     }
     // The board is empty until the first request is typed.
-    let front: Layer = { canvas: canvasA, ctx: ctxA, host: hostA, index: -1, startAt: 0, from: 0, opacity: 0 }
-    let back: Layer = { canvas: canvasB, ctx: ctxB, host: hostB, index: -1, startAt: 0, from: 0, opacity: 0 }
+    let front: Layer = { canvas: canvasA, ctx: ctxA, host: hostA, index: -1, startAt: 0, frozen: null, from: 0, to: 0, opacity: 0, drawn: '', shown: '' }
+    let back: Layer = { canvas: canvasB, ctx: ctxB, host: hostB, index: -1, startAt: 0, frozen: null, from: 0, to: 0, opacity: 0, drawn: '', shown: '' }
     /** The host each animation's material is in now: one place at a time, the newest layer that shows it. */
     const mounted = new Map<Animation, HTMLDivElement>()
     const attach = (layer: Layer): void => {
       const anim = layer.index >= 0 ? anims[layer.index] : null
+      // Material mounted now has not been drawn yet.
+      layer.drawn = ''
       // A layer shows its own scene's material only: what an earlier scene left in its host goes.
       for (const [other, host] of mounted) {
         if (host !== layer.host || other === anim) continue
@@ -129,40 +139,94 @@ export function AppShell() {
     let target = 0
     let onScreen = false
     let raf = 0
+    /** The timer that wakes the loop at the end of a still stretch (tick). */
+    let wake = 0
     let w = 0
     let h = 0
     let scale = 1
 
-    const drawLayer = (layer: Layer, now: number): void => {
+    /**
+     * A layer's scene time now, and its replay's own fade (`seen`, times the layer's opacity). The scene plays, holds
+     * its last frame for REPLAY_GAP and fades out over its last CROSSFADE, then fades in again over CROSSFADE and
+     * plays from t = 0 (the request is not typed again). `playing`: the scene time runs (its clock may hold it).
+     * `next`: seconds until the frame or the fade changes again (0: in each frame; Infinity: only on an event).
+     */
+    const clock = (layer: Layer, anim: Animation, now: number): { t: number; seen: number; playing: boolean; next: number } => {
+      if (hold) return { t: hold.t, seen: 1, playing: false, next: Infinity }
+      if (layer.frozen !== null) return { t: layer.frozen, seen: 1, playing: false, next: Infinity }
+      if (still) return { t: anim.duration, seen: 1, playing: false, next: Infinity }
+      const fade = CROSSFADE / 1000
+      const first = anim.duration + REPLAY_GAP
+      const played = (now - layer.startAt) / 1000
+      // From the first replay on, each cycle starts with its fade in (phase < 0).
+      const phase = played < first ? played : ((played - first) % (fade + first)) - fade
+      const k = phase < 0 ? (phase + fade) / fade : phase > first - fade ? (first - phase) / fade : 1
+      // The replay's hold is a still frame until its fade out. (A voiced line ends by the scene's end, so no voice
+      // plays in it: the voice's quiet timer, agent-scene.ts, cuts nothing.)
+      const next = phase >= anim.duration && phase < first - fade ? first - fade - phase : 0
+      return { t: Math.max(0, Math.min(anim.duration, phase)), seen: k * k * (3 - 2 * k), playing: phase >= 0, next }
+    }
+
+    /** Draw a layer's frame, only when it is not the one its canvas holds; returns its replay fade and `next` (clock). */
+    const drawLayer = (layer: Layer, now: number): { seen: number; next: number } => {
       const c = layer.ctx
-      c.setTransform(1, 0, 0, 1, 0, 0)
-      c.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
       const anim = layer.index >= 0 ? anims[layer.index] : null
       // A scene that shows on both layers (the step left and come back to) plays on the front one only.
-      if (!anim || !w || !h || layer.opacity <= 0 || (layer === back && back.index === front.index)) return
-      c.setTransform(scale, 0, 0, scale, 0, 0)
-      // The scene plays, holds its last frame for REPLAY_GAP, and plays again from the start (the request is not typed again).
-      const played = (now - layer.startAt) / 1000
-      const t = hold ? hold.t : still ? anim.duration : Math.min(anim.duration, played % (anim.duration + REPLAY_GAP))
-      anim.draw(c, w, h, t)
+      if (!anim || !w || !h || layer.opacity <= 0 || (layer === back && back.index === front.index)) {
+        if (layer.drawn) {
+          c.setTransform(1, 0, 0, 1, 0, 0)
+          c.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+          layer.drawn = ''
+        }
+        return { seen: 1, next: Infinity }
+      }
+      let at = clock(layer, anim, now)
+      // The scene's own clock (its voice) may hold it: the scene time, kept here only, moves back by what it says.
+      const lag = at.playing ? (anim.lag?.(at.t) ?? 0) : 0
+      if (lag > 0) {
+        layer.startAt += lag * 1000
+        at = clock(layer, anim, now)
+      }
+      // The canvas's size is in the key: a new bitmap size empties it.
+      const look = `${layer.index} ${at.t} ${w} ${h} ${scale}`
+      if (look !== layer.drawn) {
+        c.setTransform(1, 0, 0, 1, 0, 0)
+        c.clearRect(0, 0, layer.canvas.width, layer.canvas.height)
+        c.setTransform(scale, 0, 0, scale, 0, 0)
+        anim.draw(c, w, h, at.t)
+        layer.drawn = look
+      }
+      return at
     }
 
-    const paint = (now: number): void => {
+    /** Paint both layers; returns the seconds until the next change (as clock's `next`). */
+    const paint = (now: number): number => {
       const k = still || hold ? 1 : Math.min(1, (now - fadeAt) / CROSSFADE)
       const eased = k * k * (3 - 2 * k)
-      front.opacity = front.from + (1 - front.from) * eased
-      back.opacity = back.from * (1 - eased)
+      let next = k < 1 ? 0 : Infinity
       for (const layer of [front, back]) {
-        drawLayer(layer, now)
-        layer.canvas.style.opacity = String(layer.opacity)
-        layer.host.style.opacity = String(layer.opacity)
+        layer.opacity = layer.from + (layer.to - layer.from) * eased
+        const at = drawLayer(layer, now)
+        next = Math.min(next, at.next)
+        const seen = String(layer.opacity * at.seen)
+        if (seen === layer.shown) continue
+        layer.shown = seen
+        layer.canvas.style.opacity = seen
+        layer.host.style.opacity = seen
       }
+      return next
     }
 
+    // The loop rests while nothing changes (a held frame, the replay's hold): a timer wakes it where the change is due,
+    // an event (a switch, a resize, the shell back on screen) at once.
     const tick = (now: number): void => {
       raf = 0
-      paint(now)
-      if (!still && onScreen && !document.hidden) raf = requestAnimationFrame(tick)
+      window.clearTimeout(wake)
+      wake = 0
+      const next = paint(now)
+      if (still || !onScreen || document.hidden) return
+      if (next <= 0) raf = requestAnimationFrame(tick)
+      else if (next < Infinity) wake = window.setTimeout(kick, next * 1000)
     }
     /** Paint again: the loop while the shell is on screen, one frame with reduced motion. */
     const kick = (): void => {
@@ -171,33 +235,72 @@ export function AppShell() {
 
     /**
      * Switch to use case `i` once its request is typed: it starts from t = 0 on the layer that
-     * shows less now, and fades in while the other fades out from where it is. Both scroll
-     * directions are the same.
+     * shows less now, and fades in while the other fades out from the frame it holds. Both scroll
+     * directions are the same. Back to the scene that was dimmed for the request (the visitor
+     * scrolled back before the next one showed): it goes on from its held frame, at full again.
      */
     const show = (i: number): void => {
       target = i
       setIndex(i)
       if (hold && front.index === i) return
+      if (front.index === i && front.frozen !== null) {
+        const now = performance.now()
+        paint(now)
+        front.startAt = now - front.frozen * 1000
+        front.frozen = null
+        fadeTo(now, 1, 0)
+        return
+      }
       swap(i)
     }
 
-    /** Fade use case `i`'s scene in (i = -1: an empty board) while the scene shown now fades out. */
+    /** A layer stops playing: its scene time holds where it is and its sound stops now (not when it is no longer drawn). */
+    const freeze = (layer: Layer, now: number): void => {
+      const anim = layer.index >= 0 ? anims[layer.index] : null
+      if (!anim || layer.frozen !== null) return
+      // A replay fade in progress is part of what shows: the held frame keeps that opacity (no jump to the layer's).
+      const at = clock(layer, anim, now)
+      layer.frozen = at.t
+      layer.opacity *= at.seen
+      anim.hush?.()
+    }
+    /** Both layers ease from where they are to these opacities over one CROSSFADE. */
+    const fadeTo = (now: number, toFront: number, toBack: number): void => {
+      for (const layer of [front, back]) layer.from = layer.opacity
+      front.to = toFront
+      back.to = toBack
+      fadeAt = now
+      kick()
+    }
+
+    /** Fade use case `i`'s scene in while the scene shown now fades out. */
     const swap = (i: number): void => {
       const now = performance.now()
       paint(now)
       const [out, into] = front.opacity >= back.opacity ? [front, back] : [back, front]
-      out.from = out.opacity
+      freeze(out, now)
+      freeze(into, now)
       into.index = i
       into.startAt = now
-      into.from = 0
+      into.frozen = null
       into.opacity = 0
+      into.shown = '0'
       into.canvas.style.opacity = '0'
       into.host.style.opacity = '0'
       attach(into)
       front = into
       back = out
-      fadeAt = now
-      kick()
+      fadeTo(now, 1, 0)
+    }
+
+    /** The scene shown waits for the next request: it holds its frame, its voice stops, and it dims to DIM. */
+    const dim = (): void => {
+      if (front.index < 0) return
+      const now = performance.now()
+      paint(now)
+      freeze(front, now)
+      freeze(back, now)
+      fadeTo(now, DIM, 0)
     }
 
     // ---------- The window glides into its sticky place and out of it (the founder: no hard stop) ----------
@@ -276,17 +379,29 @@ export function AppShell() {
       if (i !== target && !hold) ask(i)
     }
 
-    /** Build an animation's ink once, offscreen, at the board's size. */
-    const warm = (anim: Animation): void => {
-      if (!w || !h) return
-      const scratch = document.createElement('canvas')
-      scratch.width = canvasA.width
-      scratch.height = canvasA.height
-      const c = scratch.getContext('2d')
-      if (!c) return
-      c.setTransform(scale, 0, 0, scale, 0, 0)
-      anim.draw(c, w, h, anim.duration)
+    /**
+     * Build an animation's ink and material once, offscreen, at the board's size, in idle time after its module
+     * loads: the first switch to it then only shows it (a build in that frame was the jank at its start).
+     */
+    let live = true
+    const idle = (run: () => void): void => {
+      if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 })
+      else setTimeout(run, 200)
     }
+    const warm = (anim: Animation): void =>
+      idle(() => {
+        if (!live || !w || !h) return
+        const scratch = document.createElement('canvas')
+        scratch.width = canvasA.width
+        scratch.height = canvasA.height
+        const c = scratch.getContext('2d')
+        if (!c) return
+        c.setTransform(scale, 0, 0, scale, 0, 0)
+        anim.draw(c, w, h, anim.duration)
+        // That draw set the scene's material (agent-scene.ts) for its last frame: a layer that shows it draws its own again.
+        for (const layer of [front, back]) if (anims[layer.index] === anim) layer.drawn = ''
+        kick()
+      })
 
     // ---------- The modules load when the section comes near ----------
     const load = (): void => {
@@ -319,8 +434,8 @@ export function AppShell() {
       target = i
       asked = i
       setAsked(i)
-      // The board clears with the chat window; the new scene plays once the request is typed.
-      if (front.index >= 0) swap(-1)
+      // The board dims with the chat window (it is never empty); the new scene plays once the request is typed.
+      dim()
     }
     showRef.current = (i: number): void => {
       if (i === target) show(i)
@@ -396,6 +511,7 @@ export function AppShell() {
     // From now on the script places the stage (placeStage); before this it was sticky.
     if (!still) section.dataset.glide = ''
     return () => {
+      live = false
       delete section.dataset.glide
       stage.style.translate = ''
       const chatEl = stage.querySelector<HTMLElement>('[data-agent-window]')
@@ -407,6 +523,7 @@ export function AppShell() {
       window.removeEventListener('scroll', onScroll)
       document.removeEventListener('visibilitychange', onVisibility)
       if (raf) cancelAnimationFrame(raf)
+      window.clearTimeout(wake)
       for (const anim of mounted.keys()) anim.unmount?.()
     }
   }, [])

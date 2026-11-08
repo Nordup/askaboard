@@ -6,7 +6,7 @@
  * the drawing's start (negative: not yet started); `still` (reduced motion) shows it finished.
  */
 import { hex } from '@/lib/board/colors'
-import { humanize, type Point } from '@/lib/board/hand'
+import { humanize, type InkPoint, type Point } from '@/lib/board/hand'
 import { arc, clamp01, cyc, Ink, oval, pen, Pen, share, write } from '@/lib/board/kit'
 import { drawStroke, revealPoints } from '@/lib/board/paint'
 import { mulberry32 } from '@/lib/board/random'
@@ -37,9 +37,18 @@ export const TAU = Math.PI * 2
  */
 export function inkLine(g: Pen, line: Point[], color: string, width: number, seed: number, part = 1): void {
   if (part <= 0 || line.length < 2) return
-  const points = humanize(spline(line), 0.25, mulberry32(seed))
+  // A line that is the same as in its last frame (a seed is one line) keeps its points: a frame works out only the
+  // lines that move.
+  const last = held.get(seed)
+  const same = !!last && sameLine(last.line, line)
+  const points = same ? last!.points : humanize(spline(line), 0.25, mulberry32(seed))
+  if (!same) held.set(seed, { line: line.map(([x, y]) => [x, y] as Point), points })
   drawStroke(g.ctx, { points: part < 1 ? revealPoints(points, part) : points, color: hex(color), width }, 0, g.a)
 }
+
+/** Each inkLine seed's last line and its ink points. */
+const held = new Map<number, { line: Point[]; points: InkPoint[] }>()
+const sameLine = (a: Point[], b: Point[]): boolean => a.length === b.length && a.every(([x, y], i) => x === b[i][0] && y === b[i][1])
 
 /** Static inks that draw on one after the other: [ink, start second]. */
 export function drawOn(g: Pen, t: number, still: boolean, list: [Ink, number][]): void {

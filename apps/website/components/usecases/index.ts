@@ -15,7 +15,8 @@
  *   }
  *
  * - The shell calls create() once, when the module loads, and draws the instance once offscreen
- *   then (so its ink is built before the first switch). Each time the use case becomes current it
+ *   in idle time after that (so its ink and material are built before the first switch, not in
+ *   its first frame). Each time the use case becomes current it
  *   plays the same instance again from t = 0, and during a crossfade it may draw it on two
  *   canvases at two times. So draw() must depend only on t; caches in the closure are fine.
  * - draw() paints one frame. `ctx` is the board canvas, already cleared and scaled so that one
@@ -38,6 +39,14 @@
  *   scene when it becomes current and fades the host with the ink; unmount() takes it out again
  *   (the scene shows on another layer, or the page goes). draw() updates the material for t as
  *   well, and may run before mount() (the offscreen draw).
+ * - A scene with its own clock (agent-scene.ts: the voice) has lag(t). The shell calls it before
+ *   each played frame with the t it is about to draw; it returns how many seconds the scene at t
+ *   is ahead of that clock (0: none), and the shell moves the scene's time back by that much from
+ *   then on. So the scene's time stays in one place (the shell's) and the clock can only hold it.
+ *   With reduced motion or a held frame the shell does not call it.
+ * - When the scene stops playing (the shell holds its frame, dimmed, while the next request is
+ *   typed, or fades it out), the shell calls hush(): its sound stops then, not when it is no
+ *   longer drawn. A held scene may go on later from the same frame (lag is called again then).
  *
  * Add a use case: write the module, then add an entry to USE_CASES below. The page loads the
  * modules with import() only when the section comes near the viewport.
@@ -50,6 +59,10 @@ export interface Animation {
   duration: number
   /** One frame; see the comment above. */
   draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number): void
+  /** Seconds the scene at t is ahead of its own clock; see the comment above. */
+  lag?(t: number): number
+  /** The scene stops playing: stop its sound now; see the comment above. */
+  hush?(): void
   /** Put the scene's other board material into `host`; see the comment above. */
   mount?(host: HTMLElement): void
   unmount?(): void

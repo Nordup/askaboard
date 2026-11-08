@@ -14,7 +14,8 @@
  *   hand (board/hand.ts humanize), drawn with the site's copy of board/paint.ts, stroke by stroke as the app reveals them;
  * - an object that shows when it is made (no draw action) from its time of making on;
  * - the agent's view (the board area it drew for) fitted to the shell's board;
- * - the voice as live/voice.ts follows it: one audio element set from the scene time, line by line.
+ * - the voice line by line from one audio element, as live/voice.ts follows it, except that here the voice leads: the
+ *   scene waits for its words (lag).
  * Only what shapes, ink and tracks need is here: a scene with text, HTML or worlds needs more of the app.
  */
 import { hex } from '@/lib/board/colors'
@@ -178,6 +179,14 @@ const SVG = 'http://www.w3.org/2000/svg'
 const VOLUME =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>'
 
+/** The voice's clock (lag below), in seconds: a gap in the clip under SEEK plays on with no seek; the board may run
+ * SLACK ahead of the words (the audio clock's steps); audio more than DRIFT ahead goes back to the board's place. */
+const SEEK = 0.05
+const SLACK = 0.05
+const DRIFT = 0.25
+/** How long a line waits for its audio to move (ms) before it goes on without sound. */
+const HOLD_LIMIT = 1000
+
 /** One scene's part in the page's voice: its invite, its audio. */
 interface VoiceMember {
   refresh: () => void
@@ -244,10 +253,25 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   // The voice: off until the visitor turns it on (a browser plays sound only after a click). The big button over the
   // shell invites them until they press it or hide it. The choice is the page's (`voice` below): on in one scene, on
   // in all of them until the page reloads or the small button at the page's bottom right turns it off.
+  // The audio is made with the scene, not at its first mount, so the visitor's click primes every scene's (unlock).
   let audio: HTMLAudioElement | null = null
+  if (typeof window !== 'undefined') {
+    const a = new Audio()
+    a.preload = 'auto'
+    // The whole file now, as the section comes near (the shell loads this module then): each line's seek is local.
+    fetch(voiceUrl)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((blob) => (a.src = URL.createObjectURL(blob)))
+      .catch(() => (a.src = voiceUrl))
+    audio = a
+  }
   let lastT = -1
   let quiet: ReturnType<typeof setTimeout> | null = null
   let priming = false
+  /** The line the audio plays now, the lines this play goes on without (their audio failed), and when the audio last moved. */
+  let owner: AgentScene['cues'][number] | null = null
+  const skipped = new Set<AgentScene['cues'][number]>()
+  let moved = { at: -1, since: 0 }
   const stop = (): void => {
     audio?.pause()
   }
@@ -257,7 +281,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
     stop,
     unlock: () => {
       // Inside the click, so the browser lets this scene's audio play later too; muted, so the visitor hears nothing.
-      // A line that starts meanwhile (follow) takes the audio over: it unmutes it and keeps it playing.
+      // A line that starts meanwhile (lag) takes the audio over: it unmutes it and keeps it playing.
       if (!audio || !audio.paused) return
       const a = audio
       priming = true
@@ -272,26 +296,69 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
         })
     },
   }
-  /** live/voice.ts followVoice: the line at t plays from its place in the clip; between lines, quiet. */
-  const follow = (t: number): void => {
-    if (!audio) return
-    const advancing = t > lastT && t < scene.duration
-    lastT = t
-    const line = scene.cues.find((c) => c.voice && t >= c.at && t < c.at + c.dur)
-    if (!voice.on || !advancing || !line?.voice) {
-      if (!audio.paused) audio.pause()
-      return
+  /**
+   * The voice leads (live/voice.ts followVoice, with the clock turned round): during a voiced line the scene is where
+   * the audio is, so a play() that takes 100-300 ms to sound holds the board at the line's start instead of drawing
+   * ahead of the words. Returns how far the scene at t is ahead of its voice; the shell moves the scene time back by
+   * that (Animation.lag). Between lines the audio pauses at the line's end; the clip is the lines back to back, so the
+   * next line mostly goes on from there with no seek. Audio that does not move for HOLD_LIMIT lets the line go on
+   * without sound, so a failed voice never stops the board.
+   */
+  const lag = (t: number): number => {
+    if (!audio) return 0
+    // Back to an earlier time: the scene plays again, every line gets its voice again.
+    if (t < lastT) {
+      owner = null
+      skipped.clear()
     }
-    const target = line.voice.from + (t - line.at)
-    priming = false
-    audio.muted = false
-    if (audio.paused) {
-      audio.currentTime = target
-      void audio.play().catch(() => undefined)
-    } else if (Math.abs(audio.currentTime - target) > 0.2) audio.currentTime = target
-    // The shell stops calling draw when the scene is off screen or faded out: the voice stops with it (a hidden tab at once).
+    const ahead = voiceAhead(t, audio)
+    // The time the shell draws: a held frame is not a step back.
+    lastT = t - ahead
+    return ahead
+  }
+  const voiceAhead = (t: number, a: HTMLAudioElement): number => {
+    // The shell stops calling when the scene is off screen or faded out: the voice stops with it (a hidden tab at once).
     if (quiet) clearTimeout(quiet)
     quiet = setTimeout(stop, 1000)
+    const line = voice.on ? scene.cues.find((c) => c.voice && t >= c.at && t < c.at + c.dur) : undefined
+    if (!line?.voice || skipped.has(line)) {
+      owner = null
+      if (!a.paused) a.pause()
+      return 0
+    }
+    const from = line.voice.from
+    const now = performance.now()
+    const skip = (): number => {
+      skipped.add(line)
+      owner = null
+      a.pause()
+      return 0
+    }
+    if (owner !== line) {
+      owner = line
+      const target = from + (t - line.at)
+      if (Math.abs(a.currentTime - target) > SEEK) a.currentTime = target
+      moved = { at: a.currentTime, since: now }
+    }
+    if (a.ended) return skip()
+    priming = false
+    a.muted = false
+    if (a.paused) {
+      moved = { at: a.currentTime, since: now }
+      // A play our own pause cut short (AbortError) is no failure; one the browser refuses is.
+      void a.play().catch((e: unknown) => owner === line && (e as Error)?.name !== 'AbortError' && skip())
+    }
+    const at = a.currentTime
+    if (at !== moved.at) moved = { at, since: now }
+    else if (now - moved.since > HOLD_LIMIT) return skip()
+    const ahead = t - (line.at + (at - from))
+    // The audio ahead of the board (rare: the clip was not where the line is): the audio goes to the board's place.
+    if (ahead < -DRIFT) {
+      a.currentTime = from + (t - line.at)
+      moved = { at: a.currentTime, since: now }
+      return 0
+    }
+    return ahead > SLACK ? ahead : 0
   }
 
   const panel =
@@ -301,10 +368,28 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   let host: HTMLElement | null = null
   let svg: SVGSVGElement | null = null
   let root: SVGGElement | null = null
-  const paths = new Map<number, { el: SVGPathElement; length: number | null; d: string; pattern: number[] | null }>()
+  /** Each shape's node, and `look`: what its last frame wrote to it (a frame writes a node only when its look changes). */
+  const paths = new Map<number, { el: SVGPathElement; length: number | null; d: string; pattern: number[] | null; look: string | null }>()
   let canvas: HTMLCanvasElement | null = null
+  /**
+   * The host's layout, read only when it can have changed: the host or the panel resizes, the shell's scale changes
+   * (w, h) or the scene mounts. Reading it in each frame, after the panel's writes, was a forced layout in each frame.
+   */
+  let laid: { w: number; h: number; lw: number; lh: number; panelH: number; zoom: number } | null = null
+  let rootShown = ''
+  const resized = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => (laid = null))
+  if (panel) resized?.observe(panel.el)
 
-  const build = (): void => {
+  if (typeof document !== 'undefined') {
+    voice.members.add(member)
+    document.addEventListener('visibilitychange', () => document.hidden && stop())
+  }
+
+  /**
+   * Everything that needs no host: the SVG tree, its paths and patterns, the ink canvas, the invite. The shell's
+   * offscreen draw does it in idle time before the scene's first turn (draw() with no host), so mount only appends.
+   */
+  const prepare = (): void => {
     svg = document.createElementNS(SVG, 'svg')
     svg.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none')
     root = document.createElementNS(SVG, 'g')
@@ -344,7 +429,7 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       el.setAttribute('stroke-linecap', 'round')
       el.setAttribute('stroke-linejoin', 'round')
       root.appendChild(el)
-      paths.set(o.id, { el, length: null, d: o.d!, pattern: dash })
+      paths.set(o.id, { el, length: null, d: o.d!, pattern: dash, look: null })
     }
     if (defs.childNodes.length) svg.insertBefore(defs, root)
     // The ink canvas above the shapes, as the app's board (Board.tsx: ink is on the canvas over the content layer).
@@ -352,8 +437,6 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       canvas = document.createElement('canvas')
       canvas.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none')
     }
-    audio = new Audio(voiceUrl)
-    audio.preload = 'auto'
     invite = document.createElement('div')
     invite.className = styles.invite
     invite.innerHTML =
@@ -364,9 +447,16 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       voice.dismissed = true
       refreshVoice()
     })
-    voice.members.add(member)
     refreshVoice()
-    document.addEventListener('visibilitychange', () => document.hidden && stop())
+    // Each path's length, measured in a document (a detached path has none in every browser) but out of sight; the
+    // nodes leave it again until mount.
+    const shelf = document.createElement('div')
+    shelf.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:100px;height:100px;visibility:hidden;pointer-events:none')
+    shelf.appendChild(svg)
+    document.body.appendChild(shelf)
+    for (const p of paths.values()) p.length = p.el.getTotalLength()
+    svg.remove()
+    shelf.remove()
   }
 
   /** The ink at t, as live/player.ts objectLook shows it: each stroke revealed by its range of the draw value, under the object's matrix. */
@@ -408,32 +498,42 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
   }
 
   const draw = (_c: CanvasRenderingContext2D, w: number, h: number, t: number): void => {
+    // Before mount (the shell's offscreen draw): build the material, for the first mount to only append it.
+    if (!svg) prepare()
     if (!host || !root) return
     // The window's scale and the room the panel leaves, as the other use cases (gps.ts).
-    const lw = host.clientWidth || w
-    const lh = host.clientHeight || h
+    if (laid?.w !== w || laid.h !== h) laid = null
+    const lw = laid ? laid.lw : host.clientWidth || w
+    const lh = laid ? laid.lh : host.clientHeight || h
     const s = w / lw
     const phone = lw < 760
     const below = PILL_ROOM / s + 14
     panel?.update(t, phone, below)
-    const panelH = panel?.el.offsetHeight ?? 0
+    if (!laid) {
+      // The window's own zoom on the page (the shell scales it), so the ink canvas has a pixel per device pixel.
+      const zoom = host.getBoundingClientRect().width / lw || 1
+      laid = { w, h, lw, lh, panelH: panel?.el.offsetHeight ?? 0, zoom }
+      // The invite in the middle of the whole app window (founder: the shell's centre, not the board's), in the host's
+      // own px. The page's scroll moves both alike, so only a new layout moves it.
+      const shell = host.closest('[data-shell-frame]')?.firstElementChild
+      if (shell) {
+        const hr = host.getBoundingClientRect()
+        const wr = shell.getBoundingClientRect()
+        invite!.style.left = `${(wr.left + wr.width / 2 - hr.left) / zoom}px`
+        invite!.style.top = `${(wr.top + wr.height / 2 - hr.top) / zoom}px`
+      }
+    }
+    const { panelH, zoom } = laid
     // The agent's view is the board it drew for, as its camera moves it: on a phone, the board above the panel.
     const rh = phone ? lh - (panelH + below + 12) : lh
     const v = viewAt(t)
     const k = Math.min(lw / v.width, rh / v.height)
     const ox = (lw - v.width * k) / 2 - v.x * k
     const oy = (rh - v.height * k) / 2 - v.y * k
-    root.setAttribute('transform', `matrix(${k} 0 0 ${k} ${ox} ${oy})`)
-    // The window's own zoom on the page (the shell scales it), so the ink canvas has a pixel per device pixel.
-    const zoom = host.getBoundingClientRect().width / lw || 1
-    // The invite in the middle of the whole app window (founder: the shell's centre, not the board's), in the host's
-    // own px.
-    const shell = host.closest('[data-shell-frame]')?.firstElementChild
-    if (shell) {
-      const hr = host.getBoundingClientRect()
-      const wr = shell.getBoundingClientRect()
-      invite!.style.left = `${(wr.left + wr.width / 2 - hr.left) / zoom}px`
-      invite!.style.top = `${(wr.top + wr.height / 2 - hr.top) / zoom}px`
+    const matrix = `matrix(${k} 0 0 ${k} ${ox} ${oy})`
+    if (matrix !== rootShown) {
+      rootShown = matrix
+      root.setAttribute('transform', matrix)
     }
 
     for (const o of shapes) {
@@ -443,15 +543,12 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
       const fill = tl.value(o.id, 'fill', t)
       const opacity = Math.max(0, Math.min(1, tl.value(o.id, 'opacity', t))) * style.opacity
       if (before(o, t) || (drawn <= 0 && fill <= 0) || opacity <= 0.001) {
-        p.el.style.display = 'none'
+        if (p.look !== 'none') p.el.style.display = 'none'
+        p.look = 'none'
         continue
       }
-      p.el.style.display = ''
-      p.el.style.opacity = opacity < 1 ? String(opacity) : ''
       const m = tl.matrix(o.id, t)
       const identity = m[0] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 1 && m[4] === 0 && m[5] === 0
-      if (identity) p.el.removeAttribute('transform')
-      else p.el.setAttribute('transform', `matrix(${m.join(' ')})`)
       // A changing shape: its sample of now until its last change, then its end d.
       const d = o.samples?.length && t < (o.lastChange ?? scene.duration) ? sampleD(o.samples, t) : o.d!
       if (d !== p.d) {
@@ -459,42 +556,60 @@ export function agentScene(scene: AgentScene, voiceUrl: string): Animation {
         p.d = d
         p.length = null
       }
+      let dash = ''
+      let offset = ''
       if (drawn < 1) {
         p.length ??= p.el.getTotalLength()
-        const { dash, offset } = revealDash(p.length, p.length * Math.max(0, drawn), p.pattern)
-        p.el.style.strokeDasharray = dash
-        p.el.style.strokeDashoffset = offset
-      } else {
-        p.el.style.strokeDasharray = ''
-        p.el.style.strokeDashoffset = ''
+        ;({ dash, offset } = revealDash(p.length, p.length * Math.max(0, drawn), p.pattern))
       }
       const baseFill = style.fillOpacity ?? 1
-      p.el.style.fillOpacity = String(fill >= 1 ? baseFill : baseFill * Math.max(0, fill))
+      const look = [opacity < 1 ? String(opacity) : '', identity ? '' : `matrix(${m.join(' ')})`, dash, offset, String(fill >= 1 ? baseFill : baseFill * Math.max(0, fill))]
+      const key = look.join('|')
+      if (key === p.look) continue
+      p.look = key
+      p.el.style.display = ''
+      p.el.style.opacity = look[0]
+      if (identity) p.el.removeAttribute('transform')
+      else p.el.setAttribute('transform', look[1])
+      p.el.style.strokeDasharray = dash
+      p.el.style.strokeDashoffset = offset
+      p.el.style.fillOpacity = look[4]
     }
     if (canvas) drawInk(canvas, lw, lh, zoom, [k, 0, 0, k, ox, oy], t)
-    follow(t)
   }
 
   return {
     duration: scene.duration,
     draw,
+    lag,
+    hush() {
+      // The shell holds this scene's frame (the next request is typed) or fades it out: its voice stops now.
+      stop()
+      owner = null
+    },
     mount(el) {
       host = el
-      if (!svg) build()
+      laid = null
+      resized?.observe(el)
+      if (!svg) prepare()
       el.appendChild(svg!)
       if (canvas) el.appendChild(canvas)
       if (panel) el.appendChild(panel.el)
       el.append(invite!)
       member.refresh()
       lastT = -1
+      owner = null
+      skipped.clear()
     },
     unmount() {
       // Only this scene's audio stops: the visitor's voice choice stays for the next scene.
       stop()
+      owner = null
       svg?.remove()
       canvas?.remove()
       panel?.el.remove()
       invite?.remove()
+      if (host) resized?.unobserve(host)
       host = null
     }
   }
