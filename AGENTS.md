@@ -1,4 +1,4 @@
-# Learn AI (codebase name: MathTutor)
+# Askaboard
 
 A shared space where a learner works through problems with an AI agent that
 can see the board, draw on it, and talk. The goal is the learner's own
@@ -26,8 +26,8 @@ any text that agents read (the brief, instructions, tool descriptions), read
 | `../learning-space-backend` | Private backend repo (P25): FastAPI, Postgres and Caddy in Docker on the Hetzner box, `https://api.askaboard.com`. `POST /v1/speech` (the voice, a daily cap per user) and `POST /batch/` (usage data to PostHog). Deploy steps are in its README | Active, separate private repo |
 | `web/` | React/TypeScript/Vite client for the built-in tutor | **Paused** |
 | `server/` | FastAPI tutor backend (Python, `uv`, Postgres/Neon); holds provider keys | **Paused** |
-| (git history) | SwiftUI iPad client (`MathTutor/`, `Vendor/`, `project.yml`) and the tutor's landing page (`landing-page/`, `landing/`) | **Removed** from the tree 2026-11-08; restore from history if needed |
-| `design/`, `docs/design-system/` | Exports/transcriptions of the Paper design file (paused clients) | Generated — never the first thing you edit |
+| (git history) | SwiftUI iPad client (`MathTutor/`, `Vendor/`, `project.yml`, `docs/design-system/`) and the tutor's landing page (`landing-page/`, `landing/`) | **Removed** from the tree 2026-11-08; restore from history if needed |
+| `design/` | Paper design exports that the paused web client reads (`web/src/design/`) | Generated — never the first thing you edit |
 | `apps/website/` | The Askaboard website (Next.js; D8, [`website-plan.md`](docs/learning-space/website-plan.md)) | Active; Vercel deployment authorized |
 | `docs/` | Vision, TODO, research; `docs/learning-space/` for the active app; older specs under `docs/superpowers/` | |
 

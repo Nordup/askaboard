@@ -23,17 +23,7 @@ positioning source.
 
 ## Paused stack (reference)
 
-- [`../README.md`](../README.md) — the iPad client (paused): setup,
-  architecture, capabilities, limitations.
 - [`../server/README.md`](../server/README.md) — the tutor backend (paused).
-
-## Exact design records
-
-[`design-system/`](design-system/) transcribes shipped Paper boards and their
-visual contracts. These files may contain interface examples or wording from
-the time a board was created. Treat their geometry and component behavior as
-design evidence, not their sample copy as current positioning. Change the
-source design and implementation before updating an exact transcription.
 
 ## Dated engineering records
 

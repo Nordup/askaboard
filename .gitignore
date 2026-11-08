@@ -1,12 +1,5 @@
-# Xcode
-xcuserdata/
-*.xcuserstate
-DerivedData/
+# Build output
 build/
-*.xcresult
-
-# Swift Package Manager
-.build/
 
 # Local development secrets
 .env.local
@@ -41,7 +34,7 @@ space/node_modules/
 space/out/
 space/dist/
 space/release/
-# electron-builder resources (entitlements); the Xcode rule above ignores build/.
+# electron-builder resources (entitlements); the build output rule above ignores build/.
 !space/build/
 
 # Third-party reference material (Paper agent interface), local only
@@ -64,7 +57,7 @@ share-videos/
 # screenshots from checks, labs, tests, debugging and design iterations never go into git.
 # An approved design screenshot that should stay goes to docs/learning-space/design-images/.
 # The exceptions name image files only, so they never bring back an ignored folder.
-# Images already in git (Vendor/, the paused clients) stay tracked.
+# Images already in git (the paused web client) stay tracked.
 *.png
 *.jpg
 *.jpeg

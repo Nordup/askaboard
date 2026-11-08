@@ -21,4 +21,3 @@
 
 - For the paused web client, use the built-in browser (`mcp__Claude_Browser__*`) against `scripts/web-dev.py`.
 - For the paused clients, the Paper MCP server is the design source; if it fails to connect, tell the user rather than editing `design/` by hand. Paper's agent interface (for reference when designing Askaboard tools) is captured in `docs/learning-space/reference/paper/` (local only).
-- Several Claude sessions can share this Mac. Before starting an `xcodebuild`, check `pgrep -f "Developer/usr/bin/xcodebuild"` and never kill someone else's build.
