@@ -9,8 +9,8 @@ const socialImage = { url: SOCIAL_IMAGE, width: 1200, height: 630, alt: 'Askaboa
 export const metadata: Metadata = {
   title,
   description,
-  // An `icons` field replaces Next's file icon (app/icon.svg), so the tab icon is named here too.
-  icons: { icon: { url: '/icon.svg', type: 'image/svg+xml' }, apple: { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' } },
+  // An `icons` field replaces Next's file icon (app/icon.svg), so the tab icon is named here too. Search engines want the raster /favicon.ico (16, 32, 48 px).
+  icons: { icon: [{ url: '/favicon.ico', sizes: '48x48' }, { url: '/icon.svg', type: 'image/svg+xml' }], apple: { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' } },
   metadataBase: new URL(SITE_URL),
   // One address for the page: a query (the dev-only ?scene=) still names the home page.
   alternates: { canonical: '/' },
