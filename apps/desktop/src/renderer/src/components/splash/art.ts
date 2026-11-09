@@ -60,9 +60,10 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
   let dpr = 1
 
   function layout(): void {
-    const rect = band.getBoundingClientRect()
-    size.w = Math.max(1, rect.width)
-    size.h = Math.max(1, rect.height)
+    // The layout size, not getBoundingClientRect: that one includes the card's entry transform (scale 0.98), and a
+    // canvas sized during the entry is then stretched by the browser, which blurs every frame after it.
+    size.w = Math.max(1, band.clientWidth)
+    size.h = Math.max(1, band.clientHeight)
     dpr = window.devicePixelRatio || 1
     canvas.width = glCanvas.width = Math.round(size.w * dpr)
     canvas.height = glCanvas.height = Math.round(size.h * dpr)
