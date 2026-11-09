@@ -13,5 +13,5 @@ export const DOWNLOAD_URL = `${REPO_URL}/releases/latest/download/Askaboard.dmg`
 export const DISCUSSIONS_URL = `${REPO_URL}/discussions`
 /** The public plugin repo: the Claude Code, ChatGPT and Codex, Cursor plugins and the Claude Desktop extension. */
 export const PLUGINS_URL = 'https://github.com/Nordup/askaboard-plugins'
-/** The privacy page: PRIVACY.md in the repo on GitHub. */
-export const PRIVACY_URL = `${REPO_URL}/blob/main/PRIVACY.md`
+/** The privacy page (app/privacy/page.tsx). */
+export const PRIVACY_URL = '/privacy'

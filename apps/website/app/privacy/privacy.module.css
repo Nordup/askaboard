@@ -1,0 +1,82 @@
+/*
+ * The privacy page: a text column on the home page's board (page.module.css .page). The heading and
+ * the date are the agent section's .agentTitle and .quiet (Sections.module.css); the body text
+ * uses the agent section's line size and the hero bar's height. Colours are the page tokens.
+ */
+.page {
+  /* A document: its text can be selected, unlike the board's. */
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: auto;
+}
+
+.doc {
+  max-width: calc(760 * var(--u) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: calc(88 * var(--u) + 56 * var(--u)) var(--gutter) calc(88 * var(--u));
+  font-size: calc(19 * var(--u));
+  line-height: calc(29 * var(--u));
+  color: var(--muted);
+}
+
+.doc h2 {
+  margin: calc(44 * var(--u)) 0 0;
+  font-size: calc(25 * var(--u));
+  line-height: calc(31 * var(--u));
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.doc p,
+.doc ul {
+  margin: calc(16 * var(--u)) 0 0;
+}
+
+.doc ul {
+  padding-left: 1.2em;
+}
+
+.doc li + li {
+  margin-top: calc(10 * var(--u));
+}
+
+.doc strong {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.doc a {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 0.2em;
+}
+
+.doc a:hover {
+  text-decoration-color: currentColor;
+}
+
+.doc code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+@media (max-width: 719px) {
+  .doc {
+    padding-top: calc(56px + 32 * var(--u));
+    font-size: calc(16 * var(--u));
+    line-height: calc(25 * var(--u));
+  }
+
+  .doc h2 {
+    margin-top: calc(36 * var(--u));
+    font-size: calc(20 * var(--u));
+    line-height: calc(26 * var(--u));
+  }
+}
