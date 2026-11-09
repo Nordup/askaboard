@@ -1,7 +1,7 @@
 # Publishing a macOS release
 
-Status: 2026-11-08. Askaboard 0.1.0 is published: [`v0.1.0`](https://github.com/Nordup/askaboard/releases/tag/v0.1.0), asset
-`Askaboard.dmg`. This guide is the build recipe and the steps for the next
+The published releases are on the [Releases page](https://github.com/Nordup/askaboard/releases),
+each with the asset `Askaboard.dmg`. This guide is the build recipe and the steps for the next
 release. The founder wants release automation later, when
 GitHub is ready. Ask before pushing. The founder lifted the website's
 local-only rule and authorized Vercel deployment on 2026-11-08.
@@ -41,7 +41,7 @@ remain available, but smaller downloads and automatic selection can wait.
   plugin connection and voice flow on a clean Mac remain open; a real Intel
   Mac has not been checked. A normal macOS first-open confirmation may appear.
 - The [Askaboard brand kit](../assets/brand/README.md) supplies the Mac packaging icon and website artwork.
-  The app is Askaboard `0.1.0`, bundle ID `com.askaboard.app` (D20). The
+  The version is in `apps/desktop/package.json`; the bundle ID is `com.askaboard.app` (D20). The
   app repo is `Nordup/askaboard` (public); the plugin repo is
   `Nordup/askaboard-plugins`.
 - The release script creates **local artifacts only**. GitHub release upload,
@@ -110,7 +110,7 @@ that the DMG itself passes the disk-image check.
 
 ## Publish a release, when authorized
 
-Done this way for 0.1.0 on 2026-11-08. The website button already uses
+Every release since 0.1.0 follows these steps. The website button uses
 `releases/latest/download/Askaboard.dmg`, so a new release needs no website
 change if its asset keeps that name.
 
