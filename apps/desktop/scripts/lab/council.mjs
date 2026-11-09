@@ -8,7 +8,7 @@
  *        [--model M] [--effort E] [--title T] [--timeout-min 20]
  *        [--name council] [--mcp-port 47891] [--debug-port 9491] [--built]
  *        [--codex-home <SCRATCH>/codex-home] [--no-news-hook] [--keep-app]
- *        [--brief-only] [--no-code] [--no-html] [--brief <file>] [--no-web] [--interview] [--wait-media]
+ *        [--brief-only] [--no-code] [--no-html] [--brief <file>] [--no-web] [--interview] [--wait-media] [--no-voice]
  *        [--learner-board <program.js>] [--file <path>]
  *
  * Tasks: council/tasks.json (id → text; "learner": "<program.js>" names the
@@ -44,7 +44,9 @@
  * The run folder (apps/desktop/.lab/runs/) gets video.mp4 (the watch video: stretches
  * with no visible change longer than 1.5 s play in 0.6 s, labelled with the real
  * wait and what happened, from the trace; a real-time clock in the corner),
- * video-real.mp4 (real time), filmstrip.png (a frame after each board write),
+ * video-real.mp4 (real time); both carry the agent's voice when a played scene has voice
+ * (playedVoice: each scene's voice track from its start in the recording; the watch video
+ * never cuts where a line sounds; --no-voice keeps them silent), filmstrip.png (a frame after each board write),
  * final.png, board.png (the whole board), program.js (every write_scene program (run_scene in older traces),
  * or the write calls), calls.json, feedback.md (with --interview), the agent's
  * output files and meta.json (numbers.after_agent_ms: the agent's end to the
@@ -67,6 +69,7 @@ import {
   cropFilter,
   cropImage,
   scenePlaySpans,
+  sceneRecords,
   filmstrip,
   frameAt,
   log,
@@ -80,6 +83,7 @@ import {
   traceCalls,
   traceLabels,
   traceSessionOpen,
+  voiceTrack,
   withMcp
 } from './common.mjs'
 import { writeGallery } from './gallery.mjs'
@@ -106,6 +110,8 @@ const opts = {
   interview: flag('--interview'),
   // Wait for the videos before exiting (the old behaviour); by default they are made in the background.
   waitMedia: flag('--wait-media'),
+  // The agent's voice in both videos, when a played scene has voice; --no-voice keeps them silent.
+  voice: !flag('--no-voice'),
   // Only the task as the prompt, as in a real session: the brief reaches the agent through the folder's AGENTS.md.
   briefOnly: flag('--brief-only'),
   // The lab switch LS_LAB_NO_CODE: worlds do not exist for the agent.
@@ -138,6 +144,32 @@ const stripComments = (text) => text.replace(/<!--[\s\S]*?-->/g, '').trim()
 
 // The headless turns (claudeTurn, codexTurn, prepareCodexHome) are in common.mjs, shared with perf/run.mjs.
 const agent = { client: opts.client, model: opts.model, effort: opts.effort, newsHook: opts.newsHook, web: opts.web, codexHome: opts.codexHome, timeoutMs: opts.timeoutMs, pids, say }
+
+// ---------- The voice ----------
+
+/**
+ * The voice of the scenes that played, as one WAV for the recording from t0 to tEnd (wall ms). Each played
+ * scene (play_scene "start", scenePlaySpans) gets the scene record of the same name that the app wrote
+ * nearest to its start; its lines sound from (scene start - t0) on, and stop where the next scene starts.
+ * Returns {wav, lines} or null. It reads the learning folder, so it runs before the next run reuses it.
+ */
+function playedVoice(folder, calls, t0, tEnd, wav) {
+  const records = sceneRecords(folder).map((r) => ({ ...r.record, ms: Date.parse(r.record.at) }))
+  const spans = scenePlaySpans(calls).sort((a, b) => a.from - b.from)
+  const used = new Set()
+  const scenes = []
+  spans.forEach((span, i) => {
+    const near = records
+      .filter((r) => !used.has(r) && r.name === span.scene && r.ms >= span.called - 1000 && r.ms <= span.from + 5000)
+      .sort((a, b) => Math.abs(a.ms - span.from) - Math.abs(b.ms - span.from))[0]
+    if (!near) return
+    used.add(near)
+    const next = spans[i + 1]
+    scenes.push({ record: near, at_s: (span.from - t0) / 1000, until_s: next ? (next.from - t0) / 1000 : Infinity })
+  })
+  const lines = voiceTrack(folder, scenes, (tEnd - t0) / 1000, wav)
+  return lines?.length ? { wav, lines } : null
+}
 
 // ---------- Main ----------
 
@@ -327,6 +359,9 @@ async function main() {
       interview: answer ? { exit_code: answer.exit_code, is_error: answer.is_error, session: answer.session, cost_usd: answer.cost_usd ?? null, tokens: answer.tokens ?? null } : null,
       agent_pids: pids
     }
+    // The voice track, from the learning folder while it is still this run's.
+    const voice = frames.length && opts.voice ? await media('voice track', () => playedVoice(state.folder, calls, t0, tEnd, join(framesDir, 'voice.wav'))) : null
+    meta.voice = opts.voice ? (voice ? voice.lines : []) : 'off'
     writeFileSync(join(dir, 'meta.json'), JSON.stringify(meta, null, 2))
     writeFileSync(join(dir, 'reply.md'), `${work.reply ?? ''}\n`)
     say(`first mark ${meta.numbers.first_mark_ms ?? '-'} ms, ${calls.length} calls (${writes.length} writes), wall ${(meta.numbers.wall_ms / 1000).toFixed(1)} s`)
@@ -335,7 +370,7 @@ async function main() {
     if (frames.length) {
       const labels = traceLabels(calls, { from: t0, opened: traceSessionOpen(state.traces, t0), turnEnd: t1 })
       const jobFile = join(framesDir, 'job.json')
-      writeFileSync(jobFile, JSON.stringify({ dir, framesDir, frames, from: t0, to: tEnd, crop, labels, playing: scenePlaySpans(calls) }))
+      writeFileSync(jobFile, JSON.stringify({ dir, framesDir, frames, from: t0, to: tEnd, crop, labels, playing: scenePlaySpans(calls), voice }))
       mediaJob = { jobFile, logFile: join(dir, 'media.log') }
     }
   } finally {

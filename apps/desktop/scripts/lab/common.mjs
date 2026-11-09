@@ -568,12 +568,127 @@ export function cropFilter(frameFile, rect, cssW) {
   return `crop=${cw}:${ch}:${x}:${y}`
 }
 
+// ---------- The voice track (scene records' voiced lines at their times; record.mjs and council.mjs) ----------
+
+function readWav(file) {
+  const b = readFileSync(file)
+  let rate = 0, channels = 1, bits = 16, data = null
+  for (let p = 12; p + 8 <= b.length; ) {
+    const id = b.toString('ascii', p, p + 4), size = b.readUInt32LE(p + 4)
+    if (id === 'fmt ') {
+      channels = b.readUInt16LE(p + 10)
+      rate = b.readUInt32LE(p + 12)
+      bits = b.readUInt16LE(p + 22)
+    } else if (id === 'data') data = b.subarray(p + 8, p + 8 + size)
+    p += 8 + size + (size & 1)
+  }
+  if (bits !== 16 || channels !== 1 || !data) throw new Error(`${file}: only 16-bit mono PCM`)
+  return { rate, samples: new Int16Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) }
+}
+
+function writeWav(file, rate, samples) {
+  const h = Buffer.alloc(44)
+  h.write('RIFF', 0); h.writeUInt32LE(36 + samples.length * 2, 4); h.write('WAVEfmt ', 8); h.writeUInt32LE(16, 16)
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
+  h.write('data', 36); h.writeUInt32LE(samples.length * 2, 40)
+  writeFileSync(file, Buffer.concat([h, Buffer.from(samples.buffer)]))
+}
+
+/** The scene records of a learning folder (.askaboard/scenes/<board>.jsonl): [{file, record}], file by file, in order. */
+export function sceneRecords(folder) {
+  const dir = join(folder, '.askaboard/scenes')
+  if (!existsSync(dir)) return []
+  const out = []
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.jsonl')))
+    for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) if (line.trim()) out.push({ file, record: JSON.parse(line) })
+  return out
+}
+
+/**
+ * One WAV of `total` s for a video: each scene's voiced lines, each line's clip part at at_s + its scene time,
+ * as the app's player places it (clip position = from + (t - at)). scenes: [{record, at_s, until_s?}]; at_s is
+ * the video time of the scene's time 0; nothing of the scene sounds from until_s on (the next scene started).
+ * The hold fix: where the scene holds between two lines of one clip, the app pauses the clip at the line's end, 50 ms
+ * before the next word, and a soft onset (a breath, an "s") is cut from its word. Here the hold's silence goes at the
+ * quietest 10 ms of the natural pause between the lines, with 4 ms fades, and every word still starts at its own time.
+ * Returns null when no line has voice, else [{video_s, text, from_s, to_s}]: video_s is the line's caption time,
+ * from_s..to_s the span of the video where its sound is.
+ */
+export function voiceTrack(folder, scenes, total, out) {
+  const parts = scenes.map((s) => ({ ...s, cues: (s.record?.story?.lines ?? []).filter((c) => c.voice) })).filter((s) => s.cues.length)
+  if (!parts.length) return null
+  const clips = new Map()
+  let rate = 0
+  for (const s of parts)
+    for (const c of s.cues)
+      if (!clips.has(c.voice.clip)) {
+        const w = readWav(join(folder, c.voice.clip))
+        if (rate && w.rate !== rate) throw new Error(`${c.voice.clip}: ${w.rate} Hz, the other clips ${rate} Hz`)
+        rate = w.rate
+        clips.set(c.voice.clip, w.samples)
+      }
+  const FADE = Math.round(0.004 * rate)
+  const mix = new Int16Array(Math.round(total * rate))
+  const quietest = (src, a, b) => {
+    const win = Math.round(0.01 * rate)
+    let best = Infinity, mid = Math.floor((a + b) / 2)
+    for (let s = a; s < Math.max(a + 1, b - win); s += Math.round(0.002 * rate)) {
+      let e = 0
+      for (let j = s; j < s + win; j++) e += (src[j] ?? 0) ** 2
+      if (e < best) { best = e; mid = s + Math.floor(win / 2) }
+    }
+    return mid
+  }
+  const placed = []
+  for (const { record, cues, at_s, until_s = Infinity } of parts) {
+    const answers = new Map()
+    for (const [q, a] of record.source?.answers ?? []) if (q.includes('"voiceLine"')) answers.set(JSON.parse(q).text, JSON.parse(a))
+    const pieces = cues.map((c) => [c.voice.clip, Math.round(c.voice.from * rate), Math.round((c.voice.from + c.dur) * rate), Math.round((c.at + at_s) * rate)])
+    for (let i = 0; i + 1 < pieces.length; i++) {
+      const a = pieces[i], b = pieces[i + 1]
+      const contiguous = a[0] === b[0] && Math.abs(a[2] - b[1]) <= 2
+      const hold = b[3] - (a[3] + a[2] - a[1])
+      const answer = answers.get(cues[i].text)
+      if (contiguous && hold > 2 && answer) {
+        const pauseFrom = Math.round(answer.speech_end * rate) + Math.round(0.02 * rate)
+        const pauseTo = b[1] + Math.round(0.03 * rate)
+        if (pauseTo - pauseFrom > Math.round(0.03 * rate)) {
+          const p = quietest(clips.get(a[0]), pauseFrom, pauseTo)
+          b[3] -= b[1] - p // the part of the pause after p moves with line b: its words keep their time
+          b[1] = p
+          a[2] = p
+        }
+      } else if (contiguous && hold <= 2) b[3] = a[3] + (a[2] - a[1]) // one sound: no gap, no overlap
+    }
+    const until = Math.min(mix.length, Math.round(until_s * rate))
+    pieces.forEach(([clip, s0, s1, d0], k) => {
+      let seg = clips.get(clip).slice(s0, s1)
+      const p = pieces[k - 1], n = pieces[k + 1]
+      const prevJoined = p && p[0] === clip && p[2] === s0 && p[3] + (p[2] - p[1]) === d0
+      const nextJoined = n && n[0] === clip && n[1] === s1 && d0 + (s1 - s0) === n[3]
+      for (let j = 0; j < Math.min(FADE, seg.length); j++) {
+        const g = 0.5 - 0.5 * Math.cos((Math.PI * (j + 0.5)) / FADE)
+        if (!prevJoined) seg[j] = Math.trunc(seg[j] * g)
+        if (!nextJoined) seg[seg.length - 1 - j] = Math.trunc(seg[seg.length - 1 - j] * g)
+      }
+      if (d0 < 0) { seg = seg.slice(-d0); d0 = 0 }
+      const room = Math.min(seg.length, until - d0)
+      if (room <= 0) return
+      mix.set(seg.subarray(0, room), d0)
+      const r3 = (v) => Math.round(v * 1000) / 1000
+      placed.push({ video_s: r3(cues[k].at + at_s), text: cues[k].text, from_s: r3(d0 / rate), to_s: r3((d0 + room) / rate) })
+    })
+  }
+  writeWav(out, rate, mix)
+  return placed
+}
+
 /**
  * Encode frames (with wall times) into an H.264 MP4 at real speed: each frame
  * shows until the next one. from/to (ms) clip the time range; the last frame
- * is held until `to`.
+ * is held until `to`. audio: a WAV that starts at `from` (voiceTrack), muxed as AAC.
  */
-export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
+export function encodeVideo(frames, out, { from, to, crop = '', fps = 30, audio = null }) {
   const list = frames.filter((f) => f.t <= to)
   if (!list.length) throw new Error('No frames were recorded.')
   // Frames before `from` collapse to the last one before it.
@@ -596,7 +711,8 @@ export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
   writeFileSync(listFile, lines.join('\n') + '\n')
   // At most 1280 px wide (phones, level 4.1); TV range yuv420p, as players expect.
   const filters = [crop, "scale='min(1280,trunc(iw/2)*2)':-2:out_range=tv", 'format=yuv420p', `fps=${fps}`].filter(Boolean).join(',')
-  execFileSync(FFMPEG, ['-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', listFile, '-vf', filters, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-profile:v', 'high', '-level', '4.1', '-movflags', '+faststart', '-t', ((to - from) / 1000).toFixed(3), out], { stdio: 'pipe' })
+  const sound = audio ? ['-i', audio, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000'] : []
+  execFileSync(FFMPEG, ['-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', listFile, ...sound, '-vf', filters, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-profile:v', 'high', '-level', '4.1', '-movflags', '+faststart', '-t', ((to - from) / 1000).toFixed(3), out], { stdio: 'pipe' })
   rmSync(listFile, { force: true })
 }
 
@@ -607,12 +723,14 @@ export function encodeVideo(frames, out, { from, to, crop = '', fps = 30 }) {
  * ffmpeg pass). labels: [{from, to, label}] in wall ms (traceLabels); the
  * model's own time ("model writing …", "model thinking", …) is cut even when
  * a live item keeps moving, except while a scene plays (playing: [{from, to}]
- * in wall ms, scenePlaySpans). Returns {watch_s, real_s, cuts}.
+ * in wall ms, scenePlaySpans). voice: {wav, lines} from voiceTrack (the WAV starts
+ * at `from`): no cut falls where a line sounds, and the WAV is cut at the
+ * video's cuts. Returns {watch_s, real_s, cuts}.
  */
-export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = [], playing = [], idleMs = 1500, cutMs = 600, fps = 30 }) {
+export function encodeWatchVideo(frames, out, { from, to, crop = '', labels = [], playing = [], voice = null, idleMs = 1500, cutMs = 600, fps = 30 }) {
   const m = /^crop=(\d+):(\d+):(\d+):(\d+)$/.exec(crop)
   const spec = join(dirname(out), '.recut.json')
-  writeFileSync(spec, JSON.stringify({ frames: frames.map((f) => ({ file: f.file, t: f.t })), from, to, crop: m ? [Number(m[3]), Number(m[4]), Number(m[1]), Number(m[2])] : null, labels, playing, idle_ms: idleMs, cut_ms: cutMs, fps, out, ffmpeg: FFMPEG }))
+  writeFileSync(spec, JSON.stringify({ frames: frames.map((f) => ({ file: f.file, t: f.t })), from, to, crop: m ? [Number(m[3]), Number(m[4]), Number(m[1]), Number(m[2])] : null, labels, playing, voice: voice ? { wav: voice.wav, spans: voice.lines.map((l) => ({ from: from + l.from_s * 1000, to: from + l.to_s * 1000 })) } : null, idle_ms: idleMs, cut_ms: cutMs, fps, out, ffmpeg: FFMPEG }))
   try {
     const text = execFileSync('python3', ['-I', join(LAB, 'recut.py'), spec], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024 })
     return JSON.parse(text.trim().split('\n').pop())
@@ -638,8 +756,10 @@ export function scenePlaySpans(calls) {
       const startsIn = typeof r.starts_in_s === 'number' ? r.starts_in_s : 0
       const endsIn = typeof r.ends_in_s === 'number' ? r.ends_in_s : startsIn + (typeof r.length_s === 'number' ? r.length_s : typeof r.duration_s === 'number' ? r.duration_s : 0)
       // wait "end" (until 2026-10-28): the call returned after the scene played.
-      if (r.played !== undefined) spans.push({ from: Date.parse(c.t), to: end + 1000 })
-      else spans.push({ from: end + startsIn * 1000, to: end + endsIn * 1000 + 1000 })
+      // scene: its name; called: the call's start (wall ms).
+      const named = { scene: r.scene ?? c.args?.name ?? null, called: Date.parse(c.t) }
+      if (r.played !== undefined) spans.push({ from: Date.parse(c.t), to: end + 1000, ...named })
+      else spans.push({ from: end + startsIn * 1000, to: end + endsIn * 1000 + 1000, ...named })
     } catch {
       // No result to read.
     }

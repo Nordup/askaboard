@@ -7,6 +7,7 @@ Called by common.mjs (encodeWatchVideo) with one argument, a JSON file:
     "crop": [x, y, w, h] | null,                       # in frame pixels
     "labels": [{"from": <ms>, "to": <ms>, "label": "model writing write_scene"}],
     "playing": [{"from": <ms>, "to": <ms>}],           # when scenes played (never cut by label)
+    "voice": {"wav": "...", "spans": [{"from": <ms>, "to": <ms>}]} | null,  # the voice (WAV from "from"), when lines sound
     "idle_ms": 1500, "cut_ms": 600, "fps": 30,
     "out": "video.mp4", "ffmpeg": "/opt/homebrew/bin/ffmpeg"     # or "ffmpeg" from PATH
   }
@@ -16,6 +17,8 @@ happened in it, and the real-time clock in the corner runs fast. A stretch
 where the model works (labels "session starting", "model writing …",
 "model thinking", "model answering") and no scene plays is cut the same way
 even when the picture moves (a live item that keeps running).
+No cut falls where a voice line sounds; the voice WAV is cut at the same
+places as the picture (a cut is silent) and muxed as AAC.
 Prints JSON: {"watch_s", "real_s", "cuts": [{"at_s", "real_s", "video_at_s", "label"}]}.
 
 Speed (a 10-minute recording of a moving 3D item took 40 minutes before):
@@ -31,6 +34,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import wave
 from multiprocessing import Pool
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
@@ -118,6 +122,8 @@ def main():
     crop = spec.get("crop")
     labels = spec.get("labels", [])
     playing = [(p["from"], p["to"]) for p in spec.get("playing", [])]
+    voice = spec.get("voice")
+    voiced = [(v["from"], v["to"]) for v in (voice or {}).get("spans", [])]
     ffmpeg = spec.get("ffmpeg", "ffmpeg")
     if os.path.isabs(ffmpeg) and not os.path.exists(ffmpeg):
         ffmpeg = "ffmpeg"
@@ -153,7 +159,10 @@ def main():
     if quiet:
         inside = lambda t: any(a < t < b for a, b in quiet)
         changes = [t for t in changes if not inside(t)] + [a for a, _ in quiet] + [b for _, b in quiet]
+    # A voice line's start and end split the stretches: a stretch where a line sounds plays at real speed.
+    changes += [t for span in voiced for t in span]
     changes = sorted(set(t for t in changes if t_from <= t <= t_to) | {used[0]["t"], t_to})
+    sounds = lambda a, b: any(va < b and a < vb for va, vb in voiced)
 
     # ---------- The timeline: real segments and cuts ----------
     # Each segment: (video_start_s, video_len_s, real_start_ms, real_len_ms, label or None)
@@ -184,7 +193,7 @@ def main():
     cuts = []
     for a, b in zip(changes, changes[1:]):
         gap = b - a
-        if gap > idle:
+        if gap > idle and not sounds(a, b):
             add(a, LEAD_MS, LEAD_MS / 1000, None)
             what = label_for(a + LEAD_MS, b - LEAD_MS) or "no change"
             cuts.append({"at_s": round((a + LEAD_MS - t_from) / 1000, 2), "real_s": round((gap - 2 * LEAD_MS) / 1000, 1), "video_at_s": round(video[0], 2), "label": what})
@@ -327,6 +336,26 @@ def main():
         with open(overlay_list, "w") as handle:
             handle.write("\n".join(olines) + "\n")
 
+        # ---------- The voice on the watch timeline: real stretches copied, cuts silent ----------
+
+        sound_in, sound_out = [], []
+        if voice:
+            with wave.open(voice["wav"]) as w:
+                rate, width = w.getframerate(), w.getsampwidth() * w.getnchannels()
+                src = w.readframes(w.getnframes())
+                params = w.getparams()
+            pcm = bytearray()
+            for v0, vlen, r0, rlen, label in segments:
+                n = round((v0 + vlen) * rate) - round(v0 * rate)
+                chunk = b"" if label else src[round((r0 - t_from) / 1000 * rate) * width:][: n * width]
+                pcm += chunk + bytes(n * width - len(chunk))
+            watch_wav = os.path.join(work, "voice.wav")
+            with wave.open(watch_wav, "wb") as w:
+                w.setparams(params)
+                w.writeframes(bytes(pcm))
+            sound_in = ["-i", watch_wav]
+            sound_out = ["-map", "2:a", "-c:a", "aac", "-b:a", "128k", "-ar", "48000"]
+
         # ---------- One ffmpeg pass ----------
 
         crop_filter = f"crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]}," if crop else ""
@@ -340,7 +369,8 @@ def main():
                 ffmpeg, "-y", "-v", "error",
                 "-f", "concat", "-safe", "0", "-i", frames_list,
                 "-f", "concat", "-safe", "0", "-i", overlay_list,
-                "-filter_complex", graph, "-map", "[out]",
+                *sound_in,
+                "-filter_complex", graph, "-map", "[out]", *sound_out,
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-color_range", "tv",
                 "-profile:v", "high", "-level", "4.1", "-movflags", "+faststart",
                 "-t", f"{total_s:.3f}", spec["out"],

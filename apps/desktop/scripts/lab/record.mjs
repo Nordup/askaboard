@@ -26,7 +26,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync,
 import { writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { alive, args, cdpConnect, childPids, FFMPEG, instance, log, portInUse, resultText, sleep, startInstance, stopInstance, stopPids, withMcp } from './common.mjs'
+import { alive, args, cdpConnect, childPids, FFMPEG, instance, log, portInUse, resultText, sceneRecords, sleep, startInstance, stopInstance, stopPids, voiceTrack, withMcp } from './common.mjs'
 
 const { option, flag, positional } = args()
 if (!positional[0]) {
@@ -230,96 +230,6 @@ async function renderSlice(copy, cdp, from, to, progress) {
   return { from, to, seconds: (Date.now() - began) / 1000, repeats, frameAtMs: Math.round(ms.frameAt / (to - k0 + 1)), shotMs: Math.round(ms.shot / (to - from + 1)), scene }
 }
 
-// ---------- The voice track (the scene record's lines at their scene times) ----------
-
-function readWav(file) {
-  const b = readFileSync(file)
-  let rate = 0, channels = 1, bits = 16, data = null
-  for (let p = 12; p + 8 <= b.length; ) {
-    const id = b.toString('ascii', p, p + 4), size = b.readUInt32LE(p + 4)
-    if (id === 'fmt ') {
-      channels = b.readUInt16LE(p + 10)
-      rate = b.readUInt32LE(p + 12)
-      bits = b.readUInt16LE(p + 22)
-    } else if (id === 'data') data = b.subarray(p + 8, p + 8 + size)
-    p += 8 + size + (size & 1)
-  }
-  if (bits !== 16 || channels !== 1 || !data) throw new Error(`${file}: only 16-bit mono PCM`)
-  return { rate, samples: new Int16Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.length)) }
-}
-
-function writeWav(file, rate, samples) {
-  const h = Buffer.alloc(44)
-  h.write('RIFF', 0); h.writeUInt32LE(36 + samples.length * 2, 4); h.write('WAVEfmt ', 8); h.writeUInt32LE(16, 16)
-  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
-  h.write('data', 36); h.writeUInt32LE(samples.length * 2, 40)
-  writeFileSync(file, Buffer.concat([h, Buffer.from(samples.buffer)]))
-}
-
-/**
- * Each voiced line's clip part at its scene time, as the app's player places it (clip position = from + (t - at)).
- * The hold fix: where the scene holds between two lines of one clip, the app pauses the clip at the line's end, 50 ms
- * before the next word, and a soft onset (a breath, an "s") is cut from its word. Here the hold's silence goes at the
- * quietest 10 ms of the natural pause between the lines, with 4 ms fades, and every word still starts at its own time.
- */
-function voiceTrack(folder, total, out) {
-  const dir = join(folder, '.askaboard/scenes')
-  const file = readdirSync(dir).find((f) => f.endsWith('.jsonl'))
-  if (!file) return null
-  const records = readFileSync(join(dir, file), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
-  const rec = records[records.length - 1]
-  const cues = rec.story.lines.filter((c) => c.voice)
-  if (!cues.length) return null
-  const answers = new Map()
-  for (const [q, a] of rec.source.answers ?? []) if (q.includes('"voiceLine"')) answers.set(JSON.parse(q).text, JSON.parse(a))
-  const clips = new Map()
-  let rate = 0
-  for (const c of cues) if (!clips.has(c.voice.clip)) { const w = readWav(join(folder, c.voice.clip)); rate = w.rate; clips.set(c.voice.clip, w.samples) }
-  const FADE = Math.round(0.004 * rate)
-  const mix = new Int16Array(Math.round(total * rate))
-  const quietest = (src, a, b) => {
-    const win = Math.round(0.01 * rate)
-    let best = Infinity, mid = Math.floor((a + b) / 2)
-    for (let s = a; s < Math.max(a + 1, b - win); s += Math.round(0.002 * rate)) {
-      let e = 0
-      for (let j = s; j < s + win; j++) e += (src[j] ?? 0) ** 2
-      if (e < best) { best = e; mid = s + Math.floor(win / 2) }
-    }
-    return mid
-  }
-  const pieces = cues.map((c) => [c.voice.clip, Math.round(c.voice.from * rate), Math.round((c.voice.from + c.dur) * rate), Math.round((c.at - job.t0) * rate)])
-  for (let i = 0; i + 1 < pieces.length; i++) {
-    const a = pieces[i], b = pieces[i + 1]
-    const contiguous = a[0] === b[0] && Math.abs(a[2] - b[1]) <= 2
-    const hold = b[3] - (a[3] + a[2] - a[1])
-    if (contiguous && hold > 2) {
-      const pauseFrom = Math.round(answers.get(cues[i].text).speech_end * rate) + Math.round(0.02 * rate)
-      const pauseTo = b[1] + Math.round(0.03 * rate)
-      if (pauseTo - pauseFrom > Math.round(0.03 * rate)) {
-        const p = quietest(clips.get(a[0]), pauseFrom, pauseTo)
-        b[3] -= b[1] - p // the part of the pause after p moves with line b: its words keep their time
-        b[1] = p
-        a[2] = p
-      }
-    } else if (contiguous) b[3] = a[3] + (a[2] - a[1]) // one sound: no gap, no overlap
-  }
-  pieces.forEach(([clip, s0, s1, d0], k) => {
-    let seg = clips.get(clip).slice(s0, s1)
-    const p = pieces[k - 1], n = pieces[k + 1]
-    const prevJoined = p && p[0] === clip && p[2] === s0 && p[3] + (p[2] - p[1]) === d0
-    const nextJoined = n && n[0] === clip && n[1] === s1 && d0 + (s1 - s0) === n[3]
-    for (let j = 0; j < Math.min(FADE, seg.length); j++) {
-      const g = 0.5 - 0.5 * Math.cos((Math.PI * (j + 0.5)) / FADE)
-      if (!prevJoined) seg[j] = Math.trunc(seg[j] * g)
-      if (!nextJoined) seg[seg.length - 1 - j] = Math.trunc(seg[seg.length - 1 - j] * g)
-    }
-    if (d0 < 0) { seg = seg.slice(-d0); d0 = 0 }
-    mix.set(seg.subarray(0, Math.max(0, mix.length - d0)), d0)
-  })
-  writeWav(out, rate, mix)
-  return cues.map((c) => ({ video_s: Math.round((c.at - job.t0) * 1000) / 1000, text: c.text }))
-}
-
 // ---------- Run ----------
 
 const t0 = Date.now()
@@ -363,7 +273,10 @@ try {
     const out = at(job.out)
     const total = frames / job.fps
     const wav = join(work, 'voice.wav')
-    cues = flag('--no-audio') ? null : voiceTrack(list[0].inst.folder, total, wav)
+    // The scene record: the last one of the board's file (voiceTrack in common.mjs).
+    const records = sceneRecords(list[0].inst.folder)
+    const record = records.filter((r) => r.file === records[0]?.file).at(-1)?.record
+    cues = flag('--no-audio') || !record ? null : voiceTrack(list[0].inst.folder, [{ record, at_s: -job.t0 }], total, wav)
     const audio = cues ? ['-i', wav, '-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '160k', '-ar', '48000'] : []
     const vf = `scale=${job.width}:-2:flags=lanczos+accurate_rnd+full_chroma_int:sws_dither=ed:out_range=tv,format=yuv420p`
     execFileSync(FFMPEG, ['-y', '-v', 'error', '-framerate', String(job.fps), '-i', join(frameDir, 'f%06d.png'), ...audio, '-vf', vf, '-c:v', 'libx264', '-preset', 'slow', '-crf', '17', '-x264-params', 'aq-mode=3', '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-color_range', 'tv', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-r', String(job.fps), '-t', total.toFixed(4), '-movflags', '+faststart', out], { stdio: 'inherit' })

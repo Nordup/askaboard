@@ -136,6 +136,12 @@ between lines. A learner's file (a spreadsheet) goes in with `--file <path>`
 (`council/files/`). Check the board once before the run:
 `node scripts/lab/learner-board.mjs <program.js> <out.json>` writes the board file.
 
+**A video of a lab run with the voice** is the council run's own `video.mp4`
+(cut, with the voice) or `video-real.mp4` (real time, with the voice) in the
+run folder. Do not use `record.mjs` for this. `record.mjs` renders an existing
+scene again frame by frame on several app copies, and it opens several windows
+on the screen. Use it only for a fixed-clock launch video of an existing scene.
+
 **Website use cases** (D16, D17). The site plays the agent's own scene in the
 browser with JavaScript; no video is recorded. After the run, export the scene
 with `node scripts/lab/export-scene.mjs <record.jsonl> <scene.js> <out.json>`

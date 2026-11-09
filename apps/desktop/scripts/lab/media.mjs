@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * The council's videos, made after the app has stopped: video-real.mp4 and the
- * watch video video.mp4 from the screencast frames, then meta.json gets the
+ * watch video video.mp4 from the screencast frames, both with the agent's voice
+ * when the job has it (job.voice: the WAV that council.mjs made from the played
+ * scenes; the watch video never cuts where a line sounds), then meta.json gets the
  * numbers and the gallery is rebuilt. council.mjs starts it in the background
  * (so the next run can start), or waits for it with --wait-media.
  *
@@ -18,7 +20,7 @@ import { pathToFileURL } from 'node:url'
 import { encodeVideo, encodeWatchVideo, log } from './common.mjs'
 import { writeGallery } from './gallery.mjs'
 
-/** job: { dir, framesDir, frames, from, to, crop, labels, playing } */
+/** job: { dir, framesDir, frames, from, to, crop, labels, playing, voice: {wav, lines} | null } */
 export function makeMedia(job) {
   const say = (...p) => log('media', ...p)
   const errors = []
@@ -43,8 +45,8 @@ export function makeMedia(job) {
     return value
   }
   const { dir, frames, from, to, crop } = job
-  step('real-speed video', () => encode('video-real.mp4', (out) => encodeVideo(frames, out, { from, to, crop })))
-  const watch = step('watch video', () => encode('video.mp4', (out) => encodeWatchVideo(frames, out, { from, to, crop, labels: job.labels, playing: job.playing })))
+  step('real-speed video', () => encode('video-real.mp4', (out) => encodeVideo(frames, out, { from, to, crop, audio: job.voice?.wav ?? null })))
+  const watch = step('watch video', () => encode('video.mp4', (out) => encodeWatchVideo(frames, out, { from, to, crop, labels: job.labels, playing: job.playing, voice: job.voice ?? null })))
   if (watch) say(`watch video ${watch.watch_s} s of ${watch.real_s} s real (${watch.cuts.length} cuts)`)
 
   const metaFile = join(dir, 'meta.json')

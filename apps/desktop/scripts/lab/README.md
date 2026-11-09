@@ -84,6 +84,15 @@ answering"), and a clock in the corner shows real time. `video-real.mp4`
 keeps real time. `recut.py` (Pillow, frames piped to ffmpeg) makes the watch
 video; `meta.json` has `numbers.watch_s`, `numbers.recorded_s` and `cuts`.
 
+Both videos have the agent's voice when a played scene has voice. To get a
+lab video with the voice, run a council (for example
+`node scripts/lab/council.mjs --client claude --model opus --effort medium --brief-only --task "Why is the sky blue?"`).
+The voice comes from the run's own scene records and voice clips. Each played
+scene's voice starts at the time that the scene started in the recording. In
+`video.mp4`, no cut falls where a voice line sounds, and the sound is cut at
+the same places as the picture. `--no-voice` makes both videos silent.
+`meta.json` has `voice`: each line with its time in `video-real.mp4`.
+
 ## Record a board video (fixed clock)
 
 ```sh
