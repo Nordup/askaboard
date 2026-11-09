@@ -258,19 +258,36 @@ Decision U22. Settings > General > Appearance: System (default), Light, Dark.
 - **App chrome.** The light block in `tokens.css` overrides colours only.
   A new colour token gets a value in both blocks. Check the light value on
   white for contrast: text at least 4.5 : 1 (the accent is `#4a63e8`).
-- **A part that stays dark** carries `data-theme="dark"` (the splash's art
-  band). It gets the full dark set.
+- **A part that stays dark** carries `data-theme="dark"`. It gets the full
+  dark set. The splash's art band has its own light palette instead
+  (`components/splash/artworks.ts`, from the founder's reference picture).
 - **The board.** Board material keeps the dark-board colours that it was
-  written with. In light, one colour map (`lib/board-light.ts`) runs over
-  the content layer and the ink layers. It flips lightness and keeps hue:
-  `#161618` becomes the paper `#f6f6f8`, and `#ececef` ink becomes
-  near-black. Do not write a second map. Use `mapColor()` when chrome must
-  show a board colour (the swatches).
-- **Inside the mapped layers,** use only `--ls-*` and other dark-board
-  values. An app token there is light already, and the map flips it back.
-- **Not mapped:** raster images (the inverse filter), 3D worlds, the app
+  written with. In light, every colour that reaches the board's pixels
+  passes through one formula, `lightColor(css, role)` in
+  `lib/board-light.ts` (role `text`, `graphic` or `tint`). A dark surface
+  near the board becomes a light surface. A colour that already reads on
+  the paper `#f6f6f8` stays exactly as written (red, the accent, pink):
+  text needs contrast 4.5, a line or border 2.5. Any other colour gets
+  darker at the same hue until it reads: `#ececef` ink becomes
+  near-black. Areas (`tint`: highlighters, SVG fills, CSS backgrounds)
+  keep a chromatic colour as written. A gradient stop changes only when it
+  is a dark surface. Shadows are never changed. Do not write a second map. When chrome must show
+  a board colour (the swatches), call `lightColor()`.
+- **One choke point per path:** canvas ink and shapes (`paint.ts`), node
+  styles, SVG markup and maths (`content.tsx`), scene overrides
+  (`playback.ts`), the `--ls-*` tokens (computed at run time from their
+  dark values in `content.css`). A new path that puts a board colour on
+  the screen goes through `boardColor()`, `lightStyle()` or
+  `boardMarkup()`.
+- **App UI inside the content layer** (the world's paused note) uses the
+  app tokens, as everywhere else.
+- **3D worlds** keep their material colours. In light they get a light
+  environment (`live-pixels/world/worker/ground.ts`): no ink line, darker
+  toon shades and a soft contact shadow. Never an outline.
+- **Not mapped:** raster images (exact colours), the app
   overlays over the board (selection, handles, lasso, eraser ring: light
-  app tokens).
+  app tokens). An SVG file image gets a CSS lightness filter
+  (`content.css`): its colours cannot be changed one by one cheaply.
 - **Agents always see the dark board.** The snapshot window never gets
   `data-theme`. Agent texts keep saying that the board is dark.
 

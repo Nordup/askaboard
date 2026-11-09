@@ -249,7 +249,7 @@ export const TOON = String.raw`
     Object.defineProperty(physical, 'transparent', { configurable: true, set(v) { this._transparent = v; }, get() { return this._transparent || (!!toonWorld && isToon(this) && glassOf(this)); } });
 
     THREE.Mesh.prototype.onBeforeRender = function (r, scene, camera, geometry, m, group) {
-      if (toonWorld && toonWorld.look.outline > 0 && isToon(m) && m.depthWrite && geometry.attributes.lsInk && this.lsInkRender !== inkRender) inkQueue.push(this, geometry, group, m);
+      if (toonWorld && toonWorld.inkOn && isToon(m) && m.depthWrite && geometry.attributes.lsInk && this.lsInkRender !== inkRender) inkQueue.push(this, geometry, group, m);
     };
     inkMaterial = new THREE.ShaderMaterial({
       side: THREE.BackSide, transparent: true, toneMapped: false, vertexShader: INK_VERTEX, fragmentShader: INK_FRAGMENT,
@@ -282,10 +282,10 @@ export const TOON = String.raw`
     w.scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) if (TOONED[m.type]) m.dispose(); });
   };
 
-  /** Before a render. W, H: the target. px: device pixels per CSS pixel of the target. */
-  const beginToon = (w, look, W, H, px) => {
-    const u = w.toonUniforms, ink = inkMaterial.uniforms, width = look.outline * px;
-    u.toonShades.value.fromArray(look.shades);
+  /** Before a render. W, H: the target. px: device pixels per CSS pixel of the target. light: the light environment (ground.ts): other shades, no ink. */
+  const beginToon = (w, look, W, H, px, light) => {
+    const u = w.toonUniforms, ink = inkMaterial.uniforms, width = look.outline * px, inked = look.outline > 0 && !light;
+    if (light) lightShades(look.shades, u.toonShades.value); else u.toonShades.value.fromArray(look.shades);
     u.toonSteps.value.fromArray(look.steps);
     u.toonSoft.value = look.soft;
     u.toonGlass.value = look.see;
@@ -293,9 +293,10 @@ export const TOON = String.raw`
     ink.inkWidth.value.set((2 * width) / W, (2 * width) / H);
     ink.inkColor.value.set(look.ink);
     ink.inkAlpha.value = 1;
-    w.inkPass.visible = w.inkGroup.visible = look.outline > 0;
+    w.inkOn = inked;
+    w.inkPass.visible = w.inkGroup.visible = inked;
     // Before the render: three uploads a geometry's buffers when it walks the scene.
-    if (look.outline > 0) gatherInk(w, w.camera);
+    if (inked) gatherInk(w, w.camera);
     toonWorld = w;
   };
   const endToon = () => { toonWorld = null; inkQueue.length = 0; };

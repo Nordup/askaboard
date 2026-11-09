@@ -15,7 +15,7 @@
  * outward; a few petals let go and drift left. What never moves (moon, wash, trunk, thick limbs and their blossoms) is
  * drawn once per size into a bitmap; a frame draws that bitmap, the live twigs in one path and the blossoms as sprites.
  */
-import { rgba, seeded, type Artwork, type Size } from './artworks'
+import { seeded, type Artwork, type RGB, type Size } from './artworks'
 
 /** Seconds: the skeleton's growth; blossoms open between OPEN_FROM and OPEN_TO; after DONE the still parts are cached. */
 const GROW = 3.5
@@ -75,7 +75,6 @@ export interface TreeGpu {
   frame(t: number, size: Size, dpr: number, pointer: readonly [number, number]): TreeFrame
 }
 
-type RGB = [number, number, number, number]
 const css = ([r, g, b]: RGB, a: number): string => `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`
 const mix = (a: RGB, b: RGB, k: number): RGB => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, 1]
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -121,11 +120,19 @@ export const tree: Artwork = {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     // ---------- Colours ----------
-    const bark = rgba(palette.get('splash-tree-bark'))
-    const core = rgba(palette.get('splash-tree-core'))
-    const rim = rgba(palette.get('splash-tree-rim'))
-    const moon = rgba(palette.get('splash-moon'))
-    const blossomColours = ['crimson', 'rose', 'pink', 'pale', 'white'].map((n) => rgba(palette.get(`splash-blossom-${n}`)))
+    // Every colour as drawn in this theme (artworks.ts: the dark tokens, or the light band by hand).
+    const bark = palette.colour('splash-tree-bark')
+    const core = palette.colour('splash-tree-core')
+    const rim = palette.colour('splash-tree-rim')
+    const moon = palette.colour('splash-moon')
+    const moonEdge = palette.colour('splash-moon-edge')
+    const blossomColours = ['crimson', 'rose', 'pink', 'pale', 'white'].map((n) => palette.colour(`splash-blossom-${n}`))
+    const stamen = palette.colour('splash-stamen')
+    const flowerDeep = palette.colour('splash-flower-deep')
+    const budDeep = palette.colour('splash-bud-deep')
+    const washRim = palette.colour('splash-wash')
+    const washPool = palette.colour('splash-wash-pool')
+    const A = (name: string, dark: number): number => palette.alpha(name, dark)
     // This launch's colour mix: crimson and rose lead, a few white.
     const weights = [0.42, 0.3, 0.15, 0.08, 0.05].map((w) => w * range(0.6, 1.45))
     const weightSum = weights.reduce((a, b) => a + b, 0)
@@ -519,11 +526,10 @@ export const tree: Artwork = {
 
     // ---------- Flower sprites: per colour, three turns ----------
     const SPRITE = 40
-    const stamen: RGB = [250, 222, 160, 1]
     /** One five-petal flower of radius R centred at the origin of `g`. */
     const drawFlower = (g: CanvasRenderingContext2D, R: number, c: RGB, v: number): void => {
       const turn = (v * 2 * Math.PI) / 15
-      const deep = mix(c, [120, 10, 30, 1], 0.35)
+      const deep = mix(c, flowerDeep, 0.35)
       for (let k = 0; k < 5; k++) {
         const a = turn + (k * 2 * Math.PI) / 5
         g.beginPath()
@@ -567,7 +573,7 @@ export const tree: Artwork = {
       )
     }
     /** A bud's colour (also on the GPU). */
-    const budColour = (c: number): RGB => mix(blossomColours[c], [90, 10, 25, 1], 0.2)
+    const budColour = (c: number): RGB => mix(blossomColours[c], budDeep, 0.2)
 
     // ---------- Per-size state ----------
     let sizeKey = ''
@@ -717,24 +723,24 @@ export const tree: Artwork = {
       const r = moonR * sy
       // A soft halo, the disc, its faint embossed rim.
       const halo = ctx.createRadialGradient(cx, cy, r * 0.9, cx, cy, r * 1.45)
-      halo.addColorStop(0, css(moon, 0.025))
+      halo.addColorStop(0, css(moon, A('moon-halo', 0.025)))
       halo.addColorStop(1, css(moon, 0))
       ctx.fillStyle = halo
       ctx.fillRect(cx - r * 1.5, cy - r * 1.5, r * 3, r * 3)
       const disc = ctx.createRadialGradient(cx - r * 0.25, cy - r * 0.3, r * 0.1, cx, cy, r)
-      disc.addColorStop(0, css(moon, 0.085))
-      disc.addColorStop(0.7, css(moon, 0.065))
-      disc.addColorStop(1, css(moon, 0.05))
+      disc.addColorStop(0, css(moon, A('moon-disc-0', 0.085)))
+      disc.addColorStop(0.7, css(moon, A('moon-disc-1', 0.065)))
+      disc.addColorStop(1, css(moon, A('moon-disc-2', 0.05)))
       ctx.beginPath()
       ctx.arc(cx, cy, r, 0, Math.PI * 2)
       ctx.fillStyle = disc
       ctx.fill()
       ctx.lineWidth = 1
-      ctx.strokeStyle = css(moon, 0.11)
+      ctx.strokeStyle = css(moonEdge, A('moon-edge', 0.11))
       ctx.stroke()
       ctx.beginPath()
       ctx.arc(cx - 0.8, cy - 0.8, r - 1.2, Math.PI * 0.75, Math.PI * 1.6)
-      ctx.strokeStyle = css(moon, 0.07)
+      ctx.strokeStyle = css(moonEdge, A('moon-emboss', 0.07))
       ctx.stroke()
     }
 
@@ -753,17 +759,17 @@ export const tree: Artwork = {
         ctx.fillRect(-rx, -rx, rx * 2, rx * 2)
         ctx.restore()
       }
-      smear(bx - 0.25 * sx, by + 0.01 * sy, 0.6 * sx, 0.05 * sy, rim, 0.05)
-      smear(bx - 0.05 * sx, by, 0.28 * sx, 0.04 * sy, rim, 0.05)
-      smear(bx, by + 0.01 * sy, 0.16 * sx, 0.035 * sy, [6, 5, 6, 1], 0.7)
+      smear(bx - 0.25 * sx, by + 0.01 * sy, 0.6 * sx, 0.05 * sy, washRim, 0.05 * A('wash', 1))
+      smear(bx - 0.05 * sx, by, 0.28 * sx, 0.04 * sy, washRim, 0.05 * A('wash', 1))
+      smear(bx, by + 0.01 * sy, 0.16 * sx, 0.035 * sy, washPool, A('wash-pool', 0.7))
       ctx.lineCap = 'round'
       for (let k = 0; k < 7; k++) {
         const y = by + (hash(k, 7) - 0.3) * 0.03 * sy
         const x0 = bx + (hash(k, 3) * 0.2 - 0.05) * sx
         const x1 = x0 - (0.2 + hash(k, 5) * 0.75) * sx
         const g = ctx.createLinearGradient(x0, 0, x1, 0)
-        g.addColorStop(0, css(rim, 0.07 + 0.05 * hash(k, 9)))
-        g.addColorStop(1, css(rim, 0))
+        g.addColorStop(0, css(washRim, (0.07 + 0.05 * hash(k, 9)) * A('wash', 1)))
+        g.addColorStop(1, css(washRim, 0))
         ctx.beginPath()
         ctx.moveTo(x0, y)
         ctx.lineTo(x1, y + (hash(k, 11) - 0.5) * 2)

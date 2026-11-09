@@ -3,7 +3,7 @@
  * turn them from white ink toward the accent blue. One source of its numbers for both painters: the WebGL layer (gl.ts,
  * a fragment shader) and the 2D fallback here (one path per colour step, not one fill per dot).
  */
-import { rgba, type Palette, type Size } from './artworks'
+import type { Palette, Size } from './artworks'
 
 /** The approved mockup's band: the grid's numbers are in these units, scaled to the band (x by W/680, y by H/340). */
 export const GRID = {
@@ -21,24 +21,30 @@ export const GRID = {
   /** A lifted dot rises this many units and grows by this share of its radius. */
   lift: 2,
   grow: 0.6,
-  /** Alpha of a dot at the bottom step and the extra at the top. */
+  /** Alpha of a dot at the bottom step and the extra at the top (the dark band; palette.alpha gives the light band's). */
   alpha0: 0.05,
   alpha1: 0.26
 } as const
 
 /** The grid's two ends (white ink, the accent) and its pitch in units, from the tokens. */
-export function gridColours(palette: Palette): { low: number[]; high: number[]; pitch: number } {
-  return { low: rgba(palette.get('ink-white')), high: rgba(palette.get('accent')), pitch: parseFloat(palette.get('splash-dot-pitch')) || 20 }
+export function gridColours(palette: Palette): { low: number[]; high: number[]; pitch: number; alpha0: number; alpha1: number } {
+  return {
+    low: palette.colour('splash-grid-dot'),
+    high: palette.colour('accent'),
+    pitch: parseFloat(palette.get('splash-dot-pitch')) || 20,
+    alpha0: palette.alpha('grid-low', GRID.alpha0),
+    alpha1: palette.alpha('grid-rise', GRID.alpha1)
+  }
 }
 
 /** The 2D painter: the grid at time t on a context already scaled to CSS px (and shifted by the parallax). */
 export function grid2D(palette: Palette): (ctx: CanvasRenderingContext2D, t: number, size: Size) => void {
-  const { low, high, pitch } = gridColours(palette)
+  const { low, high, pitch, alpha0, alpha1 } = gridColours(palette)
   const offset = pitch / 2
   const fills = Array.from({ length: GRID.steps }, (_, s) => {
     const b = (s + 0.5) / GRID.steps
     const c = (i: number): number => Math.round(low[i] + (high[i] - low[i]) * b)
-    return `rgba(${c(0)}, ${c(1)}, ${c(2)}, ${(GRID.alpha0 + GRID.alpha1 * b).toFixed(3)})`
+    return `rgba(${c(0)}, ${c(1)}, ${c(2)}, ${(alpha0 + alpha1 * b).toFixed(3)})`
   })
   /** One flat list per step: x, y, radius of each dot. */
   const buckets: number[][] = Array.from({ length: GRID.steps }, () => [])

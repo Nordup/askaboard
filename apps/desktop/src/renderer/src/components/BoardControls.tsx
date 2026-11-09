@@ -6,7 +6,7 @@ import { styleFields, type SelectionStyle, type StylePatch } from '../board/styl
 import { commandRow, KEYS, ZOOM_COMMANDS, type BoardCommand, type CommandContext, type ZoomCommand } from '../board/commands'
 import { BoardMenu } from './BoardMenu'
 import { PenRing } from './InkGlyph'
-import { shownInk, useBoardLight } from '../lib/board-light'
+import { lightColor, useBoardLight } from '../lib/board-light'
 
 /**
  * What the style pill shows: its fields, with the values of the tool or of the selection (a missing value
@@ -190,7 +190,7 @@ function StyleOptions({ state, onStyle }: { state: StylePillState; onStyle(patch
 }
 
 function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; values: StylePatch; onStyle(patch: StylePatch): void; divider: boolean }) {
-  // A swatch stores the dark-board colour and shows it as the board shows it (lib/board-light.ts).
+  // A swatch stores the dark-board colour and shows it as the board paints it (lib/board-light.ts): a pen as a graphic, a highlighter as a tint.
   const light = useBoardLight()
   let options
   if (field === 'color') {
@@ -201,7 +201,7 @@ function StyleGroup({ field, values, onStyle, divider }: { field: StyleField; va
         {...tip(color.label)}
         aria-label={color.label}
         aria-pressed={values.color === color.value}
-        style={{ '--swatch': shownInk(color.value, light, values.pen === 'marker') } as CSSProperties}
+        style={{ '--swatch': light ? lightColor(color.value, values.pen === 'marker' ? 'tint' : 'graphic') : color.value } as CSSProperties}
         onClick={() => onStyle({ color: color.value })}
       >
         <PenRing name={color.id} className="swatch__dot" />

@@ -6,6 +6,7 @@ import type { WorldPoints } from '@shared/world-links'
 import type { NodeOverride } from '../../board/playback'
 import type { Camera, Point } from '../../board/types'
 import { paceFrames } from '../../frame-pace'
+import { isBoardLight } from '../../lib/board-light'
 import * as worker from './worker'
 
 /**
@@ -119,6 +120,14 @@ export function setWorldUncapped(on: boolean): void {
   paceFrames(!on && !tune.uncapped)
   for (const surface of boardSurfaces) surface.send({ type: 'uncapped', on })
 }
+
+/** The board's theme reaches every board surface, now and after a new worker. A private surface (stills for agents) stays dark. */
+const themeObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => {
+  const light = isBoardLight()
+  for (const surface of boardSurfaces) surface.send({ type: 'theme', light })
+})
+themeObserver?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+import.meta.hot?.dispose(() => themeObserver?.disconnect())
 
 let exact = false
 
@@ -400,7 +409,8 @@ export class WorldSurface {
     const stats: PageToWorld[] = this.canvas && statsListener ? [{ type: 'stats', on: true }] : []
     const rate: PageToWorld[] = this.canvas && uncapped ? [{ type: 'uncapped', on: true }] : []
     const frames: PageToWorld[] = this.canvas && exact ? [{ type: 'exact', on: true }] : []
-    this.outbox = [{ ...init, tune, fileToken: this.mintToken() }, ...stats, ...rate, ...frames, ...waiting]
+    const theme: PageToWorld[] = this.canvas && isBoardLight() ? [{ type: 'theme', light: true }] : []
+    this.outbox = [{ ...init, tune, fileToken: this.mintToken() }, ...stats, ...rate, ...frames, ...theme, ...waiting]
     this.opened = true
     this.flush()
   }

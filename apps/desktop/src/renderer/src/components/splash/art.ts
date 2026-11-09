@@ -8,8 +8,10 @@
  * the GPU. Over it, 2D: the tree while it grows. Without WebGL, or when its context is lost, the 2D canvas paints
  * everything (grid.ts, the artwork's draw()). The loop waits while the document is hidden and stops when the band
  * unmounts, which also frees the GL context. Reduced motion: one still frame.
+ *
+ * Theme: the dark band is drawn from the dark tokens; the light band from its own palette (artworks.ts, LIGHT). A theme change while the band shows repaints it with the same seed and clock.
  */
-import { seeded, type Artwork, type Palette, type Size } from './artworks'
+import { bandPalette, cssColour, seeded, type Artwork, type Size } from './artworks'
 import { startGl } from './gl'
 import { grid2D } from './grid'
 import { tree } from './tree'
@@ -34,18 +36,31 @@ const CALM_INTERVAL = 1 / 30
 export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return () => {}
-  const css = getComputedStyle(band)
-  const palette: Palette = { get: (name) => css.getPropertyValue(`--${name}`).trim() }
-  const ground = palette.get('bg-canvas') || '#161618'
+  // The dark tokens, read from an element of the dark set inside the band.
+  const probe = document.createElement('div')
+  probe.dataset.theme = 'dark'
+  probe.hidden = true
+  band.append(probe)
+  let palette = bandPalette(probe)
+  let ground = cssColour(palette.colour('bg-canvas'))
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   const seed = (Math.random() * 2 ** 32) >>> 0
   const random = seeded(seed)
   const artwork = ARTWORKS[Math.floor(random() * ARTWORKS.length)]
-  let art = artwork.init((random() * 2 ** 32) >>> 0, palette)
+  let artSeed = (random() * 2 ** 32) >>> 0
+  let art = artwork.init(artSeed, palette)
   /** The grid's own variation: where its waves start. */
   const gridPhase = random() * 100
-  const drawGrid = grid2D(palette)
+  let drawGrid = grid2D(palette)
+  /** The title and version over the band, in the band's own colours (the light band's own text colours in light). */
+  const titleColours = (): void => {
+    for (const name of ['text-primary', 'text-tertiary']) {
+      if (palette.light) band.style.setProperty(`--${name}`, cssColour(palette.colour(name)))
+      else band.style.removeProperty(`--${name}`)
+    }
+  }
+  titleColours()
 
   // The WebGL layer, under the 2D canvas.
   const glCanvas = document.createElement('canvas')
@@ -100,7 +115,8 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
         calmInterval = o.fps ? 1 / o.fps : CALM_INTERVAL
         ignorePointer = o.pointer === false
         if (ignorePointer) target[0] = target[1] = shift[0] = shift[1] = 0
-        art = artwork.init((o.seed ?? (Math.random() * 2 ** 32)) >>> 0, palette)
+        artSeed = (o.seed ?? Math.random() * 2 ** 32) >>> 0
+        art = artwork.init(artSeed, palette)
         held = o.t ?? null
         clock = held ?? 0
         frame()
@@ -199,6 +215,19 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
     frame()
   })
   observer.observe(band)
+  // A theme change: the same artwork, seed and clock in the new theme's colours.
+  const themeObserver = new MutationObserver(() => {
+    const next = bandPalette(probe)
+    if (next.light === palette.light) return
+    palette = next
+    ground = cssColour(palette.colour('bg-canvas'))
+    art = artwork.init(artSeed, palette)
+    drawGrid = grid2D(palette)
+    gl?.recolour(palette)
+    titleColours()
+    frame()
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   if (!reduced) {
     window.addEventListener('pointermove', onPointer)
     document.addEventListener('visibilitychange', onVisibility)
@@ -207,6 +236,9 @@ export function startArt(canvas: HTMLCanvasElement, band: HTMLElement): () => vo
   return () => {
     pause()
     observer.disconnect()
+    themeObserver.disconnect()
+    probe.remove()
+    for (const name of ['text-primary', 'text-tertiary']) band.style.removeProperty(`--${name}`)
     gl?.release()
     glCanvas.remove()
     window.removeEventListener('pointermove', onPointer)

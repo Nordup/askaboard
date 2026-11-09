@@ -363,12 +363,17 @@ export const SURFACE = String.raw`
 
   /** A still: its full reach, within these limits. */
   const STILL_MAX = 4096, STILL_PIXELS = 2000000;
-  /** Render one still of world w, at its full reach, and read it before anything else uses the target. It needs no view. */
+  /**
+   * Render one still of world w, at its full reach, and read it before anything else uses the target. It needs no view.
+   * Stills are for agents, and agents always see the dark board: a still renders in the dark environment (ground.ts) on any board.
+   */
   const readStill = (w) => {
     if (dead) return null;
     announce(null);
     core = true;
     let target = null;
+    const light = lightBoard;
+    lightBoard = false;
     try {
       measureReach(w);
       const nominal = { l: -w.w / 2, t: -w.h / 2, r: w.w / 2, b: w.h / 2 };
@@ -391,6 +396,9 @@ export const SURFACE = String.raw`
       // All that the answer says is fixed here. The world can resize or move while the pixels come back.
       return { read, W, H, x: crop.l / s + w.w / 2 + w.moved.x, y: crop.t / s + w.h / 2 + w.moved.y, w: W / s, h: H / s, points };
     } finally {
+      // The board's own picture measures its reach and its shadow again, in its environment.
+      lightBoard = light;
+      if (light) w.stale = true;
       if (target) giveOutput(target);
       trimTargets();
       core = false;
@@ -670,6 +678,10 @@ export const SURFACE = String.raw`
     else if (m.type === 'add') addWorld(m.world);
     else if (m.type === 'remove') removeWorld(m.key);
     else if (m.type === 'stats') setStats(m.on);
+    else if (m.type === 'theme') {
+      // The environment changes in place: every world renders again, no world code runs.
+      if (lightBoard !== !!m.light) { lightBoard = !!m.light; for (const w of worlds.values()) w.stale = true; surface.dirty = true; }
+    }
     else if (m.type === 'uncapped') { uncappedAsked = m.on; uncapped = uncappedAsked || exact || !!tune.uncapped; if (uncapped) waiting = false; }
     else if (m.type === 'exact') { exact = m.on; uncapped = uncappedAsked || exact || !!tune.uncapped; if (uncapped) waiting = false; owed = exact; }
     else if (m.type === 'ping') post({ type: 'pong', n: m.n, running: current ? current.key.node : last ? last.key.node : null, info: infoNow() });

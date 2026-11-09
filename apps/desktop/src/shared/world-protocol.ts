@@ -172,6 +172,8 @@ export type PageToWorld =
   | { type: 'ping'; n: number }
   /** While on, the worker sends one `stats` message per second. */
   | { type: 'stats'; on: boolean }
+  /** Board surfaces only: the board is light, and worlds render in the light environment. A surface that never hears it is dark. */
+  | { type: 'theme'; light: boolean }
   /** While on, a picture waits only for the GPU: not for the page, not for a display frame. */
   | { type: 'uncapped'; on: boolean }
   /** Dev only (frameAt): while on, every picture is at full quality with every world in it, and a `settled` follows each frame. */

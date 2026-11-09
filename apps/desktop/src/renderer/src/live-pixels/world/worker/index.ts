@@ -2,6 +2,7 @@ import { BLEND_GAP, paramsAtTime } from '../../../live/params'
 import { LIVE_ORIGIN, LOCAL_LIBRARIES, programBody, resolveLiveSpecifier } from '@shared/live-libs'
 import { WORLD_TICK_HZ } from '@shared/world-protocol'
 import { FILES } from './files'
+import { GROUND } from './ground'
 import { LOOK } from './look'
 import { PICTURE } from './picture'
 import { REALM } from './realm'
@@ -26,6 +27,7 @@ import { VIEW } from './view'
  * - touch.ts: pick, pins, ink, the hand's events, the anchor.
  * - picture.ts: whether a tick changed what a render would show.
  * - toon.ts: the look of every world.
+ * - ground.ts: its light environment for the light board, with the contact shadow.
  * - look.ts: a world's stage, and its render into its private output.
  * - stats.ts: what one second of rendering cost, while the page asks for it.
  * - surface.ts: compositing, pictures, the frame loop, the messages.
@@ -74,6 +76,7 @@ ${VIEW}
 ${TOUCH}
 ${PICTURE}
 ${TOON}
+${GROUND}
 ${LOOK}
 ${STATS}
 ${SURFACE}

@@ -88,7 +88,7 @@ export const PICTURE = String.raw`
   const LIGHT = ['intensity', 'distance', 'decay', 'angle', 'penumbra', 'width', 'height', 'power'];
   const CAMERA = ['fov', 'near', 'far', 'zoom', 'left', 'right', 'top', 'bottom', 'filmGauge', 'filmOffset', 'focus'];
   const readObject = (w, o) => {
-    if (o === w.inkPass || o === w.inkGroup) return;
+    if (o === w.inkPass || o === w.inkGroup || (w.ground && o === w.ground.group)) return;
     put(o); put(o.visible);
     if (o.isCamera && o !== w.camera) putMatrix(o.matrixWorld);
     else if (!o.isCamera) putMatrix(o.matrixWorld);

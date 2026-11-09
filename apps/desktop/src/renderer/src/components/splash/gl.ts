@@ -6,7 +6,7 @@
  * (one source for both painters); art.ts falls back to the 2D painters when WebGL is missing or its context is lost,
  * and the tree's growth stays 2D.
  */
-import { rgba, type Palette, type Size } from './artworks'
+import type { Palette, Size } from './artworks'
 import { GRID, gridColours } from './grid'
 import { ATLAS, DEPTH, WIND, type TreeFrame, type TreeGpu, type TreeLayer } from './tree'
 
@@ -15,6 +15,8 @@ export interface GlLayer {
   readonly lost: boolean
   /** Whether this context can paint the grown tree (instancing). */
   readonly canTree: boolean
+  /** Take the grid's colours and ground from `palette` (a theme change). */
+  recolour(palette: Palette): void
   /** Paint a frame: the grid at grid time `gridT` shifted by `gridShift` CSS px, then the grown tree if given. */
   draw(size: Size, dpr: number, gridT: number, gridShift: [number, number], tree: { gpu: TreeGpu; frame: TreeFrame; pointer: readonly [number, number]; fade: number; alpha: number } | null): void
   /** Free the context (the band unmounts). */
@@ -38,6 +40,8 @@ uniform float uPitch;
 uniform vec3 uGround;
 uniform vec3 uLow;
 uniform vec3 uHigh;
+uniform float uAlpha0;
+uniform float uAlpha1;
 void main() {
   // The pixel in CSS px of the band, before the parallax shift (2D draws at dpr · (p − shift)).
   vec2 css = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uDpr + uShift;
@@ -49,7 +53,7 @@ void main() {
   float st = min(${f(GRID.steps - 1)}, floor(k * k * ${f(GRID.steps)}));
   float b = (st + 0.5) / ${f(GRID.steps)};
   vec3 col = floor(mix(uLow, uHigh, b) + 0.5) / 255.0;
-  float a = ${f(GRID.alpha0)} + ${f(GRID.alpha1)} * b;
+  float a = uAlpha0 + uAlpha1 * b;
   vec2 centre = vec2(c.x * uScale.x, (c.y - ${f(GRID.lift)} * k) * uScale.y);
   float r = (1.0 + ${f(GRID.grow)} * k) * (uScale.x + uScale.y) * 0.5;
   float cover = clamp((r - length(css - centre)) * uDpr + 0.5, 0.0, 1.0);
@@ -226,14 +230,19 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
   const gridPos = gl.getAttribLocation(gridProgram, 'aPos')
 
-  // Colours, once.
-  const { low, high, pitch } = gridColours(palette)
-  const ground = rgba(palette.get('bg-canvas') || '#161618')
-  gl.useProgram(gridProgram)
-  gl.uniform3f(loc(gridProgram, 'uGround'), ground[0] / 255, ground[1] / 255, ground[2] / 255)
-  gl.uniform3f(loc(gridProgram, 'uLow'), low[0], low[1], low[2])
-  gl.uniform3f(loc(gridProgram, 'uHigh'), high[0], high[1], high[2])
-  gl.uniform1f(loc(gridProgram, 'uPitch'), pitch)
+  // Colours, once per theme.
+  const recolour = (p: Palette): void => {
+    const { low, high, pitch, alpha0, alpha1 } = gridColours(p)
+    const ground = p.colour('bg-canvas')
+    gl.useProgram(gridProgram)
+    gl.uniform3f(loc(gridProgram, 'uGround'), ground[0] / 255, ground[1] / 255, ground[2] / 255)
+    gl.uniform3f(loc(gridProgram, 'uLow'), low[0], low[1], low[2])
+    gl.uniform3f(loc(gridProgram, 'uHigh'), high[0], high[1], high[2])
+    gl.uniform1f(loc(gridProgram, 'uPitch'), pitch)
+    gl.uniform1f(loc(gridProgram, 'uAlpha0'), alpha0)
+    gl.uniform1f(loc(gridProgram, 'uAlpha1'), alpha1)
+  }
+  recolour(palette)
   const g = {
     res: loc(gridProgram, 'uRes'),
     dpr: loc(gridProgram, 'uDpr'),
@@ -382,6 +391,9 @@ export function startGl(canvas: HTMLCanvasElement, palette: Palette): GlLayer | 
       return lost
     },
     canTree,
+    recolour(p) {
+      if (!lost && !released) recolour(p)
+    },
     draw(size, dpr, gridT, gridShift, tree) {
       if (lost || released) return
       const w = canvas.width

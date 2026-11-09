@@ -6,6 +6,7 @@ import { LiveView } from '../live-pixels/LiveView'
 import { parseMarkup, toggleMarker, type Run } from './markup'
 import { ROOT, type SceneIndex } from './scene'
 import type { BoardNode, LayoutBox } from './types'
+import { boardMarkup, installLightTokens, lightStyle, useBoardLight } from '../lib/board-light'
 import '../../../../node_modules/katex/dist/katex.min.css'
 import './content.css'
 
@@ -91,18 +92,19 @@ export function assetUrl(src: string): string | null {
 
 // ---------- Rendering ----------
 
-function renderRuns(runs: Run[], key = ''): ReactNode[] {
+/** `light`: the light board, where the colours of maths (\color, \colorbox) go through lib/board-light.ts. */
+function renderRuns(runs: Run[], light: boolean, key = ''): ReactNode[] {
   return runs.map((run, i) => {
     const k = `${key}${i}`
     switch (run.kind) {
       case 'text':
         return run.text
       case 'math':
-        return <span key={k} className="node-math" dangerouslySetInnerHTML={{ __html: renderMath(run.tex) }} />
+        return <span key={k} className="node-math" dangerouslySetInnerHTML={{ __html: boardMarkup(renderMath(run.tex), light) }} />
       case 'bold':
-        return <strong key={k}>{renderRuns(run.children, `${k}.`)}</strong>
+        return <strong key={k}>{renderRuns(run.children, light, `${k}.`)}</strong>
       case 'italic':
-        return <em key={k}>{renderRuns(run.children, `${k}.`)}</em>
+        return <em key={k}>{renderRuns(run.children, light, `${k}.`)}</em>
     }
   })
 }
@@ -126,7 +128,7 @@ function runsHtml(runs: Run[]): string {
     .join('')
 }
 
-/** A text node's source as the HTML its view shows (live scenes show changing text with it). */
+/** A text node's source as the HTML its view shows (live scenes show changing text with it). Its colours are the stored ones: playback.ts maps them where it shows them. */
 export function textHtml(source: string): string {
   return runsHtml(parseMarkup(source))
 }
@@ -178,8 +180,10 @@ function editingWithin(id: string, subtree: readonly BoardNode[], editingId: str
   return null
 }
 
-function boxStyle(node: ContentNode, placement: NodeViewProps['placement']): CSSProperties {
-  const style = renderableStyle(node.style) as CSSProperties
+/** The one place a node's stored style reaches the DOM: on the light board its colours go through lib/board-light.ts. */
+function boxStyle(node: ContentNode, placement: NodeViewProps['placement'], light: boolean): CSSProperties {
+  const own = renderableStyle(node.style) as CSSProperties
+  const style = light ? lightStyle(own) : own
   if (placement === 'absolute') {
     return { ...style, position: 'absolute', left: node.x, top: node.y, width: style.width ?? 'max-content' }
   }
@@ -233,7 +237,9 @@ function TextEditor({ ctx }: { ctx: RefObject<ContentContext> }) {
 
 const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeViewProps) {
   const register = (element: HTMLElement | null): void => ctx.current.register(node.id, element)
-  const style = boxStyle(node, placement)
+  // The theme is a subscription, not a prop: a theme change renders every node view again (memo passes it through).
+  const light = useBoardLight()
+  const style = boxStyle(node, placement, light)
   const common = { 'data-node-id': node.id, 'data-kind': node.kind, ref: register }
 
   switch (node.kind) {
@@ -254,13 +260,13 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
       const turn = rotation ? { 'data-rotation': rotation, style: { ...style, '--node-rotation': `${rotation}deg` } as CSSProperties } : { style }
       return (
         <div {...common} {...turn} className="node node-text">
-          {editing === node.id ? <TextEditor ctx={ctx} /> : node.text ? renderRuns(parseMarkup(node.text)) : '​'}
+          {editing === node.id ? <TextEditor ctx={ctx} /> : node.text ? renderRuns(parseMarkup(node.text), light) : '​'}
         </div>
       )
     }
     case 'svg': {
       const sized = { 'data-w': node.style.width ? '1' : undefined, 'data-h': node.style.height ? '1' : undefined }
-      return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: scopeSvgIds(sanitizeSvg(node.markup), node.id) }} />
+      return <div {...common} {...sized} className="node node-svg" style={style} dangerouslySetInnerHTML={{ __html: boardMarkup(scopeSvgIds(sanitizeSvg(node.markup), node.id), light) }} />
     }
     case 'live':
       return <LiveView node={node} style={{ ...style, width: node.w, height: node.h }} common={common} />
@@ -277,8 +283,8 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
         <img
           {...common}
           className="node node-image"
-          // A raster image shows its true colours on the light board (board.css); an SVG file is board material.
-          data-raster={/\.svg$|^data:image\/svg/i.test(node.src.split(/[?#]/)[0]) ? undefined : ''}
+          // A raster image shows its true colours in both themes. An SVG file is board material that cannot be recoloured cheaply: content.css maps it with a filter on the light board.
+          data-svg-file={/\.svg$|^data:image\/svg/i.test(node.src.split(/[?#]/)[0]) ? '' : undefined}
           style={style}
           src={url}
           alt=""
@@ -317,6 +323,8 @@ interface ContentLayerProps {
 /** The transformed root. Its transform is set by the Board, never by React, so a camera change does not render it. */
 export const ContentLayer = memo(function ContentLayer({ index, editingId, ctx, rootRef }: ContentLayerProps) {
   const top = (index.children.get(ROOT) ?? []).filter(isContent)
+  // The light --ls-* tokens, computed once from the dark ones (lib/board-light.ts).
+  if (useBoardLight()) installLightTokens()
   return (
     <div className="board__content" ref={rootRef} aria-hidden={editingId ? undefined : 'true'}>
       {top.map((node) => (

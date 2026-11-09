@@ -108,7 +108,8 @@ export const LOOK = String.raw`
       renderer.setClearColor(0x000000, 0);
       w.scene.environment = null;
       aimCamera(w, s, crop);
-      beginToon(w, w.look, W, H, inkScale * res);
+      beginGround(w, compileOnly);
+      beginToon(w, w.look, W, H, inkScale * res, lightBoard);
       const target = samples ? multisampleTarget(W, H, samples) : output;
       renderer.setRenderTarget(target);
       if (compileOnly) return compileWorld(w, camera);

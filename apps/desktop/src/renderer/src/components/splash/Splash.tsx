@@ -51,7 +51,7 @@ export function Splash({ recent, onOpenFolder, onOpenRecent }: SplashProps) {
     <div className="splash">
       <div className="splash__drag" />
       <div className="splash__card" role="dialog" aria-label="Askaboard">
-        <div className="splash__band" data-theme="dark" ref={bandRef}>
+        <div className="splash__band" ref={bandRef}>
           <canvas className="splash__art" ref={canvasRef} />
           <div className="splash__name" style={at(0)}>
             Askaboard

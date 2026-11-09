@@ -3,7 +3,7 @@ import { InkGrid, TileCache, tileLevel, type TileContext } from './ink-tiles'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackMatrix, type PlaybackTip } from './playback'
 import { isMarker, LIGHT_FILL_ALPHA, paintedBounds, shapeLook } from './shapes'
 import type { Camera, InkNode, PaintedNode, Point, Region, ShapeNode } from './types'
-import { highlighterPaint, isBoardLight } from '../lib/board-light'
+import { boardColor, isBoardLight } from '../lib/board-light'
 
 type StrokeItem = InkNode
 
@@ -237,7 +237,8 @@ function drawShape(context: InkContext, node: ShapeNode, minWidth: number, alpha
   if (look.fill) {
     look.fillPath ??= polygonPath(look.fill)
     context.globalAlpha = (node.fill === 'light' ? LIGHT_FILL_ALPHA : 1) * Math.min(1, alpha)
-    context.fillStyle = color ?? node.color
+    // A light fill is translucent, like a highlighter: it keeps its own hue on the light board.
+    context.fillStyle = boardColor(color ?? node.color, node.fill === 'light' ? 'tint' : 'graphic')
     context.fill(look.fillPath)
     context.globalAlpha = 1
   }
@@ -259,7 +260,8 @@ function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha
   const points = stroke.points
   if (!points.length || alpha <= 0) return
   const highlighter = stroke.tool === 'highlighter'
-  const color = highlighter ? highlighterPaint(stroke.color) : stroke.color
+  // The one place a stroke's colour reaches the ink canvas: the light board's colour for it (lib/board-light.ts).
+  const color = boardColor(stroke.color, highlighter ? 'tint' : 'graphic')
   context.strokeStyle = color
   context.fillStyle = color
   context.globalAlpha = (highlighter ? HIGHLIGHTER_ALPHA : 1) * Math.min(1, alpha)
@@ -323,8 +325,9 @@ function glowStroke(context: CanvasRenderingContext2D, stroke: InkNode, offset: 
   context.translate(offset[0], offset[1])
   const maxPressure = Math.max(...points.map((point) => point[2]))
   const inkWidth = stroke.width * (stroke.tool === 'highlighter' ? 1 : pressureWidth(maxPressure))
-  context.strokeStyle = SELECTION_GLOW
-  context.fillStyle = SELECTION_GLOW
+  const glow = boardColor(SELECTION_GLOW, 'graphic')
+  context.strokeStyle = glow
+  context.fillStyle = glow
   context.globalAlpha = 0.45
   context.lineWidth = inkWidth + 7 / zoom
   context.beginPath()
@@ -378,8 +381,9 @@ function drawPointer(context: CanvasRenderingContext2D, point: Point, color: str
 
 function drawTips(context: CanvasRenderingContext2D, tips: readonly PlaybackTip[], zoom: number): void {
   for (const tip of tips) {
-    if (tip.kind === 'pointer') drawPointer(context, tip.point, tip.color, tip.size, zoom, tip.alpha ?? 1)
-    else drawTip(context, tip.point, tip.color, tip.size, zoom)
+    const color = boardColor(tip.color, 'graphic')
+    if (tip.kind === 'pointer') drawPointer(context, tip.point, color, tip.size, zoom, tip.alpha ?? 1)
+    else drawTip(context, tip.point, color, tip.size, zoom)
   }
 }
 
@@ -696,7 +700,7 @@ export class InkLayers {
     if (transientHighlighter) positions.push(this.highlighters)
     const needed = runsOf(positions)
     const dpr = window.devicePixelRatio || 1
-    // A highlighter paints another colour on the light board (highlighterPaint): a theme change draws every stroke again.
+    // Ink paints other colours on the light board (boardColor): a theme change draws every stroke again.
     const light = isBoardLight()
     if (light !== this.light) {
       this.light = light
@@ -896,7 +900,7 @@ export class ActiveInk {
     const points = stroke.points
     const uniform = highlighter || this.stillUniform(stroke)
     const dpr = window.devicePixelRatio || 1
-    const color = highlighter ? highlighterPaint(stroke.color) : stroke.color
+    const color = boardColor(stroke.color, highlighter ? 'tint' : 'graphic')
     const key = `${stroke.id},${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom},${uniform},${color}`
     let context: CanvasRenderingContext2D | null
     let last: CanvasRenderingContext2D | null

@@ -237,8 +237,14 @@ export const VIEW = String.raw`
     if (py < ot) ot = py;
     if (py > ob) ob = py;
   };
+  /**
+   * The contact shadow's footprint (ground.ts) takes the same bounds in world space, in the same walk: groundOn while the walk measures it,
+   * groundHere while the object now is part of it.
+   */
+  let groundOn = false, groundHere = false;
   /** A point in world space. */
   const worldPoint = (x, y, z) => {
+    if (groundHere) footPoint(x, y, z);
     const e = tools.view.elements;
     point(e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]);
   };
@@ -275,6 +281,7 @@ export const VIEW = String.raw`
   };
   /** A box under matrix m, to world space. r: the radius of the same thing around centre c, when it has one. */
   const placeBox = (m, b, r, c) => {
+    if (groundHere) footBox(m.elements, b);
     const t = tools, e = t.toCamera.multiplyMatrices(t.view, m).elements;
     startObject();
     corners(e, b);
@@ -359,8 +366,14 @@ export const VIEW = String.raw`
     placeBox(o.matrixWorld, b, d || grow ? 0 : s.radius, s);
   };
 
+  /** A reach that the world's code set (world.reach()). */
+  const fixReach = (w) => {
+    const n = w.reachSet;
+    w.reach = typeof n === 'number' ? { l: -n, t: -n, r: n, b: n, full: false } : { l: 0, t: 0, r: 0, b: 0, full: true };
+  };
   const walkReach = (w, o) => {
     if (!o.visible || o === w.stage) return;
+    if (groundOn) groundHere = groundShows(w, o);
     boundObject(o);
     const list = o.children;
     for (let i = 0; i < list.length; i++) walkReach(w, list[i]);
@@ -387,12 +400,9 @@ export const VIEW = String.raw`
    * morphed parts too. Only vertices moved in a shader pass it: world.reach() is for those.
    */
   const measureReach = (w) => {
-    if (typeof w.reachSet === 'number') {
-      const n = w.reachSet;
-      w.reach = { l: -n, t: -n, r: n, b: n, full: false };
-      return;
-    }
-    if (w.reachSet === 'full') { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
+    // On the light board the same walk also gives the footprint of the contact shadow (ground.ts), also when the world sets its reach.
+    const ground = beginFootprint(w), fixed = typeof w.reachSet === 'number' || w.reachSet === 'full';
+    if (fixed && !ground) { fixReach(w); return; }
     worldMatrices(w);
     if (!w.floorPlaced) placeFloor(w);
     nominalCamera(w);
@@ -403,8 +413,17 @@ export const VIEW = String.raw`
     simple = P[4] === 0 && P[1] === 0 && P[0] > 0 && P[5] > 0 && (perspective ? P[11] === -1 && P[3] === 0 && P[7] === 0 : P[11] === 0 && P[3] === 0 && P[7] === 0 && P[15] === 1);
     wl = wt = Infinity; wr = wb = -Infinity; open = false; room2 = 0;
     const list = w.scene.children;
+    groundOn = ground;
     for (let i = 0; i < list.length; i++) if (list[i] !== c) walkReach(w, list[i]);
+    // What the camera carries moves with the view: it casts no shadow.
+    groundOn = groundHere = false;
     if (c.parent === w.scene) walkReach(w, c);
+    if (ground) {
+      placeGround(w);
+      if (fixed) { fixReach(w); return; }
+      // The contact shadow lies in the stage, and no crop may cut it.
+      if (w.ground.placed) boundObject(w.ground.plane);
+    }
     w.pointRoom = room2;
     if (open) { w.reach = { l: 0, t: 0, r: 0, b: 0, full: true }; return; }
     if (!(wr >= wl)) { w.reach = null; return; }

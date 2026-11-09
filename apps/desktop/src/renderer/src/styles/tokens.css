@@ -1,8 +1,8 @@
 /*
  * Design tokens for Askaboard. Two colour sets: :root is the dark set (the default, and always the snapshot window's,
  * so agents see the dark board), and :root[data-theme="light"] below overrides only the colours of the app chrome.
- * A part with data-theme="dark" gets the whole dark set in the light theme too: the splash's art band (U20) and the
- * board material layers (board/board.css), which the light board's colour map then flips once.
+ * A part with data-theme="dark" gets the whole dark set in the light theme too (the splash band reads its dark
+ * tokens that way; its light palette is in components/splash/artworks.ts). Board colours: lib/board-light.ts.
  * lib/theme.ts sets data-theme from Settings > General > Appearance (main/settings.ts). The --snapshot-*, --ink-* and
  * --splash-* colours have one value only.
  * Every colour, size, radius and shadow in the app comes from this file.

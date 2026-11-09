@@ -1,5 +1,6 @@
 import { OWN_ROTATION } from './rotation'
 import type { BoardNode, Point } from './types'
+import { boardColor, boardMarkup, colorRole, isBoardLight, lightValue } from '../lib/board-light'
 
 /**
  * Live-scene playback on the board: how a node looks at this moment, while a
@@ -293,7 +294,8 @@ export function applyElementOverride(element: HTMLElement, override: NodeOverrid
   const recolored = first || last.color !== override.color
   const reshaped = first || last.html !== override.html || last.d !== override.d || last.strokeWidth !== override.strokeWidth
   // Changing text makes the node's own colour transparent: a new colour or new content sets it again.
-  if (recolored || reshaped) element.style.color = override.color ?? saved.color
+  // A scene's colour is a stored (dark-board) colour: on the light board it goes through lib/board-light.ts; the saved one is already shown.
+  if (recolored || reshaped) element.style.color = override.color !== undefined ? boardColor(override.color, 'text') : saved.color
   if (first || !sameStyle(last.style, override.style)) applyStyleOverride(element, saved, override.style)
   if (reshaped || recolored) applyContentOverride(element, saved, override)
   const svg = element.dataset.kind === 'svg'
@@ -326,7 +328,8 @@ function applyStyleOverride(element: HTMLElement, saved: Saved, style: Record<st
   if (style) {
     for (const [key, value] of Object.entries(style)) {
       if (!(key in before)) before[key] = element.style.getPropertyValue(kebab(key))
-      element.style.setProperty(kebab(key), value)
+      const role = colorRole(key)
+      element.style.setProperty(kebab(key), role && isBoardLight() ? lightValue(value, role) : value)
     }
   }
   saved.styles = Object.keys(before).length ? before : null
@@ -350,10 +353,10 @@ function applyContentOverride(element: HTMLElement, saved: Saved, override: Node
       element.dataset.liveText = '1'
     }
     // The node's own words go transparent; the overlay shows the words of now in the node's colour.
-    overlay.style.color = override.color ?? overlay.dataset.color ?? ''
+    overlay.style.color = override.color !== undefined ? boardColor(override.color, 'text') : (overlay.dataset.color ?? '')
     element.style.color = 'transparent'
     if (overlay.dataset.html !== override.html) {
-      overlay.innerHTML = override.html
+      overlay.innerHTML = boardMarkup(override.html)
       overlay.dataset.html = override.html
     }
     return

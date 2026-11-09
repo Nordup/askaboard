@@ -35,7 +35,7 @@
   z-index: 0;
   transform-origin: 0 0;
   pointer-events: none;
-  /* Only canonical --ls-* tokens inside the content layer: the light map flips them (lib/board-light.ts). App tokens change with the theme. */
+  /* The --ls-* tokens: on the light board lib/board-light.ts sets their light values here (installLightTokens). */
   color: var(--ls-text);
   font-family: var(--ls-hand);
   font-size: 16px;
@@ -83,6 +83,14 @@
 
 img.node-image {
   display: block;
+}
+
+/*
+ * An SVG file image is board material written for the dark board, and its colours cannot be recoloured cheaply.
+ * On the light board it gets the old lightness map (invert, keep hue). A raster image is never changed.
+ */
+:root[data-theme='light'] .board__content img.node-image[data-svg-file] {
+  filter: invert(1) hue-rotate(180deg) brightness(1.056);
 }
 
 .node-image--missing {
