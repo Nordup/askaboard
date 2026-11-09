@@ -22,6 +22,7 @@ import { tickOf, timeOfTick, type LiveTimeline } from '../live-pixels/clock'
 import type { LiveStillRequest } from '../live-pixels/stills'
 import { nodeSig as contentSig, stepAt, stepLines, type SceneSettle, type SceneStory, type StoryItem, type StoryRevert } from '@shared/scene-story'
 import { clearRestored, forgetRestored, restoredScene, setFailed, setRestored, type RestoredScene } from './rebuild'
+import { BOARD_DARK_BG } from '../lib/board-light'
 
 /**
  * The renderer half of the scene tools. The main process runs the program in
@@ -1380,7 +1381,7 @@ export async function sceneFrames(ctx: RunSceneContext, args: Record<string, unk
     frames: evaluated.map(({ moment, frame }, i) => ({ t: r3(moment.t), label: moment.label, inks: frame.inks, overrides: [...frame.overrides], tips: frame.tips.filter((tip) => tip.kind === 'pointer'), ...marks[i] })),
     live: liveItemsOf(play, evaluated, nodes, s, region),
     rect: region,
-    background: getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim() || '#161618'
+    background: BOARD_DARK_BG
   }
 }
 

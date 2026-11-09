@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { app } from 'electron'
-import { IPC, type InterfaceSizeSetting, type SettingsChange, type SettingsSnapshot } from '@shared/space-api'
+import { app, nativeTheme } from 'electron'
+import { IPC, type AppearanceSetting, type InterfaceSizeSetting, type SettingsChange, type SettingsSnapshot } from '@shared/space-api'
 import { INTERFACE_SIZES, stepSize } from './interface-size'
 import { LOCAL_VOICES, LOCAL_VOICE_DOWNLOAD_MB, installLocalVoice, localVoiceState, onLocalVoiceState, removeLocalVoice } from './kokoro'
 import * as store from './state'
@@ -10,7 +10,7 @@ import { PACES, VOICES, type PaceName } from './voice-choices'
 import { removeVoiceKey, saveVoiceKey, voiceKeySaved } from './voice-key'
 
 /**
- * The one owner of the user settings (decision U12): General (Interface Size, Show performance) and Voice (Read lines
+ * The one owner of the user settings (decision U12): General (Interface Size, Appearance, Show performance) and Voice (Read lines
  * aloud, the voice model, voice, pace, the Gemini key). It reads and writes them (state.json through state.ts), builds
  * the one SettingsSnapshot, and is the only path for a change: the Settings dialog (setSettings) and the View menu
  * (menu.ts calls changeSettings) go through changeSettings. After a change the menu is built again from the snapshot
@@ -31,6 +31,17 @@ export interface SettingsHooks {
   applyInterfaceSize(): void
   /** The factor of 'auto' for the main window's display. */
   automaticSize(): number
+}
+
+/**
+ * Dev and check hook: SPACE_THEME=light|dark wins over the Appearance setting. Main sets nativeTheme.themeSource, so
+ * prefers-color-scheme in the renderer, the window's background colour (index.ts) and data-theme (lib/theme.ts) follow.
+ */
+const themeOverride: AppearanceSetting | null = process.env.SPACE_THEME === 'light' || process.env.SPACE_THEME === 'dark' ? process.env.SPACE_THEME : null
+
+/** The app's colours follow Appearance (or SPACE_THEME). nativeTheme emits 'updated' when the result changes. */
+function applyAppearance(): void {
+  nativeTheme.themeSource = themeOverride ?? store.getAppearance()
 }
 
 let hooks: SettingsHooks | null = null
@@ -56,6 +67,7 @@ export function settingsSnapshot(): SettingsSnapshot {
       interfaceSize: store.getInterfaceSize(),
       interfaceSizes: [...INTERFACE_SIZES],
       automaticSize: hooks?.automaticSize() ?? 1,
+      appearance: store.getAppearance(),
       showPerformance: store.getShowPerformance()
     },
     voice: {
@@ -84,12 +96,17 @@ export function settingsChanged(): void {
   push()
 }
 
+const isAppearance = (value: unknown): value is AppearanceSetting => value === 'system' || value === 'light' || value === 'dark'
 const isInterfaceSize = (value: unknown): value is InterfaceSizeSetting => value === 'auto' || (INTERFACE_SIZES as readonly unknown[]).includes(value)
 
 /** The one change path for every setting, from the dialog and from the menu. Values that are not valid are left out. */
 export function changeSettings(change: SettingsChange): void {
   const sizeBefore = store.getInterfaceSize()
   if (isInterfaceSize(change.interfaceSize) && change.interfaceSize !== sizeBefore) store.setInterfaceSize(change.interfaceSize)
+  if (isAppearance(change.appearance) && change.appearance !== store.getAppearance()) {
+    store.setAppearance(change.appearance)
+    applyAppearance()
+  }
   if (typeof change.showPerformance === 'boolean' && change.showPerformance !== store.getShowPerformance()) store.setShowPerformance(change.showPerformance)
   if (typeof change.readLines === 'boolean' && change.readLines !== store.readLinesOn()) store.setReadLines(change.readLines)
   if (change.model === 'cloud') store.setVoiceModel('cloud')
@@ -117,6 +134,7 @@ async function refreshKeySaved(): Promise<void> {
 
 export function registerSettings(given: SettingsHooks): void {
   hooks = given
+  applyAppearance()
   void refreshKeySaved().then(push)
   onLocalVoiceState(push)
   const { handle } = given

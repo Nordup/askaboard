@@ -1,8 +1,14 @@
 /*
- * Design tokens for Askaboard. Dark only.
+ * Design tokens for Askaboard. Two colour sets: :root is the dark set (the default, and always the snapshot window's,
+ * so agents see the dark board), and :root[data-theme="light"] below overrides only the colours of the app chrome.
+ * A part with data-theme="dark" gets the whole dark set in the light theme too: the splash's art band (U20) and the
+ * board material layers (board/board.css), which the light board's colour map then flips once.
+ * lib/theme.ts sets data-theme from Settings > General > Appearance (main/settings.ts). The --snapshot-*, --ink-* and
+ * --splash-* colours have one value only.
  * Every colour, size, radius and shadow in the app comes from this file.
  */
-:root {
+:root,
+[data-theme='dark'] {
   color-scheme: dark;
 
   /* Surfaces, from back to front */
@@ -53,6 +59,9 @@
   /* A playing scene's dot (the scene pill): the accent with a soft ring */
   --status-play: var(--accent);
   --status-play-ring: var(--accent-soft);
+  /* Error and warning text, and the error dot, in the app chrome */
+  --status-error: var(--ink-pink);
+  --text-warn: var(--ink-orange);
 
   /* Canvas tools: selection, lasso, eraser */
   --selection-fill: rgba(110, 139, 255, 0.05);
@@ -282,6 +291,9 @@
   --switch-height-menu: 14px;
   --switch-knob-menu: 10px;
   --switch-inset: 2px; /* the knob's inset from the track's edge */
+  --switch-track: var(--bg-active); /* off; on, the track is --accent */
+  --switch-knob-off: var(--text-secondary);
+  --switch-knob-on: var(--text-primary);
 
   /* Settings spacing (U15): the rules every Settings section uses, named for their role, on the 4 px scale */
   --settings-pane-pad-y: var(--space-6); /* the pane's top and bottom, and the section list's */
@@ -311,6 +323,71 @@
   --scrollbar-size: 6px; /* the thumb's width, and the gutter a .scroll-area takes out of its right padding */
   --scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+}
+
+/* The light set: only colours. The board paper --bg-canvas is the exact image of
+   the dark #161618 under the board's colour map (board/content.css). */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-app: #efeff0;
+  --bg-sidebar: #efeff0;
+  --bg-canvas: #f6f6f8;
+  --bg-elevated: #ffffff;
+  --bg-elevated-2: #f7f7f8;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.07);
+
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --canvas-dot: rgba(0, 0, 0, 0.1);
+  --canvas-dot-solid: #000000;
+  --preview-checker: #ececee;
+
+  --text-primary: #1b1b1f;
+  --text-secondary: #5f5f68;
+  --text-tertiary: #8e8e96;
+  --text-on-accent: #ffffff;
+
+  --accent: #4a63e8;
+  --accent-hover: #3d55d6;
+  --accent-soft: rgba(74, 99, 232, 0.1);
+  --accent-ring: rgba(74, 99, 232, 0.4);
+  --accent-tile-from: rgba(74, 99, 232, 0.18);
+  --accent-tile-to: rgba(74, 99, 232, 0.06);
+  --accent-tile-border: rgba(74, 99, 232, 0.3);
+
+  --status-idle: #a1a1aa;
+  --status-live: #16a34a;
+  --status-warn: #d97706;
+  --status-bad: #dc2626;
+  --status-idle-ring: rgba(161, 161, 170, 0.22);
+  --status-live-ring: rgba(22, 163, 74, 0.18);
+  --status-live-pulse: rgba(22, 163, 74, 0.3);
+  --status-error-ring: rgba(220, 38, 38, 0.18);
+  --status-warn-ring: rgba(217, 119, 6, 0.18);
+  --status-bad-ring: rgba(220, 38, 38, 0.18);
+  --status-error: #d6335a; /* the dark set's --ink-pink is too light on white */
+  --text-warn: #c2570c; /* the dark set's --ink-orange is too light on white */
+
+  --selection-fill: rgba(74, 99, 232, 0.06);
+  --lasso-fill: rgba(74, 99, 232, 0.08);
+  --eraser-ring: rgba(0, 0, 0, 0.55);
+  --eraser-halo: rgba(255, 255, 255, 0.6);
+
+  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 10px 30px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.07);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 24px 70px rgba(0, 0, 0, 0.14), 0 4px 14px rgba(0, 0, 0, 0.08);
+
+  --bg-glass: rgba(255, 255, 255, 0.9);
+  --bg-glass-2: rgba(247, 247, 248, 0.9);
+  --backdrop: rgba(0, 0, 0, 0.25);
+  --bg-field: rgba(0, 0, 0, 0.05);
+  --bg-field-hover: rgba(0, 0, 0, 0.08);
+  --switch-track: rgba(0, 0, 0, 0.14);
+  --switch-knob-off: #ffffff;
+  --switch-knob-on: #ffffff;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
 }
 
 /* The hand as a font: scripts/lab/make-hand-webfont.mjs makes both files. main.tsx loads both before the first render. */

@@ -29,6 +29,7 @@ import { measureSceneTexts } from '../live/measure'
 import { sceneHost } from '../live/host'
 import { sceneOf, viewOf } from './placement'
 import { boardRead, changeReport, intervalOf, itemRead, shotPart, type ItemAs, type PartArg, type ReadContext } from './reads'
+import { BOARD_DARK_BG } from '../lib/board-light'
 
 /**
  * Answers the MCP server's requests (see AgentMethods in space-api.ts).
@@ -92,9 +93,9 @@ function groupsOf(path: string, board: BoardHandle): InkGroup[] {
   return trackerFor(path).compute(board.liveState())
 }
 
+/** Agents always see the dark board, in both themes (lib/board-light.ts). */
 function canvasBackground(): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim()
-  return value || '#161618'
+  return BOARD_DARK_BG
 }
 
 function requireBoard(context: AgentContext): { path: string; board: BoardHandle; log: ChangeLog | null } {

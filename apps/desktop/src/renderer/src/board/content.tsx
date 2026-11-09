@@ -277,6 +277,8 @@ const NodeView = memo(function NodeView({ node, placement, editing, ctx }: NodeV
         <img
           {...common}
           className="node node-image"
+          // A raster image shows its true colours on the light board (board.css); an SVG file is board material.
+          data-raster={/\.svg$|^data:image\/svg/i.test(node.src.split(/[?#]/)[0]) ? undefined : ''}
           style={style}
           src={url}
           alt=""

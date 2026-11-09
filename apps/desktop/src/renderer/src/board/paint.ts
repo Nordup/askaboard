@@ -3,6 +3,7 @@ import { InkGrid, TileCache, tileLevel, type TileContext } from './ink-tiles'
 import { revealPoints, type NodeOverride, type PlaybackFrame, type PlaybackMatrix, type PlaybackTip } from './playback'
 import { isMarker, LIGHT_FILL_ALPHA, paintedBounds, shapeLook } from './shapes'
 import type { Camera, InkNode, PaintedNode, Point, Region, ShapeNode } from './types'
+import { highlighterPaint, isBoardLight } from '../lib/board-light'
 
 type StrokeItem = InkNode
 
@@ -257,9 +258,10 @@ function polygonPath(polygon: readonly Point[]): Path2D {
 function drawStroke(context: InkContext, stroke: StrokeItem, minWidth = 0, alpha = 1, whole?: StrokeItem['points']): void {
   const points = stroke.points
   if (!points.length || alpha <= 0) return
-  context.strokeStyle = stroke.color
-  context.fillStyle = stroke.color
   const highlighter = stroke.tool === 'highlighter'
+  const color = highlighter ? highlighterPaint(stroke.color) : stroke.color
+  context.strokeStyle = color
+  context.fillStyle = color
   context.globalAlpha = (highlighter ? HIGHLIGHTER_ALPHA : 1) * Math.min(1, alpha)
 
   if (points.length === 1) {
@@ -487,6 +489,8 @@ export class InkLayers {
   private zoomedAt = -Infinity
   /** Tiles still wait for a later paint. */
   private waiting = false
+  /** The theme of the last paint (isBoardLight). */
+  private light = false
   /** pictures[i]: the strokes [lo, hi) after runs[i], up to the next run or the end. */
   private pictures: Array<{ canvas: HTMLCanvasElement; lo: number; hi: number }> = []
   private liveUsed = false
@@ -692,7 +696,13 @@ export class InkLayers {
     if (transientHighlighter) positions.push(this.highlighters)
     const needed = runsOf(positions)
     const dpr = window.devicePixelRatio || 1
-    const view = `${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom}`
+    // A highlighter paints another colour on the light board (highlighterPaint): a theme change draws every stroke again.
+    const light = isBoardLight()
+    if (light !== this.light) {
+      this.light = light
+      this.tiles.clear()
+    }
+    const view = `${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom},${light}`
     let full = reordered
     if (view !== this.view) rebuild = full = true
     else if (!needed.length) rebuild ||= this.runs.length > 0
@@ -886,7 +896,8 @@ export class ActiveInk {
     const points = stroke.points
     const uniform = highlighter || this.stillUniform(stroke)
     const dpr = window.devicePixelRatio || 1
-    const key = `${stroke.id},${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom},${uniform}`
+    const color = highlighter ? highlighterPaint(stroke.color) : stroke.color
+    const key = `${stroke.id},${viewport[0]},${viewport[1]},${dpr},${camera.center[0]},${camera.center[1]},${camera.zoom},${uniform},${color}`
     let context: CanvasRenderingContext2D | null
     let last: CanvasRenderingContext2D | null
     if (key !== this.key) {
@@ -902,9 +913,9 @@ export class ActiveInk {
       last = tail.getContext('2d')
     }
     if (!context || !last) return
-    context.strokeStyle = stroke.color
-    last.strokeStyle = stroke.color
-    last.fillStyle = stroke.color
+    context.strokeStyle = color
+    last.strokeStyle = color
+    last.fillStyle = color
     // The pieces that the newest sample ended.
     const end = points.length - 1
     const nib = (p: number): number => stroke.width * (highlighter ? 1 : pressureWidth(p))

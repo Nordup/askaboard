@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { statSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type BoardSaveInfo, type Camera, type FailedSave, type MenuCommand, type Snapshot, type VoiceFailure } from '@shared/space-api'
 import type { WorldTune } from '@shared/world-tune'
 import { FS_CAUSES, type FsCause } from '@shared/fs-causes'
@@ -29,8 +29,9 @@ import { hasVoiceKey } from './voice'
 import { resourcePath } from './resources'
 import { refusePermissions } from './permissions'
 
-/** The colour of the window before the renderer paints. Keep it equal to --bg-app. */
-const BACKGROUND = '#111113'
+/** The colour of the window before the renderer paints, per theme (settings.ts sets nativeTheme). Keep it equal to --bg-app. */
+const BACKGROUND = { dark: '#111113', light: '#efeff0' } as const
+const windowBackground = (): string => (nativeTheme.shouldUseDarkColors ? BACKGROUND.dark : BACKGROUND.light)
 /** A renderer that does not answer a close in this time is not responding: the window closes. */
 const FLUSH_ANSWER_MS = 2000
 /** The time a renderer that answered has for its saves. */
@@ -642,7 +643,7 @@ function createWindow(): BrowserWindow {
     minHeight: MIN_PAGE[1],
     show: false,
     title: 'Askaboard',
-    backgroundColor: BACKGROUND,
+    backgroundColor: windowBackground(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     // Centred on the 44 CSS px title row at the window's Interface Size (applyInterfaceSize moves them when it changes).
     trafficLightPosition: windowButtonPosition(interfaceFactor(store.getInterfaceSize(), null)),
@@ -663,6 +664,12 @@ function createWindow(): BrowserWindow {
   })
 
   win.once('ready-to-show', () => (noFocus ? win.showInactive() : win.show()))
+  // Appearance (or the computer's setting) changed: the window's own colour follows, so a resize never shows the old one.
+  const themeChanged = (): void => {
+    if (!win.isDestroyed()) win.setBackgroundColor(windowBackground())
+  }
+  nativeTheme.on('updated', themeChanged)
+  win.on('closed', () => nativeTheme.off('updated', themeChanged))
   // The sidebar button moves left when the window buttons go (full screen on macOS).
   const sendFullScreen = (on: boolean): void => {
     if (!win.isDestroyed()) win.webContents.send(IPC.fullScreen, on)

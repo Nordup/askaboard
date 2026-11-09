@@ -35,7 +35,8 @@
   z-index: 0;
   transform-origin: 0 0;
   pointer-events: none;
-  color: var(--text-primary, #ececef);
+  /* Only canonical --ls-* tokens inside the content layer: the light map flips them (lib/board-light.ts). App tokens change with the theme. */
+  color: var(--ls-text);
   font-family: var(--ls-hand);
   font-size: 16px;
   line-height: 1.4;
@@ -114,7 +115,7 @@ img.node-image {
   text-transform: inherit;
   white-space: pre-wrap;
   field-sizing: content;
-  caret-color: var(--accent, #6e8bff);
+  caret-color: var(--ls-accent);
   pointer-events: auto;
   user-select: text;
   -webkit-user-select: text;

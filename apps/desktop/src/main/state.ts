@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
-import type { Camera, RecentFolder } from '@shared/space-api'
+import type { AppearanceSetting, Camera, RecentFolder } from '@shared/space-api'
 import { LOCAL_VOICES } from './kokoro'
 import { PACES, VOICES, type PaceName } from './voice-choices'
 import { INTERFACE_SIZES, type InterfaceSize } from './interface-size'
@@ -42,6 +42,8 @@ interface PersistedState {
   localVoice: string
   /** View > Interface Size: 'auto' or one of INTERFACE_SIZES. Per machine, as this file is. */
   interfaceSize: InterfaceSize
+  /** Settings > General > Appearance. */
+  appearance: AppearanceSetting
 }
 
 /**
@@ -62,7 +64,7 @@ const MAX_LOOKS = 200
 
 const statePath = (): string => join(app.getPath('userData'), 'state.json')
 
-let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], trustedFolders: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '', interfaceSize: 'auto' }
+let state: PersistedState = { lastFolder: null, recent: [], cameras: {}, lastBoards: {}, setupDontAsk: [], trustedFolders: [], agentLooks: {}, showPerformance: false, sidebarHidden: false, uncappedFrames: true, readLines: null, voice: '', pace: 'natural', voiceModel: 'cloud', localVoice: '', interfaceSize: 'auto', appearance: 'system' }
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export function loadState(): void {
@@ -86,7 +88,8 @@ export function loadState(): void {
       pace: raw.pace !== undefined && Object.hasOwn(PACES, raw.pace) ? raw.pace : 'natural',
       voiceModel: raw.voiceModel === 'local' ? 'local' : 'cloud',
       localVoice: LOCAL_VOICES.includes(raw.localVoice as string) ? (raw.localVoice as string) : LOCAL_VOICES[0],
-      interfaceSize: (INTERFACE_SIZES as readonly unknown[]).includes(raw.interfaceSize) ? (raw.interfaceSize as number) : 'auto'
+      interfaceSize: (INTERFACE_SIZES as readonly unknown[]).includes(raw.interfaceSize) ? (raw.interfaceSize as number) : 'auto',
+      appearance: raw.appearance === 'light' || raw.appearance === 'dark' ? raw.appearance : 'system'
     }
     // Write the seeded list now: a folder opened later must not join it at a second seed.
     if (!Array.isArray(raw.trustedFolders)) saveStateNow()
@@ -292,6 +295,15 @@ export function getInterfaceSize(): InterfaceSize {
 
 export function setInterfaceSize(value: InterfaceSize): void {
   state.interfaceSize = value
+  saveStateNow()
+}
+
+export function getAppearance(): AppearanceSetting {
+  return state.appearance
+}
+
+export function setAppearance(value: AppearanceSetting): void {
+  state.appearance = value
   saveStateNow()
 }
 

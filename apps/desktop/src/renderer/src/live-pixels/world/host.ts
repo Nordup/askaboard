@@ -101,7 +101,7 @@ function boardColors(): Record<string, string> {
     card: read('--ls-card'),
     card2: read('--ls-card-2'),
     border: read('--ls-border'),
-    bg: read('--bg-canvas')
+    bg: read('--ls-bg')
   }
   probe.remove()
   return colorCache

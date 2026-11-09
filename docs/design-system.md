@@ -6,8 +6,10 @@ also in [`../AGENTS.md`](../AGENTS.md) ("Askaboard UI").
 
 ## Principles
 
-1. **Dark only.** Calm near-black surfaces, thin hairlines, one blue accent.
-   The look is close to the Codex app and Claude Desktop.
+1. **Dark first, with a light theme (U22).** Calm near-black surfaces, thin
+   hairlines, one blue accent. The look is close to the Codex app and Claude
+   Desktop. The light theme has the same parts and changes only colours (see
+   "Light theme"). Design and check every change in both themes.
 2. **Quiet.** One primary action per view. Short labels. No explanations in
    the UI when a link or a second view can hold them. If a screen needs a
    paragraph, the design is wrong.
@@ -50,7 +52,8 @@ reference (every token, part and approved screen).
 
 All paths are under `apps/desktop/src/renderer/src/`.
 
-- **Tokens** (`styles/tokens.css`, one `:root`, dark only), in this order:
+- **Tokens** (`styles/tokens.css`: the dark set on `:root, [data-theme='dark']`,
+  then the light colours on `:root[data-theme='light']`), in this order:
   surfaces, lines, text, accent, status, canvas tools, snapshot marks, ink,
   type, spacing (4 px grid), radii, shadows, glass, layout sizes (sidebar,
   title row, board controls, style pill, toast, panels), motion, then the
@@ -246,6 +249,30 @@ All paths are under `apps/desktop/src/renderer/src/`.
   `--pill-flash` (the pill lights up once), `--reading-ease` (the reading
   view's scroll follows its target). Every fade and motion turns off
   under `prefers-reduced-motion`.
+
+## Light theme
+
+Decision U22. Settings > General > Appearance: System (default), Light, Dark.
+`<html data-theme="light" | "dark">` is set by `lib/theme.ts`.
+
+- **App chrome.** The light block in `tokens.css` overrides colours only.
+  A new colour token gets a value in both blocks. Check the light value on
+  white for contrast: text at least 4.5 : 1 (the accent is `#4a63e8`).
+- **A part that stays dark** carries `data-theme="dark"` (the splash's art
+  band). It gets the full dark set.
+- **The board.** Board material keeps the dark-board colours that it was
+  written with. In light, one colour map (`lib/board-light.ts`) runs over
+  the content layer and the ink layers. It flips lightness and keeps hue:
+  `#161618` becomes the paper `#f6f6f8`, and `#ececef` ink becomes
+  near-black. Do not write a second map. Use `mapColor()` when chrome must
+  show a board colour (the swatches).
+- **Inside the mapped layers,** use only `--ls-*` and other dark-board
+  values. An app token there is light already, and the map flips it back.
+- **Not mapped:** raster images (the inverse filter), 3D worlds, the app
+  overlays over the board (selection, handles, lasso, eraser ring: light
+  app tokens).
+- **Agents always see the dark board.** The snapshot window never gets
+  `data-theme`. Agent texts keep saying that the board is dark.
 
 ## The menu system
 

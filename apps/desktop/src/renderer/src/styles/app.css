@@ -497,7 +497,7 @@ button:focus-visible {
 }
 
 .status-dot--error {
-  background: var(--ink-pink);
+  background: var(--status-error);
   box-shadow: 0 0 0 var(--status-dot-ring) var(--status-error-ring);
 }
 
@@ -1634,7 +1634,7 @@ button:focus-visible {
 }
 
 .menu__item--danger {
-  color: var(--ink-pink);
+  color: var(--status-error);
 }
 
 .menu__item--quiet {
@@ -2173,7 +2173,7 @@ button:focus-visible {
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--bg-active);
+  background: var(--switch-track);
   cursor: pointer;
 }
 
@@ -2184,7 +2184,7 @@ button:focus-visible {
   width: var(--switch-knob);
   height: var(--switch-knob);
   border-radius: 50%;
-  background: var(--text-secondary);
+  background: var(--switch-knob-off);
   content: '';
 }
 
@@ -2194,7 +2194,7 @@ button:focus-visible {
 
 .menu__switch[aria-checked='true']::after {
   left: calc(var(--switch-width) - var(--switch-knob) - var(--switch-inset));
-  background: var(--text-primary);
+  background: var(--switch-knob-on);
 }
 
 .menu__line {
@@ -2214,12 +2214,12 @@ button:focus-visible {
 }
 
 .menu__line--warn {
-  color: var(--ink-orange);
+  color: var(--text-warn);
 }
 
 .menu__line--error {
   align-items: flex-start;
-  color: var(--ink-pink);
+  color: var(--status-error);
 }
 
 .menu__line--error svg {
@@ -2337,7 +2337,7 @@ button:focus-visible {
   gap: 5px;
   margin-left: var(--space-3);
   font-size: var(--text-xs);
-  color: var(--ink-pink);
+  color: var(--status-error);
 }
 
 .save-status:empty {
@@ -2584,7 +2584,7 @@ button:focus-visible {
 
 .toast svg {
   flex-shrink: 0;
-  color: var(--ink-pink);
+  color: var(--status-error);
 }
 
 
@@ -2651,7 +2651,7 @@ button:focus-visible {
 }
 
 .guide-override--warn {
-  color: var(--ink-orange);
+  color: var(--text-warn);
 }
 
 /* ---------- Set up for learning ---------- */

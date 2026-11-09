@@ -63,7 +63,10 @@ import {
   type Shown
 } from './scene'
 import type { BoardNode, Camera, ContentNode, InkNode, LayoutBox, Point, Region, TextNode, TurnedRegion } from './types'
+import { installBoardLight, useBoardLight } from '../lib/board-light'
 import './board.css'
+
+installBoardLight()
 
 /**
  * The board: one document of nodes. Content nodes (frames, text, svg,
@@ -409,14 +412,14 @@ const NO_INDEX = buildIndex([])
 function gridStyle(camera: Camera, viewport: Point): CSSProperties {
   let size = GRID_PITCH * camera.zoom
   while (size > 72) size /= 2
-  const alpha = 0.07 * Math.min(1, Math.max(0, (camera.zoom - 0.3) / 0.35))
+  const fade = Math.min(1, Math.max(0, (camera.zoom - 0.3) / 0.35))
   const origin = boardToScreen([0, 0], viewport, camera)
   const offset = (value: number): number => (((value - size / 2) % size) + size) % size
   return {
     '--grid-size': `${size}px`,
     '--grid-x': `${offset(origin[0])}px`,
     '--grid-y': `${offset(origin[1])}px`,
-    '--grid-alpha': alpha.toFixed(3)
+    '--grid-fade': fade.toFixed(3)
   } as CSSProperties
 }
 
@@ -943,6 +946,10 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
     },
     []
   )
+
+  // A highlighter paints another colour on the light board (lib/board-light.ts highlighterPaint): a theme change paints the ink again.
+  const light = useBoardLight()
+  useEffect(() => requestPaint({ committed: true, active: true }), [light, requestPaint])
 
   // The world surface of this board: it asks for paints and reads where each world stands now.
   useLayoutEffect(() => {
@@ -2950,14 +2957,20 @@ export function Board({ doc, history, initialCamera, tool, style, selectMode, lo
       onContextMenu={(event) => event.preventDefault()}
       aria-label="Board canvas"
     >
-      <ContentLayer index={contentIndex} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
-      {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
+      {/* Board material in two layers under the light map (lib/board-light.ts): the content, then the ink. The world surface between them shows its own colours.
+          data-theme="dark": inside them every app token keeps its dark value (tokens.css declares the dark set for [data-theme='dark'] too), which the map then flips once. */}
+      <div className="board__material board__material--content" data-theme="dark">
+        <ContentLayer index={contentIndex} editingId={editingId} ctx={contentCtx} rootRef={contentRootRef} />
+        {ghostIndex && <ContentLayer index={ghostIndex} editingId={null} ctx={ghostCtx} rootRef={ghostRootRef} />}
+      </div>
       <canvas className="board__world" aria-hidden="true" />
-      <canvas className="board__ink" ref={inkRef} />
-      <canvas className="board__ink board__ink--live" ref={liveInkRef} aria-hidden="true" />
-      <div className="board__pen" ref={penRef} aria-hidden="true">
-        <canvas className="board__active" ref={activeInkRef} />
-        <canvas className="board__active" ref={activeTailRef} />
+      <div className="board__material board__material--ink" data-theme="dark">
+        <canvas className="board__ink" ref={inkRef} />
+        <canvas className="board__ink board__ink--live" ref={liveInkRef} aria-hidden="true" />
+        <div className="board__pen" ref={penRef} aria-hidden="true">
+          <canvas className="board__active" ref={activeInkRef} />
+          <canvas className="board__active" ref={activeTailRef} />
+        </div>
       </div>
       {lassoPoints && lassoPoints.length > 1 && (
         <svg className="board__lasso" viewBox={`0 0 ${viewport[0]} ${viewport[1]}`} aria-hidden="true">

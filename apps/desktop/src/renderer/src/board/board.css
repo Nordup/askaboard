@@ -14,7 +14,7 @@
   inherits: false;
 }
 
-@property --grid-alpha {
+@property --grid-fade {
   syntax: '*';
   inherits: false;
 }
@@ -29,14 +29,50 @@
   user-select: none;
   -webkit-user-select: none;
   cursor: crosshair;
+  /* The dot alpha per theme; the camera fades it with --grid-fade when zoomed far out. */
+  --grid-dot-alpha: 0.07;
   background-color: var(--bg-canvas);
   background-image: radial-gradient(
     circle at center,
-    color-mix(in srgb, var(--canvas-dot-solid) calc(var(--grid-alpha, 0.07) * 100%), transparent) 1px,
+    color-mix(in srgb, var(--canvas-dot-solid) calc(var(--grid-dot-alpha) * var(--grid-fade, 1) * 100%), transparent) 1px,
     transparent 1.4px
   );
   background-size: var(--grid-size, 24px) var(--grid-size, 24px);
   background-position: var(--grid-x, 0) var(--grid-y, 0);
+}
+
+/*
+ * The light board (lib/board-light.ts owns the map). The board material keeps its stored dark-board colours;
+ * on the light theme one colour map runs over the two material layers. App overlays over the board
+ * (selection, handles, lasso, eraser ring) are outside them and use the light app tokens.
+ * Without a filter a material layer makes no stacking context: on the dark board its children paint as before.
+ */
+.board__material {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+:root[data-theme='light'] .board {
+  --grid-dot-alpha: 0.1;
+}
+
+:root[data-theme='light'] .board__material {
+  filter: var(--board-map);
+}
+
+/* The content under the world surface (z-index 1), the ink above it, as without the map. */
+:root[data-theme='light'] .board__material--content {
+  z-index: 0;
+}
+
+:root[data-theme='light'] .board__material--ink {
+  z-index: 1;
+}
+
+/* Raster images show their true colours: the inverse map undoes the layer's map. */
+:root[data-theme='light'] .board__material img[data-raster] {
+  filter: var(--board-unmap);
 }
 
 .board[data-tool='select'] {

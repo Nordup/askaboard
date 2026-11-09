@@ -170,6 +170,9 @@ export type LocalVoiceStatus = { state: 'absent' } | { state: 'installing'; prog
 /** Interface Size: 'auto' (the automatic size for the window's display) or a page zoom factor. */
 export type InterfaceSizeSetting = 'auto' | number
 
+/** Appearance: the app's colours. 'system' follows the computer's light or dark setting. */
+export type AppearanceSetting = 'system' | 'light' | 'dark'
+
 /** An Interface Size as View > Interface Size and the Settings dialog name it: "Automatic (120%)", "80%". */
 export function interfaceSizeLabel(size: InterfaceSizeSetting, automaticSize: number): string {
   const percent = (factor: number): string => `${Math.round(factor * 100)}%`
@@ -191,6 +194,8 @@ export interface SettingsSnapshot {
     automaticSize: number
     /** View > Show performance: the performance item in the top bar. */
     showPerformance: boolean
+    /** Appearance: light, dark, or the computer's setting (main sets nativeTheme.themeSource from it). */
+    appearance: AppearanceSetting
   }
   voice: {
     /** View > Read Lines Aloud: with it off, the board plays no voice. */
@@ -220,6 +225,7 @@ export interface SettingsSnapshot {
 /** A change of settings: the fields it sets. voice is the voice of the chosen model. Main checks every value. */
 export interface SettingsChange {
   interfaceSize?: InterfaceSizeSetting
+  appearance?: AppearanceSetting
   showPerformance?: boolean
   readLines?: boolean
   model?: 'cloud' | 'local'
