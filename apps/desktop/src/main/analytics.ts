@@ -111,7 +111,6 @@ async function sendBatch(events: BufferedEvent[]): Promise<void> {
   if (!id.distinctId) return
   const common = {
     ...(id.installId === null ? {} : { installId: id.installId }),
-    $process_person_profile: false,
     platform: process.platform,
     arch: process.arch,
     osVersion: process.getSystemVersion(),
