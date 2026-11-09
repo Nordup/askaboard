@@ -14,8 +14,9 @@ Ask your AI agent a question, and it answers on a board. It draws, animates
 and talks you through the idea, step by step. You write and draw on the same
 board. The agent sees your work, checks it and builds on it.
 
-Askaboard works with the agent you already use: Claude Code, Claude Desktop,
-ChatGPT, Codex, Cursor or any MCP client. You bring your own subscription.
+Askaboard works with Claude Code, Claude Desktop, Codex in the ChatGPT
+desktop app or CLI, Cursor, and other local MCP clients. Use your own
+account with the agent you choose.
 The app has no AI of its own and no account.
 
 ## Get started
@@ -42,7 +43,7 @@ The app connects agents for you (step 3). To do it by hand:
 | Agent | Setup |
 | --- | --- |
 | Claude Code | `claude plugin marketplace add Nordup/askaboard-plugins`, then `claude plugin install askaboard@askaboard` |
-| ChatGPT and Codex | `codex plugin marketplace add Nordup/askaboard-plugins`, then `codex plugin add askaboard@askaboard` |
+| Codex (ChatGPT desktop app or CLI) | `codex plugin marketplace add Nordup/askaboard-plugins`, then `codex plugin add askaboard@askaboard` |
 | Claude Desktop (Chat tab) | Download [`askaboard.mcpb`](https://github.com/Nordup/askaboard-plugins/tree/main/claude-extensions/askaboard/dist) and double-click it |
 | Cursor | Add `Nordup/askaboard-plugins` as a plugin marketplace, then install **Askaboard** |
 | Any MCP client | Server URL `http://127.0.0.1:47821/mcp`, or the stdio command `~/.askaboard/bin/askaboard mcp` |
