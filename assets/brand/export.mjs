@@ -146,3 +146,49 @@ await save(join(web, 'favicon.ico'), await faviconIco(favicon))
 await save(join(root, 'apps/website/app/icon.svg'), favicon)
 await save(join(publicDir, 'askaboard-mark.svg'), mark + '\n')
 await save(join(publicDir, 'apple-touch-icon.png'), await png(touch, 180, { opaque: true }))
+
+// The macOS DMG window (electron-builder.yml, dmg.background): 540×380 pt, the board's dot grid,
+// an ink arrow from the app icon to Applications and "drag me over" in a hand font. Finder
+// cannot load fonts, so the words become outlines. The @2x copy is drawn at 1080×760, not scaled
+// up from the 1x one. dmg-builder pairs the @2x file into a HiDPI TIFF.
+const desktopRequire = createRequire(join(root, 'apps/desktop/package.json'))
+const opentype = desktopRequire('opentype.js')
+const wawoff2 = desktopRequire('wawoff2')
+// The note's font: 'hand' is the app's own Learning Hand Heavy, the hand agents write in on the
+// board; 'bradley' is the macOS font the approved mockup fell back to (macOS only, and its licence
+// may not cover a distributed image). Each is sized to the mockup's 100 pt width; a stroke in the
+// fill colour gives the mockup's heavier line.
+const dmgWordsFont = 'hand'
+const dmgWordsFonts = {
+  hand: { file: join(root, 'apps/desktop/src/renderer/src/styles/hand-heavy.woff2'), size: 14, letterSpacing: -0.05, stroke: 0.8 },
+  bradley: { file: '/System/Library/Fonts/Supplemental/Bradley Hand Bold.ttf', size: 18, letterSpacing: 0, stroke: 0.8 },
+}
+const { file: dmgFontFile, size: dmgWordsSize, letterSpacing, stroke: dmgWordsStroke } = dmgWordsFonts[dmgWordsFont]
+let dmgFontData = await readFile(dmgFontFile)
+if (dmgFontFile.endsWith('.woff2')) dmgFontData = Buffer.from(await wawoff2.decompress(dmgFontData))
+const hand = opentype.parse(dmgFontData.buffer.slice(dmgFontData.byteOffset, dmgFontData.byteOffset + dmgFontData.byteLength))
+const dmgWords = 'drag me over'
+const dmgWordsBox = hand.getPath(dmgWords, 0, 0, dmgWordsSize, { letterSpacing }).getBoundingBox()
+const dmgWordsX = 270 - (dmgWordsBox.x1 + dmgWordsBox.x2) / 2
+// opentype.js 2.0's toPathData prints some coordinates as NaN, so the path data is written here.
+const dmgWordsPath = hand.getPath(dmgWords, dmgWordsX, 140, dmgWordsSize, { letterSpacing }).commands.map(({ type, ...points }) =>
+  type + ['x1', 'y1', 'x2', 'y2', 'x', 'y'].filter((key) => key in points).map((key) => points[key].toFixed(2)).join(' ')).join('')
+// Finder draws the icon labels near-black over a picture, in dark mode too, so each label gets a
+// light tag. Centres and widths are measured from Finder's own window: label centre y 248.
+const dmgTagFill = '#8299ff'
+const dmgLabelTags = [[142, 106], [398, 94]].map(([x, width]) =>
+  `<rect x="${x - width / 2}" y="237" width="${width}" height="22" rx="6" fill="${dmgTagFill}"/>`).join('\n')
+const dmgBackground = svg(540, 380, `<defs><pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+<circle cx="12" cy="12" r="1.1" fill="#ffffff" fill-opacity="0.07"/></pattern></defs>
+<rect width="540" height="380" fill="${dark}"/>
+<rect width="540" height="380" fill="url(#dots)"/>
+<g fill="none" stroke="#6e8bff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+<path d="M222 176 C255 162 288 160 318 172"/>
+<path d="M304 158 L320 173 L301 185"/>
+</g>
+<path fill="#f5d76e" stroke="#f5d76e" stroke-width="${dmgWordsStroke}" stroke-linejoin="round" d="${dmgWordsPath}"/>
+${dmgLabelTags}`)
+const desktopBuild = join(root, 'apps/desktop/build')
+await save(join(desktopBuild, 'dmg-background.svg'), dmgBackground)
+await save(join(desktopBuild, 'dmg-background.png'), await png(dmgBackground, 540, { height: 380, opaque: true }))
+await save(join(desktopBuild, 'dmg-background@2x.png'), await png(dmgBackground.replace('width="540" height="380"', 'width="1080" height="760"'), 1080, { height: 760, density: 144, opaque: true }))

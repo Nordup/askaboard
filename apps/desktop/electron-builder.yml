@@ -67,5 +67,23 @@ dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
   # No auto-update, so no .blockmap next to the dmg.
   writeUpdateInfo: false
+  # The window title without the version and arch of the file name.
+  title: ${productName}
+  # The board's dot grid with an ink arrow and "drag me over" (assets/brand/export.mjs
+  # makes it). dmg-builder pairs dmg-background@2x.png with it for Retina screens.
+  background: build/dmg-background.png
+  iconSize: 112
+  window:
+    width: 540
+    height: 380
+  # Icon centres, in window points: on the two ends of the arrow in the background.
+  contents:
+    - x: 142
+      y: 174
+      type: file
+    - x: 398
+      y: 174
+      type: link
+      path: /Applications
 
 publish: null
