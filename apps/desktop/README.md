@@ -175,17 +175,18 @@ The events:
 
 | Event | Properties |
 | --- | --- |
-| `app.boot.heartbeat` (each start) | the number of recent folders, whether Read Lines Aloud is on, the voice source |
-| `folder.opened` | how it opened (launch, dialog, recent, menu), whether it was set up |
-| `board.opened` | whether it is new, whether you or the agent opened it |
-| `agent.connected` | the agent app (Claude Code, Codex, Cursor, Claude Desktop or other) and its version |
-| `mcp.tool.invoked` | the tool name, success, the duration, the agent app |
-| `scene.played` | how the playback ended, its length in seconds, whether it had a voice |
-| `voice.requested` | the source (our server, your key, the local voice or the cache), the result, the audio length, the request time |
-| `install.owner_observed` | a hashed account id (see below) |
+| `app_started` (each start) | `recent_folder_count`: the number of recent folders; `read_lines_on`: whether Read Lines Aloud is on; `voice_source`: the voice source |
+| `folder_opened` | `via`: how it opened (launch, dialog, recent, menu); `set_up`: whether it was set up |
+| `board_opened` | `created`: whether it is new; `by`: whether you or the agent opened it |
+| `agent_connected` | `client_name`: the agent app (Claude Code, Codex, Cursor, Claude Desktop or other); `client_version`: its version |
+| `tool_called` | `tool`: the tool name; `succeeded`; `duration_ms`; `client_name`: the agent app |
+| `scene_played` | `outcome`: how the playback ended; `seconds`: its length; `with_voice`: whether it had a voice |
+| `voice_requested` | `source`: our server, your key, the local voice or the cache; `outcome`: the result; `audio_seconds`: the audio length; `request_ms`: the request time |
+| `account_linked` | `provider`: openai or claude; `account_id`: a hashed account id (see below) |
 
-Each event also has the app version, the release channel, the platform, the
-CPU architecture and the OS version.
+Each event also has `app_version`, `product` (`desktop`), `channel` (`release`
+or `dev`), `platform`, `arch` (the CPU architecture), `os_version` and
+`install_id` (the hashed install id).
 
 The events never include board content, scene text, spoken lines, file names,
 folder paths, tool arguments or error messages.
@@ -208,8 +209,7 @@ environment of the app. A dev run (`npm run dev`) sends nothing unless you set
 with its channel. The voice server gets the same hashed identifier with each
 speech request, also with usage data off (T39): it counts the daily cap. `ASKABOARD_TELEMETRY_HOST`
 changes the server. A build sets the channel from
-`ASKABOARD_TELEMETRY_CHANNEL` (stable, nightly, preview or dev; the
-default is dev).
+`ASKABOARD_TELEMETRY_CHANNEL` (release or dev; the default is dev).
 
 ## Dev automation
 

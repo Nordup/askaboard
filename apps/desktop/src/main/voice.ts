@@ -404,13 +404,13 @@ async function readPlaces(path: string, wav: string, count: number): Promise<{ s
 export async function speakLines(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<SpokenLines> {
   const start = Date.now()
   const { spoken, source } = await speakLinesOnce(root, lines, choice, signal)
-  // voice.requested (main/analytics.ts): a cancel throws above and is not counted.
+  // voice_requested (main/analytics.ts): a cancel throws above and is not counted.
   const outcome = 'reason' in spoken ? (spoken.code === 'daily_cap' ? 'capped' : 'failed') : spoken.cached ? 'cached' : 'ok'
-  record('voice.requested', { source, outcome, audioSeconds: 'reason' in spoken ? 0 : spoken.seconds, requestMs: Date.now() - start })
+  record('voice_requested', { source, outcome, audio_seconds: 'reason' in spoken ? 0 : spoken.seconds, request_ms: Date.now() - start })
   return spoken
 }
 
-/** source: where the audio came from, for voice.requested; cache when no request was made. */
+/** source: where the audio came from, for voice_requested; cache when no request was made. */
 async function speakLinesOnce(root: string, lines: readonly string[], choice: { voice: string; pace: PaceName }, signal: AbortSignal): Promise<{ spoken: SpokenLines; source: 'cache' | Speaker['source'] }> {
   const unique = [...new Set(lines)]
   const text = unique.join(LINE_JOIN)

@@ -11,8 +11,8 @@ import { telemetryIdentity, type TelemetryIdentity } from './analytics-id'
  * scene text, said lines, file names, folder paths, tool arguments or error messages.
  *
  * Env: ASKABOARD_TELEMETRY_ENABLED (false turns it off; under `npm run dev` only true turns
- * it on), ASKABOARD_TELEMETRY_HOST (the ingest). The channel is set at build time
- * (electron.vite.config.ts, ASKABOARD_TELEMETRY_CHANNEL).
+ * it on), ASKABOARD_TELEMETRY_HOST (the ingest). Each event carries product 'desktop' and
+ * the channel (release or dev), set at build time (electron.vite.config.ts, ASKABOARD_TELEMETRY_CHANNEL).
  */
 
 /** Our ingest ignores the key (it adds its own); PostHog's wire format has the field. */
@@ -110,12 +110,13 @@ async function sendBatch(events: BufferedEvent[]): Promise<void> {
   const id = await identity!
   if (!id.distinctId) return
   const common = {
-    ...(id.installId === null ? {} : { installId: id.installId }),
+    ...(id.installId === null ? {} : { install_id: id.installId }),
     platform: process.platform,
     arch: process.arch,
-    osVersion: process.getSystemVersion(),
-    appVersion: app.getVersion(),
-    telemetryChannel: __LS_TELEMETRY_CHANNEL__
+    os_version: process.getSystemVersion(),
+    app_version: app.getVersion(),
+    product: 'desktop',
+    channel: __LS_TELEMETRY_CHANNEL__
   }
   const payload = {
     api_key: API_KEY,
@@ -203,12 +204,12 @@ export function start(): void {
   })
 }
 
-/** install.owner_observed: each owner once per process (T3's recordOwners, server owners only). */
+/** account_linked (decision P38): each account once per process (T3's recordOwners, server owners only). provider: openai or claude; account_id: the hash. */
 function recordOwner(source: string, ownerId: string): void {
   const key = `${source}:${ownerId}`
   if (recordedOwners.has(key)) return
   recordedOwners.add(key)
-  record('install.owner_observed', { ownerSource: source, ownerId })
+  record('account_linked', { provider: source, account_id: ownerId })
 }
 
 /** An MCP client's name as a known agent app, else "other" (the raw name is not sent). */
@@ -227,7 +228,7 @@ export function agentClientVersion(raw: unknown): string | null {
   return typeof raw === 'string' && /^\d{1,9}(\.\d{1,9}){0,3}([-+][0-9A-Za-z.-]{1,20})?$/.test(raw) ? raw : null
 }
 
-// ---------- board.opened ----------
+// ---------- board_opened ----------
 
 /** Boards made since they were last shown, and the board an agent's open_board asked for: the next show of that path tells how it opened. */
 const createdBoards = new Set<string>()
@@ -247,5 +248,5 @@ export function boardShown(root: string, path: string): void {
   const created = createdBoards.delete(key)
   const by = agentOpen === key ? 'agent' : 'learner'
   if (agentOpen === key) agentOpen = null
-  record('board.opened', { created, by })
+  record('board_opened', { created, by })
 }

@@ -89,7 +89,7 @@ npm run dist:mac
 ```
 
 The artifact is `apps/desktop/release/<productName>-<version>-universal.dmg`.
-The command uses `stable` telemetry, notarizes the app before packaging,
+The command uses the `release` telemetry channel, notarizes the app before packaging,
 then signs, notarizes, staples and checks the DMG. Apple processing takes
 several minutes. It exits on a failed check; do not treat a file left by a
 failed run as releasable. Optional builds: `npm run dist:mac -- --arm64`

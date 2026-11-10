@@ -445,7 +445,7 @@ export class AgentServer {
   private readonly boardIndex = new BoardIndex()
   /** The session that started each scene (scene id → session id): its trace gets the scene's playback events. */
   private readonly sceneTraces = new Map<string, SessionTrace>()
-  /** Playbacks for scene.played (main/analytics.ts), by scene id: when the shown version started, and whether it has voice. */
+  /** Playbacks for scene_played (main/analytics.ts), by scene id: when the shown version started, and whether it has voice. */
   private readonly playbacks = new Map<string, { start: number | null; withVoice: boolean }>()
   /** The scene records of the boards (scene-store.ts): the only writer. */
   readonly records: SceneStore
@@ -479,7 +479,7 @@ export class AgentServer {
   }
 
   /**
-   * scene.played: a playback ends ('end'), or its version is replaced (a replace or a cut commits a new
+   * scene_played: a playback ends ('end'), or its version is replaced (a replace or a cut commits a new
    * version, which plays on from there as its own playback). Seconds run from the first frame.
    */
   private scenePlayback(event: SceneEvent): void {
@@ -496,7 +496,7 @@ export class AgentServer {
     const playback = this.playbacks.get(event.scene)
     const seconds = playback?.start != null ? Math.max(0, Math.round((event.t - playback.start) / 100) / 10) : 0
     const outcome = event.kind === 'replaced' ? 'replaced' : (event.outcome ?? 'played')
-    analytics.record('scene.played', { outcome, seconds, withVoice: playback?.withVoice ?? voiced() })
+    analytics.record('scene_played', { outcome, seconds, with_voice: playback?.withVoice ?? voiced() })
     if (event.kind === 'end') this.playbacks.delete(event.scene)
     else this.playbacks.set(event.scene, { start: playback?.start != null ? event.t : null, withVoice: voiced() })
   }
@@ -751,7 +751,7 @@ export class AgentServer {
     server.server.oninitialized = () => {
       const client = server.server.getClientVersion()
       console.log(`mcp: session ${session.id} is ${client?.name ?? 'an unnamed client'}`)
-      analytics.record('agent.connected', { clientName: analytics.agentClientName(client?.name), clientVersion: analytics.agentClientVersion(client?.version) })
+      analytics.record('agent_connected', { client_name: analytics.agentClientName(client?.name), client_version: analytics.agentClientVersion(client?.version) })
       this.traceOf(session)
       this.publish()
       // An agent connected: its first screenshot or preview should not wait for the snapshot window.
@@ -832,7 +832,7 @@ export class AgentServer {
       const prefix = [news, this.takeLateNotes(session)].filter((line) => line).join('\n')
       if (prefix) result = { ...result, content: [{ type: 'text', text: prefix }, ...result.content] }
       if (session.id !== 'catalog') {
-        analytics.record('mcp.tool.invoked', { tool: name, ok: thrown === null && !result.isError, durationMs: Date.now() - start, clientName: analytics.agentClientName(session.server.server.getClientVersion()?.name) })
+        analytics.record('tool_called', { tool: name, succeeded: thrown === null && !result.isError, duration_ms: Date.now() - start, client_name: analytics.agentClientName(session.server.server.getClientVersion()?.name) })
       }
       this.traceOf(session)?.call(name, trace.args ? { ...(args as Record<string, unknown>), ...trace.args } : args, start, Date.now(), this.hooks.shownBoard(), thrown === null ? result : null, thrown, trace.spans)
       return result
@@ -2298,7 +2298,7 @@ Use it when the learner asks to rename or remove a board. It takes an exact path
       return failure(this.unknownScene(name, 'draft'))
     }
     const withVoice = voiceAnswers(draft.entry.answers).size > 0
-    const notPlayed = (outcome: 'failed' | 'cancelled'): void => analytics.record('scene.played', { outcome, seconds: 0, withVoice })
+    const notPlayed = (outcome: 'failed' | 'cancelled'): void => analytics.record('scene_played', { outcome, seconds: 0, with_voice: withVoice })
     if (draft.entry.sweepError) {
       notPlayed('failed')
       return failure(new Error(`The draft "${name}" cannot start: ${draft.entry.sweepError}. Nothing played, and the draft is kept. Change it with write_scene.`))

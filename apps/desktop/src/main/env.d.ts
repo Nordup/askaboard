@@ -11,5 +11,5 @@ declare module '*?stage' {
   export default code
 }
 
-/** The usage-data channel, set at build time (electron.vite.config.ts): stable, nightly, preview or dev. */
-declare const __LS_TELEMETRY_CHANNEL__: 'stable' | 'nightly' | 'preview' | 'dev'
+/** The usage-data channel, set at build time (electron.vite.config.ts): release or dev. */
+declare const __LS_TELEMETRY_CHANNEL__: 'release' | 'dev'

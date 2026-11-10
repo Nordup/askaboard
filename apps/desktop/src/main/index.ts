@@ -223,7 +223,7 @@ async function snapshot(initial = false): Promise<Snapshot> {
  * switch (App.tsx switchFolder), after it saved the folder it leaves: every route
  * (the menu, the dialog, the recent list) goes that way.
  */
-/** How the open folder was opened, for folder.opened (main/analytics.ts). */
+/** How the open folder was opened, for folder_opened (main/analytics.ts). */
 type FolderVia = 'launch' | 'dialog' | 'recent' | 'menu'
 let folderVia: FolderVia = 'launch'
 
@@ -249,7 +249,7 @@ async function openFolder(path: string, via: FolderVia): Promise<void> {
   if (!store.isFolderTrusted(next.root) && !(await next.hasWorlds().catch(() => true))) store.setFolderTrusted(next.root, true)
   setSession(next)
   folderVia = via
-  analytics.record('folder.opened', { via, setUp: false })
+  analytics.record('folder_opened', { via, set_up: false })
   void cleanFolder(next, agentServer.records).catch((error) => console.error(`storage: ${String(error)}`))
   // A scan under way when the folder changes reports nothing: its folder is not the open one.
   next.startWatching({
@@ -502,7 +502,7 @@ function registerIpc(): void {
   handle(IPC.setupPlan, () => setupPlan(requireSession()))
   handle(IPC.applySetup, async () => {
     const result = await applySetup(requireSession())
-    analytics.record('folder.opened', { via: folderVia, setUp: true })
+    analytics.record('folder_opened', { via: folderVia, set_up: true })
     console.log(`setup: created ${result.created.join(', ') || 'nothing'}`)
     return result
   })
@@ -835,7 +835,7 @@ void app.whenReady().then(async () => {
   firstFolder = openInitialFolder().then(() => {
     setFolderOpen(session !== null)
     agentServer.start()
-    analytics.record('app.boot.heartbeat', { recentFolderCount: store.recentFolders().length, readLinesOn: store.readLinesOn(), voiceSource: !store.readLinesOn() ? 'off' : store.getVoiceModel() === 'local' ? 'local' : hasVoiceKey() ? 'own_key' : 'backend' })
+    analytics.record('app_started', { recent_folder_count: store.recentFolders().length, read_lines_on: store.readLinesOn(), voice_source: !store.readLinesOn() ? 'off' : store.getVoiceModel() === 'local' ? 'local' : hasVoiceKey() ? 'own_key' : 'backend' })
   })
   void installShim().catch((error) => console.error(`agent home: could not write the shim: ${String(error)}`))
   void cleanTraces().catch((error) => console.error(`storage: ${String(error)}`))
