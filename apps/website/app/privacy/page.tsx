@@ -43,7 +43,7 @@ export default function Privacy() {
 
       <article className={styles.doc}>
         <h1 className={sections.agentTitle}>Privacy</h1>
-        <p className={sections.quiet}>Last updated: 10 November 2026</p>
+        <p className={sections.quiet}>Last updated: 12 November 2026</p>
 
         <p>
           Askaboard is made by Nordup, an independent developer. This page says what data Askaboard uses, why, and where it goes. Questions or requests: <Email />.
@@ -53,6 +53,9 @@ export default function Privacy() {
         <ul>
           <li>
             <strong>Your email address.</strong> You sign in with Google or with a code that we email to you. Supabase keeps your account (your email address and, with Google, your name and picture from Google), in Singapore. Resend sends the code emails.
+          </li>
+          <li>
+            <strong>Bot protection.</strong> Email sign-in uses Cloudflare Turnstile to help prevent abuse. Cloudflare processes information about your device and browser for this check. See the <a href="https://www.cloudflare.com/turnstile-privacy-policy/">Cloudflare Turnstile Privacy Addendum</a>.
           </li>
           <li>
             <strong>Your boards and your chat.</strong> Your boards, the files of your learning folder and your chat with the agent are kept on our server (Hetzner, in the EU), so you can come back to them.
